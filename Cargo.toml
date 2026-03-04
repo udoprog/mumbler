@@ -1,0 +1,26 @@
+[package]
+name = "mumbler"
+version = "0.0.1"
+authors = ["John-John Tedro <udoprog@tedro.se>"]
+edition = "2024"
+rust-version = "1.93.0"
+description = "A mumbler link implementation for Rust"
+documentation = "https://docs.rs/mumbler"
+readme = "README.md"
+homepage = "https://github.com/udoprog/mumbler"
+repository = "https://github.com/udoprog/mumbler"
+license = "MIT OR Apache-2.0"
+keywords = ["audio", "link", "mumble", "positional", "voice"]
+categories = ["multimedia"]
+
+[dependencies]
+libc = "0.2.182"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61.2"
+features = [
+    "Win32_System_Memory",
+]
+
+[dev-dependencies]
+tokio = { version = "1.50.0", features = ["full"] }
