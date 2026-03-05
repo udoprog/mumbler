@@ -35,6 +35,19 @@ pub struct UpdateAvatarsRequest {
 #[musli(crate = musli_core)]
 pub struct UpdateAvatarsResponse;
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UploadAvatarRequest {
+    /// MIME type of the uploaded image (e.g. "image/png").
+    pub content_type: String,
+    /// Raw bytes of the image file.
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UploadAvatarResponse;
+
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Extent2 {
@@ -119,5 +132,12 @@ api::define! {
     impl Endpoint for UpdateAvatars {
         impl Request for UpdateAvatarsRequest;
         type Response<'de> = UpdateAvatarsResponse;
+    }
+
+    pub type UploadAvatar;
+
+    impl Endpoint for UploadAvatar {
+        impl Request for UploadAvatarRequest;
+        type Response<'de> = UploadAvatarResponse;
     }
 }

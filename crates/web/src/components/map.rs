@@ -4,7 +4,9 @@ use api::{Avatar, AvatarId, Extent2, Vec3, World};
 use derive_more::From;
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent, WheelEvent};
+use web_sys::{
+    CanvasRenderingContext2d, Event, HtmlCanvasElement, HtmlInputElement, MouseEvent, WheelEvent,
+};
 use yew::prelude::*;
 
 use crate::error::Error;
@@ -111,11 +113,15 @@ impl ViewTransform {
 pub(crate) struct Map {
     _initialize: ws::Request,
     _update_avatars: ws::Request,
+    _upload_avatar: ws::Request,
+    /// Keeps the gloo FileReader alive until the read completes.
+    _file_reader: Option<gloo::file::callbacks::FileReader>,
     _state_change: ws::StateListener,
     state: ws::State,
     initialize: Packet<api::Initialize>,
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
+    file_input_ref: NodeRef,
     /// World configuration.
     world: Option<World>,
     /// List of local avatars that need to be updated remotely.
@@ -136,6 +142,7 @@ pub(crate) struct Map {
 pub(crate) enum Msg {
     Initialize(Result<Packet<api::Initialize>, ws::Error>),
     AvatarsUpdated(Result<Packet<api::UpdateAvatars>, ws::Error>),
+    AvatarUploaded(Result<Packet<api::UploadAvatar>, ws::Error>),
     StateChanged(ws::State),
     #[from(skip)]
     MouseDown(MouseEvent),
@@ -147,6 +154,10 @@ pub(crate) enum Msg {
     MouseLeave,
     #[from(skip)]
     Wheel(WheelEvent),
+    #[from(skip)]
+    AvatarImageSelected(Event),
+    #[from(skip)]
+    AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -186,6 +197,47 @@ impl Map {
             Msg::AvatarsUpdated(result) => {
                 result?;
                 self.updates.clear();
+                Ok(false)
+            }
+            Msg::AvatarUploaded(result) => {
+                result?;
+                tracing::info!("Avatar uploaded successfully");
+                Ok(false)
+            }
+            Msg::AvatarImageSelected(e) => {
+                let input = e
+                    .target()
+                    .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+                    .ok_or("no input element")?;
+
+                let files = input.files().ok_or("no file list")?;
+                let file = files.get(0).ok_or("no file selected")?;
+
+                let content_type = file.type_();
+                let gloo_file = gloo::file::File::from(file);
+                let link = ctx.link().clone();
+
+                self._file_reader = Some(gloo::file::callbacks::read_as_bytes(
+                    &gloo_file,
+                    move |res| {
+                        link.send_message(Msg::AvatarImageData(content_type.clone(), res));
+                    },
+                ));
+
+                Ok(false)
+            }
+            Msg::AvatarImageData(content_type, result) => {
+                self._file_reader = None;
+                let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
+
+                self._upload_avatar = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UploadAvatarRequest { content_type, data })
+                    .on_packet(ctx.link().callback(Msg::AvatarUploaded))
+                    .send();
+
                 Ok(false)
             }
             Msg::StateChanged(state) => {
@@ -479,11 +531,14 @@ impl Component for Map {
         let mut this = Self {
             _initialize: ws::Request::new(),
             _update_avatars: ws::Request::new(),
+            _upload_avatar: ws::Request::new(),
+            _file_reader: None,
             _state_change,
             state,
             initialize: Packet::empty(),
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
+            file_input_ref: NodeRef::default(),
             world: None,
             avatars: Vec::new(),
             updates: HashSet::new(),
@@ -556,7 +611,19 @@ impl Component for Map {
                         {connected}
                         <span class={classes!("connection-indicator", indicator_class)}>{indicator}</span>
                     </section>
-                    <section class="user">{user}</section>
+                    <section class="user">
+                        <label class="btn" title="Upload avatar image">
+                            {"\u{1F464}"}
+                            <input
+                                ref={self.file_input_ref.clone()}
+                                type="file"
+                                accept="image/*"
+                                style="display:none"
+                                onchange={ctx.link().callback(Msg::AvatarImageSelected)}
+                            />
+                        </label>
+                        {user}
+                    </section>
                 </div>
 
                 <div class="map-sizer" ref={self.canvas_sizer.clone()}>

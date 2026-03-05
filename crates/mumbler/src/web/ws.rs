@@ -50,6 +50,17 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
                 tracing::info!(?request);
             }
+            api::Request::UploadAvatar => {
+                let request = incoming
+                    .read::<api::UploadAvatarRequest>()
+                    .context("missing request")?;
+                tracing::info!(
+                    bytes = request.data.len(),
+                    content_type = %request.content_type,
+                    "Avatar upload received"
+                );
+                outgoing.write(api::UploadAvatarResponse);
+            }
         }
 
         Ok(())
