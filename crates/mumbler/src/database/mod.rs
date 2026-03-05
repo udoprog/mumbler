@@ -1,3 +1,4 @@
+use core::ffi::c_int;
 use core::str;
 
 use std::collections::HashSet;
@@ -6,15 +7,43 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use api::ImageId;
 use jiff::Timestamp;
+use musli::Encode;
 use musli::alloc::Global;
 use musli::de::DecodeOwned;
 use musli::mode::Binary;
-use musli::{Decode, Encode};
 use relative_path::{RelativePath, RelativePathBuf};
 use rust_embed::RustEmbed;
+use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 use sqll::{OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
+
+#[derive(Clone, Copy)]
+struct IntegerBlob(u64);
+
+impl BindValue for IntegerBlob {
+    #[inline]
+    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
+        self.0.bind_value(stmt, index)
+    }
+}
+
+impl Bind for IntegerBlob {
+    #[inline]
+    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
+        self.bind_value(stmt, BIND_INDEX)
+    }
+}
+
+impl FromColumn<'_> for IntegerBlob {
+    type Type = ty::Blob;
+
+    #[inline]
+    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
+        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
+        Ok(IntegerBlob(id))
+    }
+}
 
 use crate::Paths;
 
@@ -24,6 +53,7 @@ struct Migrations;
 
 struct Inner {
     list_images: SendStatement,
+    insert_image: SendStatement,
     get_config: SendStatement,
     set_config: SendStatement,
 }
@@ -100,6 +130,7 @@ impl Database {
         let inner = unsafe {
             Inner {
                 list_images: c.prepare("SELECT id FROM images")?.into_send()?,
+                insert_image: c.prepare("INSERT INTO images (id, data) VALUES (?, ?)")?.into_send()?,
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
             }
@@ -110,6 +141,19 @@ impl Database {
         })
     }
 
+    /// Save an image to the database, returning its unique identifier.
+    pub(crate) async fn save_image(&self, data: Vec<u8>) -> Result<ImageId> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            let id = IntegerBlob(rand::random());
+            inner.insert_image.execute((id, data))?;
+            Ok(ImageId::new(id.0))
+        });
+
+        task.await?
+    }
+
     /// List images.
     async fn images(&self) -> Result<Vec<ImageId>> {
         let mut inner = self.inner.clone().lock_owned().await;
@@ -117,8 +161,8 @@ impl Database {
         let task = task::spawn_blocking(move || {
             let mut images = Vec::new();
 
-            while let Some(id) = inner.list_images.next::<ImageId>()? {
-                images.push(id);
+            while let Some(IntegerBlob(id)) = inner.list_images.next::<IntegerBlob>()? {
+                images.push(ImageId::new(id));
             }
 
             Ok(images)

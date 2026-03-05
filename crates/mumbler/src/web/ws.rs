@@ -4,7 +4,7 @@ use core::pin::pin;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use axum::Extension;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::WebSocketUpgrade;
@@ -12,17 +12,16 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use musli_web::axum08;
 use musli_web::ws;
-use tokio::sync::RwLock;
 use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
 
 struct Handler {
-    backend: Arc<RwLock<Backend>>,
+    backend: Arc<Backend>,
 }
 
 impl Handler {
-    fn new(service: Arc<RwLock<Backend>>) -> Self {
+    fn new(service: Arc<Backend>) -> Self {
         Self { backend: service }
     }
 }
@@ -41,25 +40,21 @@ impl ws::Handler for Handler {
 
         match id {
             api::Request::Initialize => {
-                let backend = self.backend.read().await;
-                outgoing.write(super::initialize(&backend));
+                outgoing.write(super::initialize(&self.backend));
             }
             api::Request::UpdateAvatars => {
                 let request = incoming
                     .read::<api::UpdateAvatarsRequest>()
                     .context("missing request")?;
+
                 tracing::info!(?request);
             }
-            api::Request::UploadAvatar => {
+            api::Request::UploadImage => {
                 let request = incoming
-                    .read::<api::UploadAvatarRequest>()
+                    .read::<api::UploadImageRequest>()
                     .context("missing request")?;
-                tracing::info!(
-                    bytes = request.data.len(),
-                    content_type = %request.content_type,
-                    "Avatar upload received"
-                );
-                outgoing.write(api::UploadAvatarResponse);
+
+                outgoing.write(super::upload_image(&self.backend, request.data).await?);
             }
         }
 
@@ -69,7 +64,7 @@ impl ws::Handler for Handler {
 
 pub(super) async fn entry(
     ws: WebSocketUpgrade,
-    Extension(service): Extension<Arc<RwLock<Backend>>>,
+    Extension(backend): Extension<Arc<Backend>>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
@@ -77,7 +72,7 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("Client connected");
 
-            let server = pin!(axum08::server(socket, Handler::new(service)));
+            let server = pin!(axum08::server(socket, Handler::new(backend)));
 
             if let Err(error) = server.run().await {
                 tracing::error!("{error}");

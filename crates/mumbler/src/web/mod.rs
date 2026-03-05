@@ -56,7 +56,6 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 pub(crate) fn default_bind(_bundle: bool) -> &'static str {
@@ -70,7 +69,7 @@ pub(crate) fn default_bind(_bundle: bool) -> &'static str {
 
 pub(crate) fn setup(
     listener: TcpListener,
-    service: Arc<RwLock<Backend>>,
+    backend: Arc<Backend>,
     bundle: bool,
 ) -> Result<impl Future<Output = Result<()>>> {
     let cors = CorsLayer::new()
@@ -85,7 +84,7 @@ pub(crate) fn setup(
         _ => self::nonbundle::router,
     };
 
-    let app = app().layer(Extension(service)).layer(cors);
+    let app = app().layer(Extension(backend)).layer(cors);
 
     let service = axum::serve(
         listener,
@@ -121,13 +120,22 @@ fn initialize(_: &Backend) -> api::InitializeEvent {
         world: api::World {
             zoom: 10.0,
             extent: api::Extent2 {
-                start_x: -50.0,
-                end_x: 50.0,
-                start_y: -50.0,
-                end_y: 50.0,
+                x: api::Span {
+                    start: -50.0,
+                    end: 50.0,
+                },
+                y: api::Span {
+                    start: -50.0,
+                    end: 50.0,
+                },
             },
             token_radius: 0.5,
             player: AvatarId::new(0),
         },
     }
+}
+
+async fn upload_image(backend: &Backend, data: Vec<u8>) -> Result<api::UploadImageResponse> {
+    let id = backend.db().save_image(data).await?;
+    Ok(api::UploadImageResponse { id })
 }

@@ -1,9 +1,7 @@
-use core::ffi::c_int;
 use core::fmt;
 
 use musli_core::{Decode, Encode};
 use musli_web::api;
-use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 #[derive(Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -27,30 +25,6 @@ impl fmt::Debug for ImageId {
     }
 }
 
-impl BindValue for ImageId {
-    #[inline]
-    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.0.bind_value(stmt, index)
-    }
-}
-
-impl Bind for ImageId {
-    #[inline]
-    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
-        self.bind_value(stmt, BIND_INDEX)
-    }
-}
-
-impl FromColumn<'_> for ImageId {
-    type Type = ty::Blob;
-
-    #[inline]
-    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
-        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
-        Ok(ImageId(id))
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 pub struct AvatarId(u64);
@@ -69,30 +43,6 @@ impl fmt::Debug for AvatarId {
     }
 }
 
-impl BindValue for AvatarId {
-    #[inline]
-    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.0.bind_value(stmt, index)
-    }
-}
-
-impl Bind for AvatarId {
-    #[inline]
-    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
-        self.bind_value(stmt, BIND_INDEX)
-    }
-}
-
-impl FromColumn<'_> for AvatarId {
-    type Type = ty::Blob;
-
-    #[inline]
-    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
-        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
-        Ok(AvatarId(id))
-    }
-}
-
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct UpdateAvatarsRequest {
@@ -105,28 +55,45 @@ pub struct UpdateAvatarsResponse;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UploadAvatarRequest {
+pub struct UploadImageRequest {
     /// MIME type of the uploaded image (e.g. "image/png").
     pub content_type: String,
     /// Raw bytes of the image file.
     pub data: Vec<u8>,
 }
 
+/// Response returned after successfully uploading an image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UploadAvatarResponse;
+pub struct UploadImageResponse {
+    /// The unique identifier of the uploaded image.
+    pub id: ImageId,
+}
+
+#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Span {
+    /// Start of the span.
+    pub start: f32,
+    /// End of the span.
+    pub end: f32,
+}
+
+impl Span {
+    /// Returns `true` if `value` lies within `[start, end]`.
+    #[inline]
+    pub fn contains(self, value: f32) -> bool {
+        self.start <= value && value <= self.end
+    }
+}
 
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Extent2 {
-    /// Start of the extent along the x axis.
-    pub start_x: f32,
-    /// End of the extent along the x axis.
-    pub end_x: f32,
-    /// Start of the extent along the y axis.
-    pub start_y: f32,
-    /// End of the extent along the y axis.
-    pub end_y: f32,
+    /// Extent along the x axis.
+    pub x: Span,
+    /// Extent along the y axis.
+    pub y: Span,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -202,10 +169,10 @@ api::define! {
         type Response<'de> = UpdateAvatarsResponse;
     }
 
-    pub type UploadAvatar;
+    pub type UploadImage;
 
-    impl Endpoint for UploadAvatar {
-        impl Request for UploadAvatarRequest;
-        type Response<'de> = UploadAvatarResponse;
+    impl Endpoint for UploadImage {
+        impl Request for UploadImageRequest;
+        type Response<'de> = UploadImageResponse;
     }
 }

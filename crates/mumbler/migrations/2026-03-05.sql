@@ -1,6 +1,6 @@
 CREATE TABLE `images` (
     `id` BLOB PRIMARY KEY,
-    `image` BLOB
+    `data` BLOB NOT NULL
 );
 
 CREATE TABLE `config` (

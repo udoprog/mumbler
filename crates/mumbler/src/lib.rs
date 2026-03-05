@@ -15,19 +15,18 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 
 use self::web::default_bind;
 
 pub async fn run(b: Backend, bundle: bool) -> Result<()> {
     let addr: SocketAddr = default_bind(bundle).parse()?;
 
-    let service = Arc::new(RwLock::new(b));
+    let backend = Arc::new(b);
 
     tracing::info!("Listening on http://{addr}");
 
     let listener = TcpListener::bind(addr).await?;
-    let mut future = pin!(web::setup(listener, service.clone(), bundle)?);
+    let mut future = pin!(web::setup(listener, backend.clone(), bundle)?);
 
     loop {
         tokio::select! {
