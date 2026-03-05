@@ -2,6 +2,8 @@ mod components;
 mod error;
 
 use musli_web::web03::prelude::*;
+use tracing::Level;
+use tracing_wasm::WASMLayerConfigBuilder;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -51,7 +53,7 @@ impl Component for App {
     fn update(&mut self, _: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Error(error) => {
-                log::error!("Failed to fetch: {error}");
+                tracing::error!("Failed to fetch: {error}");
                 false
             }
         }
@@ -70,7 +72,7 @@ impl Component for App {
 
 fn switch(routes: Route, ws: &ws::Handle) -> Html {
     match routes {
-        Route::Dashboard => html!(<components::Dashboard ws={ws} />),
+        Route::Dashboard => html!(<components::Map ws={ws} />),
         Route::NotFound => {
             html! {
                 <div id="content" class="container">{"There is nothing here"}</div>
@@ -80,8 +82,12 @@ fn switch(routes: Route, ws: &ws::Handle) -> Html {
 }
 
 fn main() -> anyhow::Result<()> {
-    wasm_logger::init(wasm_logger::Config::default());
-    log::trace!("Started up");
+    let config = WASMLayerConfigBuilder::new()
+        .set_max_level(Level::INFO)
+        .build();
+
+    tracing_wasm::set_as_global_default_with_config(config);
+    tracing::trace!("Started up");
     yew::Renderer::<App>::new().render();
     Ok(())
 }

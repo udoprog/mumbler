@@ -7,9 +7,9 @@ pub struct Paths {
 
 impl Paths {
     /// Construct a new collection of paths.
-    pub fn new(root: &Path) -> Self {
+    pub fn new(config: &Path) -> Self {
         Self {
-            db: root.join("mumbler.sqlite"),
+            db: config.join("mumbler.sqlite"),
         }
     }
 }

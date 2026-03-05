@@ -1,2 +1,2 @@
-mod dashboard;
-pub(crate) use self::dashboard::Dashboard;
+mod map;
+pub(crate) use self::map::Map;

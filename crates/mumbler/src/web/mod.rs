@@ -50,6 +50,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
+use api::{Avatar, Vec3};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -105,5 +106,19 @@ fn common_routes(router: Router) -> Router {
 fn initialize(_: &Backend) -> api::InitializeEvent {
     api::InitializeEvent {
         name: Some("Gilbert".to_owned()),
+        avatars: vec![
+            Avatar {
+                id: 0,
+                position: Vec3::new(0.0, 0.0, -1.0),
+            },
+            Avatar {
+                id: 1,
+                position: Vec3::new(0.0, 0.0, 1.0),
+            },
+        ],
+        world: api::World {
+            width: 100.0,
+            height: 100.0,
+        },
     }
 }

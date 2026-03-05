@@ -2150,6 +2150,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-wasm"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "trybuild"
 version = "1.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2338,17 +2349,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-logger"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "074649a66bb306c8f2068c9016395fa65d8e08d2affcbf95acf3c24c3ab19718"
-dependencies = [
- "log",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "web"
 version = "0.0.0"
 dependencies = [
@@ -2356,11 +2356,11 @@ dependencies = [
  "api",
  "derive_more",
  "gloo",
- "log",
  "musli-web",
+ "tracing",
+ "tracing-wasm",
  "url",
  "wasm-bindgen",
- "wasm-logger",
  "web-sys",
  "yew",
  "yew-router",
