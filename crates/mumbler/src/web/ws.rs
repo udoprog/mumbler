@@ -44,6 +44,12 @@ impl ws::Handler for Handler {
                 let backend = self.backend.read().await;
                 outgoing.write(super::initialize(&backend));
             }
+            api::Request::UpdateAvatars => {
+                let request = incoming
+                    .read::<api::UpdateAvatarsRequest>()
+                    .context("missing request")?;
+                tracing::info!(?request);
+            }
         }
 
         Ok(())

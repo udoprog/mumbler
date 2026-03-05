@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use api::{Avatar, AvatarId, World};
+use api::{Avatar, AvatarId, Vec3, World};
 use derive_more::From;
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
@@ -11,7 +11,7 @@ use crate::error::Error;
 use crate::ws;
 
 const ZOOM_FACTOR: f64 = 0.1;
-const ARROW_THRESHOLD: f64 = 10.0;
+const ARROW_THRESHOLD: f64 = 5.0;
 static COLORS: &[&str] = &["red", "green", "blue", "orange"];
 
 /// Draws an arrow from `(x1, y1)` to `(x2, y2)` using the current stroke style.
@@ -82,6 +82,7 @@ impl ViewTransform {
 
 pub(crate) struct Map {
     _initialize: ws::Request,
+    _update_avatars: ws::Request,
     _state_change: ws::StateListener,
     state: ws::State,
     initialize: Packet<api::Initialize>,
@@ -106,6 +107,7 @@ pub(crate) struct Map {
 #[derive(From)]
 pub(crate) enum Msg {
     Initialize(Result<Packet<api::Initialize>, ws::Error>),
+    AvatarsUpdated(Result<Packet<api::UpdateAvatars>, ws::Error>),
     StateChanged(ws::State),
     #[from(skip)]
     MouseDown(MouseEvent),
@@ -131,7 +133,7 @@ impl Map {
                 .props()
                 .ws
                 .request()
-                .body(api::Empty)
+                .body(api::InitializeRequest)
                 .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
@@ -152,6 +154,11 @@ impl Map {
                 }
 
                 Ok(true)
+            }
+            Msg::AvatarsUpdated(result) => {
+                result?;
+                self.updates.clear();
+                Ok(false)
             }
             Msg::StateChanged(state) => {
                 self.state = state;
@@ -179,6 +186,23 @@ impl Map {
                 Ok(false)
             }
         }
+    }
+
+    fn send_updates(&mut self, ctx: &Context<Self>) {
+        let updates = self
+            .avatars
+            .iter()
+            .filter(|a| self.updates.contains(&a.id))
+            .cloned()
+            .collect();
+
+        self._update_avatars = ctx
+            .props()
+            .ws
+            .request()
+            .body(api::UpdateAvatarsRequest { avatars: updates })
+            .on_packet(ctx.link().callback(Msg::AvatarsUpdated))
+            .send();
     }
 
     fn on_mouse_down(&mut self, e: MouseEvent) -> Result<(), Error> {
@@ -365,20 +389,24 @@ impl Map {
             cx.arc(x, y, token_radius, 0.0, std::f64::consts::TAU)?;
             cx.fill();
 
-            if a.id == w.player
+            let front = if a.id == w.player
                 && let Some((mx, my)) = self.arrow_target
             {
-                cx.set_stroke_style_str(color);
-                cx.set_line_width(2.0 * w.zoom as f64);
-                draw_arrow(&cx, x, y, mx, my, 6.0 * w.zoom as f64);
+                let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
+                let angle_rad = (my - y).atan2(mx - x);
+                let dir_x = angle_rad.cos() as f32;
+                let dir_z = angle_rad.sin() as f32;
+                Vec3::new(dir_x, 0.0, dir_z)
             } else {
-                let arrow_len = token_radius + 8.0 * w.zoom as f64;
-                let tip_x = x + a.front.x as f64 * arrow_len;
-                let tip_y = y + a.front.z as f64 * arrow_len;
-                cx.set_stroke_style_str(color);
-                cx.set_line_width(2.0 * w.zoom as f64);
-                draw_arrow(&cx, x, y, tip_x, tip_y, 6.0 * w.zoom as f64);
-            }
+                a.front
+            };
+
+            let arrow_len = token_radius + 8.0 * w.zoom as f64;
+            let tip_x = x + front.x as f64 * arrow_len;
+            let tip_y = y + front.z as f64 * arrow_len;
+            cx.set_stroke_style_str(color);
+            cx.set_line_width(2.0 * w.zoom as f64);
+            draw_arrow(&cx, x, y, tip_x, tip_y, 6.0 * w.zoom as f64);
         }
 
         Ok(())
@@ -397,6 +425,7 @@ impl Component for Map {
 
         let mut this = Self {
             _initialize: ws::Request::new(),
+            _update_avatars: ws::Request::new(),
             _state_change,
             state,
             initialize: Packet::empty(),
@@ -426,13 +455,19 @@ impl Component for Map {
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        match self.try_update(ctx, msg) {
+        let changed = match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
                 tracing::error!(%error, "Map error");
                 false
             }
+        };
+
+        if !self.updates.is_empty() {
+            self.send_updates(ctx);
         }
+
+        changed
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {

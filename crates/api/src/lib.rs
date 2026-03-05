@@ -5,7 +5,7 @@ use musli_web::api;
 
 #[derive(Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct Empty;
+pub struct InitializeRequest;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
@@ -24,6 +24,16 @@ impl fmt::Debug for AvatarId {
         self.0.fmt(f)
     }
 }
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateAvatarsRequest {
+    pub avatars: Vec<Avatar>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateAvatarsResponse;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -62,7 +72,7 @@ impl Vec3 {
     }
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Avatar {
     /// The unique identifier of the avatar.
@@ -70,7 +80,6 @@ pub struct Avatar {
     /// The position of the avatar on the map, in world coordinates.
     pub position: Vec3,
     /// The direction the avatar is facing, as a unit vector in world coordinates (x/z plane).
-    #[musli(default)]
     pub front: Vec3,
 }
 
@@ -90,7 +99,14 @@ api::define! {
     pub type Initialize;
 
     impl Endpoint for Initialize {
-        impl Request for Empty;
+        impl Request for InitializeRequest;
         type Response<'de> = InitializeEvent;
+    }
+
+    pub type UpdateAvatars;
+
+    impl Endpoint for UpdateAvatars {
+        impl Request for UpdateAvatarsRequest;
+        type Response<'de> = UpdateAvatarsResponse;
     }
 }
