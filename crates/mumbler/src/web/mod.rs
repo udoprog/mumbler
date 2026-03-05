@@ -46,16 +46,20 @@ impl From<anyhow::Error> for WebError {
 }
 
 use std::future::Future;
+use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use api::{Avatar, AvatarId, Vec3};
-use axum::http::StatusCode;
+use api::{Avatar, Id, Vec3};
+use axum::extract::Path;
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
+use image::ImageFormat;
 use tokio::net::TcpListener;
+use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 pub(crate) fn default_bind(_bundle: bool) -> &'static str {
@@ -99,24 +103,37 @@ pub(crate) fn setup(
 
 fn common_routes(router: Router) -> Router {
     let router = router.route("/ws", get(ws::entry));
+    let router = router.route("/api/image/{id}", get(image));
     router
 }
 
-fn initialize(_: &Backend) -> api::InitializeEvent {
-    api::InitializeEvent {
+async fn image(
+    Extension(backend): Extension<Arc<Backend>>,
+    Path(id): Path<Id>,
+) -> Result<impl IntoResponse, WebError> {
+    const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;
+
+    let data = backend.db().get_image_data(id).await?;
+
+    let Some(data) = data else {
+        return Err(WebError::not_found());
+    };
+
+    Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data))
+}
+
+async fn initialize(backend: &Backend) -> Result<api::InitializeEvent> {
+    let image = backend.db().get_config::<Id>("avatar/image").await?;
+
+    let mut ev = api::InitializeEvent {
+        player: api::Avatar {
+            id: Id::new(0),
+            position: Vec3::ZERO,
+            front: Vec3::FORWARD,
+            image,
+        },
         name: Some("Gilbert".to_owned()),
-        avatars: vec![
-            Avatar {
-                id: AvatarId::new(0),
-                position: Vec3::new(0.0, 0.0, -1.0),
-                front: Vec3::FORWARD,
-            },
-            Avatar {
-                id: AvatarId::new(1),
-                position: Vec3::new(0.0, 0.0, 1.0),
-                front: Vec3::FORWARD,
-            },
-        ],
+        avatars: Vec::new(),
         world: api::World {
             zoom: 10.0,
             extent: api::Extent2 {
@@ -130,12 +147,48 @@ fn initialize(_: &Backend) -> api::InitializeEvent {
                 },
             },
             token_radius: 0.5,
-            player: AvatarId::new(0),
         },
+        images: Vec::new(),
+    };
+
+    if let Some(id) = image {
+        let image = backend.db().get_image(id).await?;
+        ev.images.extend(backend.db().get_image(id).await?);
     }
+
+    Ok(ev)
 }
 
-async fn upload_image(backend: &Backend, data: Vec<u8>) -> Result<api::UploadImageResponse> {
-    let id = backend.db().save_image(data).await?;
+async fn upload_image(
+    backend: &Backend,
+    request: api::UploadImageRequest,
+) -> Result<api::UploadImageResponse> {
+    tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
+
+    let task = task::spawn_blocking(move || {
+        let image = image::load_from_memory(&request.data[..])?;
+        let width = image.width();
+        let height = image.height();
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, ImageFormat::Png)?;
+        Ok::<_, anyhow::Error>((width, height, bytes.into_inner()))
+    });
+
+    let (width, height, bytes) = task.await??;
+    let id = backend.db().save_image(width, height, bytes).await?;
     Ok(api::UploadImageResponse { id })
+}
+
+async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
+    let selected = backend.db().get_config::<Id>("avatar/image").await?;
+    let images = backend.db().list_images().await?;
+    Ok(api::ListSettingsResponse { selected, images })
+}
+
+async fn select_image(
+    backend: &Backend,
+    request: api::SelectImageRequest,
+) -> Result<api::SelectImageResponse> {
+    backend.db().set_config("avatar/image", request.id).await?;
+    Ok(api::SelectImageResponse { id: request.id })
 }

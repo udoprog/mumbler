@@ -40,11 +40,11 @@ impl ws::Handler for Handler {
 
         match id {
             api::Request::Initialize => {
-                outgoing.write(super::initialize(&self.backend));
+                outgoing.write(super::initialize(&self.backend).await?);
             }
-            api::Request::UpdateAvatars => {
+            api::Request::UpdatePlayer => {
                 let request = incoming
-                    .read::<api::UpdateAvatarsRequest>()
+                    .read::<api::UpdatePlayerRequest>()
                     .context("missing request")?;
 
                 tracing::info!(?request);
@@ -54,7 +54,23 @@ impl ws::Handler for Handler {
                     .read::<api::UploadImageRequest>()
                     .context("missing request")?;
 
-                outgoing.write(super::upload_image(&self.backend, request.data).await?);
+                outgoing.write(super::upload_image(&self.backend, request).await?);
+            }
+            api::Request::ListSettings => {
+                let request = incoming
+                    .read::<api::ListSettingsRequest>()
+                    .context("missing request")?;
+
+                let response = super::list_images(&self.backend).await?;
+                outgoing.write(response);
+            }
+            api::Request::SelectImage => {
+                let request = incoming
+                    .read::<api::SelectImageRequest>()
+                    .context("missing request")?;
+
+                let response = super::select_image(&self.backend, request).await?;
+                outgoing.write(response);
             }
         }
 

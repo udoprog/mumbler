@@ -22,8 +22,9 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 directories-next = "2.0.0"
 clap = { version = "4.5.60", features = ["derive"] }
 tokio-stream = "0.1.18"
-musli-web = { version = "0.1.6", features = ["axum08"] }
+musli-web = { version = "0.1.7", features = ["axum08"] }
 musli = { version = "0.0.149", features = ["storage"] }
 relative-path = "2.0.1"
 tower-http = { version = "0.6.8", features = ["cors"] }
 rand = "0.10.0"
+image = "0.25.9"

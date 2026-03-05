@@ -1,10 +1,11 @@
-use std::collections::HashSet;
-
-use api::{Avatar, AvatarId, Extent2, Vec3, World};
-use derive_more::From;
+use api::{Avatar, Extent2, Vec3, World};
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, WheelEvent};
+use wasm_bindgen::closure::Closure;
+use web_sys::{
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, ResizeObserver,
+    WheelEvent,
+};
 use yew::prelude::*;
 
 use crate::error::Error;
@@ -144,7 +145,9 @@ pub(crate) struct Map {
     /// World configuration.
     world: Option<World>,
     /// List of local avatars that need to be updated remotely.
-    updates: HashSet<AvatarId>,
+    update: bool,
+    /// The player avatar.
+    player: Option<Avatar>,
     /// Avatars in the world and their positions.
     avatars: Vec<Avatar>,
     /// Current pan offset in canvas pixels.
@@ -155,22 +158,19 @@ pub(crate) struct Map {
     start_press: Option<(f64, f64)>,
     /// Canvas-space mouse position once the drag exceeds the arrow threshold.
     arrow_target: Option<(f64, f64)>,
+    /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
+    _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
 }
 
-#[derive(From)]
 pub(crate) enum Msg {
     Initialize(Result<Packet<api::Initialize>, ws::Error>),
-    AvatarsUpdated(Result<Packet<api::UpdateAvatars>, ws::Error>),
+    AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
     StateChanged(ws::State),
-    #[from(skip)]
+    Resized,
     MouseDown(MouseEvent),
-    #[from(skip)]
     MouseMove(MouseEvent),
-    #[from(skip)]
     MouseUp(MouseEvent),
-    #[from(skip)]
     MouseLeave,
-    #[from(skip)]
     Wheel(WheelEvent),
 }
 
@@ -199,6 +199,7 @@ impl Map {
 
                 if let Ok(initialize) = self.initialize.decode() {
                     self.world = Some(initialize.world);
+                    self.player = Some(initialize.player);
                     self.avatars = initialize.avatars;
                 }
 
@@ -210,13 +211,18 @@ impl Map {
             }
             Msg::AvatarsUpdated(result) => {
                 result?;
-                self.updates.clear();
+                self.update = false;
                 Ok(false)
             }
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
                 Ok(true)
+            }
+            Msg::Resized => {
+                self.resize_canvas();
+                self.redraw()?;
+                Ok(false)
             }
             Msg::MouseDown(e) => {
                 self.on_mouse_down(e)?;
@@ -242,18 +248,17 @@ impl Map {
     }
 
     fn send_updates(&mut self, ctx: &Context<Self>) {
-        let updates = self
-            .avatars
-            .iter()
-            .filter(|a| self.updates.contains(&a.id))
-            .cloned()
-            .collect();
+        let Some(avatar) = &self.player else {
+            return;
+        };
 
         self._update_avatars = ctx
             .props()
             .ws
             .request()
-            .body(api::UpdateAvatarsRequest { avatars: updates })
+            .body(api::UpdatePlayerRequest {
+                avatar: avatar.clone(),
+            })
             .on_packet(ctx.link().callback(Msg::AvatarsUpdated))
             .send();
     }
@@ -277,13 +282,13 @@ impl Map {
                     let t = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
                     let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
 
-                    let Some(a) = self.avatars.iter_mut().find(|a| a.id == w.player) else {
+                    let Some(a) = &mut self.player else {
                         break 'out false;
                     };
 
                     a.position.x = world_x as f32;
                     a.position.z = world_z as f32;
-                    self.updates.insert(a.id);
+                    self.update = true;
                     true
                 }
                 1 => {
@@ -343,11 +348,7 @@ impl Map {
                         break 'out false;
                     };
 
-                    let Some(w) = &self.world else {
-                        break 'out false;
-                    };
-
-                    let Some(a) = self.avatars.iter_mut().find(|a| a.id == w.player) else {
+                    let Some(a) = &mut self.player else {
                         break 'out false;
                     };
 
@@ -356,7 +357,7 @@ impl Map {
                     let dir_z = angle_rad.sin() as f32;
 
                     a.front = api::Vec3::new(dir_x, 0.0, dir_z);
-                    self.updates.insert(a.id);
+                    self.update = true;
                     true
                 }
                 1 => {
@@ -466,7 +467,10 @@ impl Map {
 
         draw_grid(&cx, &t, &w.extent, w.zoom);
 
-        for (a, color) in self.avatars.iter().zip(COLORS.iter().cycle()) {
+        let avatars = self.player.iter().map(|a| (a, true));
+        let avatars = avatars.chain(self.avatars.iter().map(|a| (a, false)));
+
+        for ((a, player), color) in avatars.zip(COLORS.iter().cycle()) {
             let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
 
             cx.set_fill_style_str(color);
@@ -474,9 +478,7 @@ impl Map {
             cx.arc(x, y, token_radius, 0.0, std::f64::consts::TAU)?;
             cx.fill();
 
-            let front = if a.id == w.player
-                && let Some((mx, my)) = self.arrow_target
-            {
+            let front = if player && let Some((mx, my)) = self.arrow_target {
                 let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
                 let angle_rad = (my - y).atan2(mx - x);
                 let dir_x = angle_rad.cos() as f32;
@@ -518,21 +520,33 @@ impl Component for Map {
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             world: None,
+            player: None,
             avatars: Vec::new(),
-            updates: HashSet::new(),
+            update: false,
             pan: (0.0, 0.0),
             pan_anchor: None,
             start_press: None,
             arrow_target: None,
+            _resize_observer: None,
         };
 
         this.refresh(&ctx);
         this
     }
 
-    fn rendered(&mut self, _ctx: &Context<Self>, first_render: bool) {
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
         if first_render {
             self.resize_canvas();
+
+            if let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() {
+                let link = ctx.link().clone();
+                let closure = Closure::<dyn FnMut()>::new(move || {
+                    link.send_message(Msg::Resized);
+                });
+                let observer = ResizeObserver::new(closure.as_ref().unchecked_ref()).unwrap();
+                observer.observe(&sizer);
+                self._resize_observer = Some((observer, closure));
+            }
         }
 
         if let Err(error) = self.redraw() {
@@ -549,8 +563,9 @@ impl Component for Map {
             }
         };
 
-        if !self.updates.is_empty() {
+        if self.update {
             self.send_updates(ctx);
+            self.update = false;
         }
 
         changed
