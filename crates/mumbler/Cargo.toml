@@ -12,7 +12,7 @@ api = { path = "../api" }
 
 jiff = "0.2.23"
 rust-embed = "8.11.0"
-sqll = "0.12.4"
+sqll = "0.12.5"
 tokio = "1.50.0"
 mime_guess = { version = "2.0.4", default-features = false }
 axum = { version = "0.8.1", features = ["http1", "json", "query", "tracing", "http2", "ws"] }
@@ -23,5 +23,6 @@ directories-next = "2.0.0"
 clap = { version = "4.5.60", features = ["derive"] }
 tokio-stream = "0.1.18"
 musli-web = { version = "0.1.6", features = ["axum08"] }
+musli = { version = "0.0.149", features = ["storage"] }
 relative-path = "2.0.1"
 tower-http = { version = "0.6.8", features = ["cors"] }

@@ -1,11 +1,55 @@
+use core::ffi::c_int;
 use core::fmt;
 
 use musli_core::{Decode, Encode};
 use musli_web::api;
+use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 #[derive(Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeRequest;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
+#[musli(crate = musli_core, transparent)]
+pub struct ImageId(u64);
+
+impl ImageId {
+    #[inline]
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl fmt::Debug for ImageId {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl BindValue for ImageId {
+    #[inline]
+    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
+        self.0.bind_value(stmt, index)
+    }
+}
+
+impl Bind for ImageId {
+    #[inline]
+    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
+        self.bind_value(stmt, BIND_INDEX)
+    }
+}
+
+impl FromColumn<'_> for ImageId {
+    type Type = ty::Blob;
+
+    #[inline]
+    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
+        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
+        Ok(ImageId(id))
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
@@ -22,6 +66,30 @@ impl fmt::Debug for AvatarId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl BindValue for AvatarId {
+    #[inline]
+    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
+        self.0.bind_value(stmt, index)
+    }
+}
+
+impl Bind for AvatarId {
+    #[inline]
+    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
+        self.bind_value(stmt, BIND_INDEX)
+    }
+}
+
+impl FromColumn<'_> for AvatarId {
+    type Type = ty::Blob;
+
+    #[inline]
+    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
+        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
+        Ok(AvatarId(id))
     }
 }
 

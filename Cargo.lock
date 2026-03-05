@@ -73,6 +73,7 @@ version = "0.0.0"
 dependencies = [
  "musli-core",
  "musli-web",
+ "sqll",
 ]
 
 [[package]]
@@ -1140,6 +1141,7 @@ dependencies = [
  "directories-next",
  "jiff",
  "mime_guess",
+ "musli",
  "musli-web",
  "relative-path",
  "rust-embed",
@@ -1753,9 +1755,9 @@ dependencies = [
 
 [[package]]
 name = "sqll"
-version = "0.12.4"
+version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "711ea7a5641966cc3fecd9fad0ad1de0a5c5984d8b0545eff3d700c1baa188ed"
+checksum = "c2d64653ddaae22b2e314a9c084db7d97c4c2c51ffe3e97038a4bdff8b17fc70"
 dependencies = [
  "sqll-macros",
  "sqll-sys",
@@ -1763,9 +1765,9 @@ dependencies = [
 
 [[package]]
 name = "sqll-macros"
-version = "0.12.4"
+version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aac0d5c119f2d7b6cdfe36c84b2ae70e919a98202b7910289f528dc007b04d82"
+checksum = "b524edf7fc20c4732e523d4e39190c8003ec51b15e60321ed5907aaa462719b9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1774,9 +1776,9 @@ dependencies = [
 
 [[package]]
 name = "sqll-sys"
-version = "0.12.4+sqlite3.51.2"
+version = "0.12.5+sqlite3.51.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "551f5cf6dfcdc726970e6831b547979446171698efa99f16e74eef3038a8aafd"
+checksum = "6b2b188c18c678ca3b88c7de3b6c5c496b1ba8bc940ac5e6bf38c90f32b6a910"
 dependencies = [
  "cc",
  "pkg-config",

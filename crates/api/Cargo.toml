@@ -6,3 +6,4 @@ publish = false
 [dependencies]
 musli-web = { version = "0.1.4", default-features = false, features = ["api"] }
 musli-core = { version = "0.1.4", default-features = false }
+sqll = "0.12.5"
