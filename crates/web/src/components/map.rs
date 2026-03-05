@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use api::{Avatar, AvatarId, Vec3, World};
+use api::{Avatar, AvatarId, Extent2, Vec3, World};
 use derive_more::From;
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
@@ -10,39 +10,63 @@ use yew::prelude::*;
 use crate::error::Error;
 use crate::ws;
 
-const ZOOM_FACTOR: f64 = 0.1;
+const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f64 = 5.0;
 static COLORS: &[&str] = &["red", "green", "blue", "orange"];
 
-/// Draws an arrow from `(x1, y1)` to `(x2, y2)` using the current stroke style.
-fn draw_arrow(cx: &CanvasRenderingContext2d, x1: f64, y1: f64, x2: f64, y2: f64, head_len: f64) {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
+/// Draws a 30° directional arc just outside the token circle to indicate facing.
+/// `angle` is the canvas-space angle (radians) of the facing direction.
+/// The arc is centred on that angle and spans ±15°.
+fn draw_facing_arc(
+    cx: &CanvasRenderingContext2d,
+    x: f64,
+    y: f64,
+    radius: f64,
+    angle: f64,
+    line_width: f64,
+) -> Result<(), wasm_bindgen::JsValue> {
+    const HALF_SPAN: f64 = std::f64::consts::FRAC_PI_6;
 
-    if dx.hypot(dy) < 1.0 {
-        return;
+    cx.set_line_width(line_width);
+    cx.begin_path();
+    cx.arc(x, y, radius, angle - HALF_SPAN, angle + HALF_SPAN)?;
+    cx.stroke();
+    Ok(())
+}
+
+/// Draws a world-space grid with thicker lines at the origin axes.
+fn draw_grid(cx: &CanvasRenderingContext2d, t: &ViewTransform, extent: &Extent2) {
+    const GRID_STEP: f32 = 2.0;
+    const EPS: f32 = GRID_STEP * 0.01;
+
+    let mut x = (extent.start_x / GRID_STEP).ceil() * GRID_STEP;
+    while x <= extent.end_x + EPS {
+        let (px, py1) = t.world_to_canvas(x, extent.start_y);
+        let (_, py2) = t.world_to_canvas(x, extent.end_y);
+        let is_origin = x.abs() < EPS;
+        cx.set_stroke_style_str(if is_origin { "#888888" } else { "#2a2a2a" });
+        cx.set_line_width(if is_origin { 1.5 } else { 0.5 });
+        cx.begin_path();
+        cx.move_to(px, py1);
+        cx.line_to(px, py2);
+        cx.stroke();
+        x += GRID_STEP;
     }
 
-    let angle = dy.atan2(dx);
-    let head_angle = std::f64::consts::FRAC_PI_6;
+    let mut z = (extent.start_y / GRID_STEP).ceil() * GRID_STEP;
 
-    cx.begin_path();
-    cx.move_to(x1, y1);
-    cx.line_to(x2, y2);
-    cx.stroke();
-
-    cx.begin_path();
-    cx.move_to(x2, y2);
-    cx.line_to(
-        x2 - head_len * (angle - head_angle).cos(),
-        y2 - head_len * (angle - head_angle).sin(),
-    );
-    cx.move_to(x2, y2);
-    cx.line_to(
-        x2 - head_len * (angle + head_angle).cos(),
-        y2 - head_len * (angle + head_angle).sin(),
-    );
-    cx.stroke();
+    while z <= extent.end_y + EPS {
+        let (px1, py) = t.world_to_canvas(extent.start_x, z);
+        let (px2, _) = t.world_to_canvas(extent.end_x, z);
+        let is_origin = z.abs() < EPS;
+        cx.set_stroke_style_str(if is_origin { "#888888" } else { "#2a2a2a" });
+        cx.set_line_width(if is_origin { 1.5 } else { 0.5 });
+        cx.begin_path();
+        cx.move_to(px1, py);
+        cx.line_to(px2, py);
+        cx.stroke();
+        z += GRID_STEP;
+    }
 }
 
 /// Encapsulates the canvas ↔ world coordinate transform for a given frame.
@@ -53,12 +77,16 @@ struct ViewTransform {
 }
 
 impl ViewTransform {
-    fn new(canvas: &HtmlCanvasElement, pan: (f64, f64), zoom: f64) -> Self {
+    fn new(canvas: &HtmlCanvasElement, extent: &Extent2, pan: (f64, f64), zoom: f64) -> Self {
         let canvas_min = canvas.width().min(canvas.height()) as f64;
-        let scale = (canvas_min / 100.0) * zoom;
+        let world_w = (extent.end_x - extent.start_x) as f64;
+        let world_h = (extent.end_y - extent.start_y) as f64;
+        let scale = (canvas_min / world_w.max(world_h)) * zoom;
 
-        let center_x = canvas.width() as f64 / 2.0 + pan.0;
-        let center_y = canvas.height() as f64 / 2.0 + pan.1;
+        let world_mid_x = ((extent.start_x + extent.end_x) / 2.0) as f64;
+        let world_mid_y = ((extent.start_y + extent.end_y) / 2.0) as f64;
+        let center_x = canvas.width() as f64 / 2.0 + pan.0 - world_mid_x * scale;
+        let center_y = canvas.height() as f64 / 2.0 + pan.1 - world_mid_y * scale;
 
         Self {
             scale,
@@ -221,7 +249,7 @@ impl Map {
                     self.start_press = Some(pos);
                     self.arrow_target = None;
 
-                    let t = ViewTransform::new(&canvas, self.pan, w.zoom as f64);
+                    let t = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
                     let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
 
                     let Some(a) = self.avatars.iter_mut().find(|a| a.id == w.player) else {
@@ -338,11 +366,33 @@ impl Map {
     fn on_wheel(&mut self, e: WheelEvent) -> Result<(), Error> {
         e.prevent_default();
 
-        let delta = (-e.delta_y().signum() * ZOOM_FACTOR) as f32;
+        let delta = if e.delta_y() < 0.0 {
+            ZOOM_FACTOR
+        } else {
+            1.0 / ZOOM_FACTOR
+        } as f32;
 
-        if let Some(w) = &mut self.world {
-            w.zoom = (w.zoom + delta).clamp(0.1, 10.0);
-        }
+        let canvas = self
+            .canvas_ref
+            .cast::<HtmlCanvasElement>()
+            .ok_or("missing canvas")?;
+
+        let mx = e.offset_x() as f64;
+        let my = e.offset_y() as f64;
+
+        let Some(w) = &mut self.world else {
+            return Ok(());
+        };
+
+        let t_before = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
+        let (wx, wz) = t_before.canvas_to_world(mx, my);
+
+        w.zoom = (w.zoom * delta).clamp(0.1, 20.0);
+
+        let t_after = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
+        let (cx2, cy2) = t_after.world_to_canvas(wx as f32, wz as f32);
+        self.pan.0 += mx - cx2;
+        self.pan.1 += my - cy2;
 
         self.redraw()?;
         Ok(())
@@ -378,8 +428,10 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let t = ViewTransform::new(&canvas, self.pan, w.zoom as f64);
+        let t = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
         let token_radius = w.token_radius as f64 * t.scale;
+
+        draw_grid(&cx, &t, &w.extent);
 
         for (a, color) in self.avatars.iter().zip(COLORS.iter().cycle()) {
             let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
@@ -401,12 +453,13 @@ impl Map {
                 a.front
             };
 
-            let arrow_len = token_radius + 8.0 * w.zoom as f64;
-            let tip_x = x + front.x as f64 * arrow_len;
-            let tip_y = y + front.z as f64 * arrow_len;
-            cx.set_stroke_style_str(color);
-            cx.set_line_width(2.0 * w.zoom as f64);
-            draw_arrow(&cx, x, y, tip_x, tip_y, 6.0 * w.zoom as f64);
+            // Only draw the facing arc when the avatar has a non-zero facing direction.
+            if front.x.hypot(front.z) > 0.01 {
+                let angle = (front.z as f64).atan2(front.x as f64);
+                let arc_radius = token_radius * 1.4;
+                cx.set_stroke_style_str(color);
+                draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
+            }
         }
 
         Ok(())

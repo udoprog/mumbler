@@ -119,10 +119,14 @@ fn initialize(_: &Backend) -> api::InitializeEvent {
             },
         ],
         world: api::World {
-            zoom: 1.0,
-            width: 100.0,
-            height: 100.0,
-            token_radius: 1.0,
+            zoom: 10.0,
+            extent: api::Extent2 {
+                start_x: -50.0,
+                end_x: 50.0,
+                start_y: -50.0,
+                end_y: 50.0,
+            },
+            token_radius: 0.5,
             player: AvatarId::new(0),
         },
     }

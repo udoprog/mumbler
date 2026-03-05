@@ -35,15 +35,26 @@ pub struct UpdateAvatarsRequest {
 #[musli(crate = musli_core)]
 pub struct UpdateAvatarsResponse;
 
+#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Extent2 {
+    /// Start of the extent along the x axis.
+    pub start_x: f32,
+    /// End of the extent along the x axis.
+    pub end_x: f32,
+    /// Start of the extent along the y axis.
+    pub start_y: f32,
+    /// End of the extent along the y axis.
+    pub end_y: f32,
+}
+
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct World {
     /// The zoom level of the map.
     pub zoom: f32,
-    /// The width of the world in meters.
-    pub width: f32,
-    /// The height of the world in meters.
-    pub height: f32,
+    /// The extent of the world in meters.
+    pub extent: Extent2,
     /// The radius of a token in meters.
     pub token_radius: f32,
     /// The identifier of the player avatar.
