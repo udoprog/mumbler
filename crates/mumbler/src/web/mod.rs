@@ -1,5 +1,6 @@
 #[cfg(feature = "bundle")]
 mod bundle;
+mod imaging;
 mod nonbundle;
 
 mod ws;
@@ -46,18 +47,16 @@ impl From<anyhow::Error> for WebError {
 }
 
 use std::future::Future;
-use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use api::{Avatar, Id, Vec3};
+use api::{Id, Vec3};
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
-use image::ImageFormat;
 use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
@@ -152,7 +151,6 @@ async fn initialize(backend: &Backend) -> Result<api::InitializeEvent> {
     };
 
     if let Some(id) = image {
-        let image = backend.db().get_image(id).await?;
         ev.images.extend(backend.db().get_image(id).await?);
     }
 
@@ -165,17 +163,10 @@ async fn upload_image(
 ) -> Result<api::UploadImageResponse> {
     tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
 
-    let task = task::spawn_blocking(move || {
-        let image = image::load_from_memory(&request.data[..])?;
-        let width = image.width();
-        let height = image.height();
-        let mut bytes = Cursor::new(Vec::new());
-        image.write_to(&mut bytes, ImageFormat::Png)?;
-        Ok::<_, anyhow::Error>((width, height, bytes.into_inner()))
-    });
+    let task = task::spawn_blocking(move || imaging::process(&request.data, 128));
 
-    let (width, height, bytes) = task.await??;
-    let id = backend.db().save_image(width, height, bytes).await?;
+    let bytes = task.await??;
+    let id = backend.db().save_image(128, 128, bytes).await?;
     Ok(api::UploadImageResponse { id })
 }
 

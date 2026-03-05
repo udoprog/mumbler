@@ -3,6 +3,7 @@ use super::{Database, Paths};
 /// The backend of the application, containing the database and other shared state.
 pub struct Backend {
     database: Database,
+    #[allow(unused)]
     paths: Paths,
 }
 

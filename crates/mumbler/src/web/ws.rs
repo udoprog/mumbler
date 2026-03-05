@@ -57,7 +57,7 @@ impl ws::Handler for Handler {
                 outgoing.write(super::upload_image(&self.backend, request).await?);
             }
             api::Request::ListSettings => {
-                let request = incoming
+                _ = incoming
                     .read::<api::ListSettingsRequest>()
                     .context("missing request")?;
 

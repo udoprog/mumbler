@@ -1,10 +1,13 @@
-use api::{Avatar, Extent2, Vec3, World};
+use std::collections::HashMap;
+use std::f64::consts::{FRAC_PI_6, TAU};
+
+use api::{Avatar, Extent2, Id, Vec3, World};
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, ResizeObserver,
-    WheelEvent,
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, HtmlImageElement, MouseEvent,
+    ResizeObserver, WheelEvent,
 };
 use yew::prelude::*;
 
@@ -27,7 +30,7 @@ fn draw_facing_arc(
     angle: f64,
     line_width: f64,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    const HALF_SPAN: f64 = std::f64::consts::FRAC_PI_6;
+    const HALF_SPAN: f64 = FRAC_PI_6;
 
     cx.set_line_width(line_width);
     cx.begin_path();
@@ -160,6 +163,9 @@ pub(crate) struct Map {
     arrow_target: Option<(f64, f64)>,
     /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
+    /// Loaded avatar images, keyed by image id.
+    /// The closure must be kept alive alongside the element for the onload callback to fire.
+    images: HashMap<Id, (HtmlImageElement, Option<Closure<dyn FnMut()>>)>,
 }
 
 pub(crate) enum Msg {
@@ -167,6 +173,7 @@ pub(crate) enum Msg {
     AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
     StateChanged(ws::State),
     Resized,
+    ImageLoaded(Id),
     MouseDown(MouseEvent),
     MouseMove(MouseEvent),
     MouseUp(MouseEvent),
@@ -201,6 +208,7 @@ impl Map {
                     self.world = Some(initialize.world);
                     self.player = Some(initialize.player);
                     self.avatars = initialize.avatars;
+                    self.load_images(ctx, &initialize.images);
                 }
 
                 if let Err(error) = self.redraw() {
@@ -221,6 +229,14 @@ impl Map {
             }
             Msg::Resized => {
                 self.resize_canvas();
+                self.redraw()?;
+                Ok(false)
+            }
+            Msg::ImageLoaded(id) => {
+                if let Some((_, closure)) = self.images.get_mut(&id) {
+                    *closure = None;
+                }
+
                 self.redraw()?;
                 Ok(false)
             }
@@ -427,6 +443,22 @@ impl Map {
 
 impl Map {
     /// Resize the canvas according to its parent sizer element.
+    fn load_images(&mut self, ctx: &Context<Self>, images: &[api::Image]) {
+        self.images.clear();
+
+        for image in images {
+            let id = image.id;
+            let link = ctx.link().clone();
+            let img = HtmlImageElement::new().unwrap();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                link.send_message(Msg::ImageLoaded(id));
+            });
+            img.set_onload(Some(closure.as_ref().unchecked_ref()));
+            img.set_src(&format!("/api/image/{id}"));
+            self.images.insert(id, (img, Some(closure)));
+        }
+    }
+
     fn resize_canvas(&self) {
         let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() else {
             return;
@@ -473,10 +505,50 @@ impl Map {
         for ((a, player), color) in avatars.zip(COLORS.iter().cycle()) {
             let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
 
-            cx.set_fill_style_str(color);
-            cx.begin_path();
-            cx.arc(x, y, token_radius, 0.0, std::f64::consts::TAU)?;
-            cx.fill();
+            // Draw avatar token: circular image if available, otherwise a filled circle.
+            let image_drawn = 'draw: {
+                let Some(id) = a.image else {
+                    break 'draw false;
+                };
+
+                let Some((img, _)) = self.images.get(&id) else {
+                    break 'draw false;
+                };
+
+                if !img.complete() || img.natural_width() == 0 {
+                    break 'draw false;
+                }
+
+                let iw = img.natural_width() as f64;
+                let ih = img.natural_height() as f64;
+
+                let scale = (token_radius * 2.0) / iw.min(ih);
+                let dw = iw * scale;
+                let dh = ih * scale;
+
+                cx.save();
+                cx.begin_path();
+                cx.arc(x, y, token_radius, 0.0, TAU)?;
+                cx.clip();
+
+                cx.draw_image_with_html_image_element_and_dw_and_dh(
+                    img,
+                    x - dw / 2.0,
+                    y - dh / 2.0,
+                    dw,
+                    dh,
+                )?;
+
+                cx.restore();
+                true
+            };
+
+            if !image_drawn {
+                cx.set_fill_style_str(color);
+                cx.begin_path();
+                cx.arc(x, y, token_radius, 0.0, TAU)?;
+                cx.fill();
+            }
 
             let front = if player && let Some((mx, my)) = self.arrow_target {
                 let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
@@ -528,6 +600,7 @@ impl Component for Map {
             start_press: None,
             arrow_target: None,
             _resize_observer: None,
+            images: HashMap::new(),
         };
 
         this.refresh(&ctx);
@@ -545,12 +618,22 @@ impl Component for Map {
                 });
                 let observer = ResizeObserver::new(closure.as_ref().unchecked_ref()).unwrap();
                 observer.observe(&sizer);
-                self._resize_observer = Some((observer, closure));
+
+                if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
+                    o.disconnect();
+                    drop(_closure);
+                }
             }
         }
 
         if let Err(error) = self.redraw() {
             tracing::error!(%error, "Failed to redraw map");
+        }
+    }
+
+    fn destroy(&mut self, _: &Context<Self>) {
+        if let Some((observer, _closure)) = self._resize_observer.take() {
+            observer.disconnect();
         }
     }
 

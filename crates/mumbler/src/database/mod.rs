@@ -20,30 +20,30 @@ use tokio::sync::Mutex;
 use tokio::task;
 
 #[derive(Clone, Copy)]
-struct IntegerBlob(u64);
+struct BlobId(Id);
 
-impl BindValue for IntegerBlob {
+impl BindValue for BlobId {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        let bytes = self.0.to_le_bytes();
+        let bytes = self.0.as_u64().to_le_bytes();
         bytes.bind_value(stmt, index)
     }
 }
 
-impl Bind for IntegerBlob {
+impl Bind for BlobId {
     #[inline]
     fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
         self.bind_value(stmt, BIND_INDEX)
     }
 }
 
-impl FromColumn<'_> for IntegerBlob {
+impl FromColumn<'_> for BlobId {
     type Type = ty::Blob;
 
     #[inline]
     fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
         let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
-        Ok(IntegerBlob(id))
+        Ok(BlobId(Id::new(id)))
     }
 }
 
@@ -55,7 +55,7 @@ struct Migrations;
 
 struct Inner {
     insert_image: SendStatement,
-    list_images: SendStatement,
+    select_images: SendStatement,
     select_image_data: SendStatement,
     select_image: SendStatement,
     get_config: SendStatement,
@@ -141,7 +141,7 @@ impl Database {
         let inner = unsafe {
             Inner {
                 insert_image: c.prepare("INSERT INTO images (id, width, height, content_type, data) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
-                list_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
+                select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 select_image: c.prepare("SELECT id, width, height FROM images WHERE id = ?")?.into_send()?,
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
@@ -159,7 +159,7 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.select_image_data.bind((IntegerBlob(id.as_u64()),))?;
+            inner.select_image_data.bind((BlobId(id),))?;
 
             if let Some(data) = inner.select_image_data.next::<Vec<u8>>()? {
                 return Ok(Some(data));
@@ -176,16 +176,12 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_images.reset()?;
+            inner.select_image.bind(BlobId(id))?;
 
-            if let Some((IntegerBlob(id), width, height)) =
-                inner.list_images.next::<(IntegerBlob, u32, u32)>()?
+            if let Some((BlobId(id), width, height)) =
+                inner.select_image.next::<(BlobId, u32, u32)>()?
             {
-                let image = Image {
-                    id: Id::new(id),
-                    width,
-                    height,
-                };
+                let image = Image { id, width, height };
 
                 return Ok(Some(image));
             }
@@ -201,18 +197,14 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_images.reset()?;
+            inner.select_images.reset()?;
 
             let mut images = Vec::new();
 
-            while let Some((IntegerBlob(id), width, height)) =
-                inner.list_images.next::<(IntegerBlob, u32, u32)>()?
+            while let Some((BlobId(id), width, height)) =
+                inner.select_images.next::<(BlobId, u32, u32)>()?
             {
-                let image = Image {
-                    id: Id::new(id),
-                    width,
-                    height,
-                };
+                let image = Image { id, width, height };
 
                 images.push(image);
             }
@@ -228,28 +220,11 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            let id = IntegerBlob(rand::random());
+            let id = Id::new(rand::random());
             inner
                 .insert_image
-                .execute((id, width, height, "image/png", data))?;
-            Ok(Id::new(id.0))
-        });
-
-        task.await?
-    }
-
-    /// List images.
-    async fn images(&self) -> Result<Vec<Id>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            let mut images = Vec::new();
-
-            while let Some(IntegerBlob(id)) = inner.list_images.next::<IntegerBlob>()? {
-                images.push(Id::new(id));
-            }
-
-            Ok(images)
+                .execute((BlobId(id), width, height, "image/png", data))?;
+            Ok(id)
         });
 
         task.await?

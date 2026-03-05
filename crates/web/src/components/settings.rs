@@ -2,7 +2,7 @@ use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::HtmlInputElement;
+use web_sys::{File, HtmlInputElement};
 use yew::prelude::*;
 
 use crate::error::Error;
@@ -10,6 +10,7 @@ use crate::error::Error;
 pub(crate) enum Msg {
     StateChanged(ws::State),
     AvatarImageSelected(Event),
+    AvatarImageUpload(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     AvatarUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ListImages(Result<Packet<api::ListSettings>, ws::Error>),
@@ -26,6 +27,7 @@ pub(crate) struct Settings {
     state: ws::State,
     selected: Option<api::Id>,
     images: Vec<api::Image>,
+    file: Option<File>,
     _state_change: ws::StateListener,
     _file_reader: Option<FileReader>,
     _upload_avatar: ws::Request,
@@ -47,6 +49,7 @@ impl Component for Settings {
             state,
             selected: None,
             images: Vec::new(),
+            file: None,
             _state_change,
             _file_reader: None,
             _upload_avatar: ws::Request::new(),
@@ -81,20 +84,31 @@ impl Component for Settings {
             }
         });
 
+        let class = classes!("btn", self.file.is_none().then_some("disabled"));
+
+        let upload = self
+            .file
+            .is_some()
+            .then(|| ctx.link().callback(Msg::AvatarImageUpload));
+
         html! {
             <div class="settings rows">
                 <h2>{"Select Avatar:"}</h2>
 
-                <section class="row user">
-                    <label class="btn" title="Upload avatar image">
-                        {"Upload new image"}
-                        <input
-                            type="file"
-                            accept="image/*"
-                            style="display:none"
-                            onchange={ctx.link().callback(Msg::AvatarImageSelected)}
+                <section class="row">
+                    <label for="avatar-file" class="btn">{"Choose Image"}</label>
+                    <input
+                        id="avatar-file"
+                        class="hidden"
+                        title="Upload avatar image"
+                        type="file"
+                        accept="image/*"
+                        onchange={ctx.link().callback(Msg::AvatarImageSelected)}
                         />
-                    </label>
+                </section>
+
+                <section>
+                    <button {class} onclick={upload}>{"Upload"}</button>
                 </section>
 
                 <div class="row">
@@ -135,7 +149,13 @@ impl Settings {
                     .map_err(|_| "target is not an input element")?;
 
                 let files = input.files().ok_or("no file list")?;
-                let file = files.get(0).ok_or("no file selected")?;
+                self.file = Some(files.get(0).ok_or("no file selected")?);
+                Ok(true)
+            }
+            Msg::AvatarImageUpload(_e) => {
+                let Some(file) = self.file.take() else {
+                    return Err("no file selected".into());
+                };
 
                 let content_type = file.type_();
                 let gloo_file = gloo::file::File::from(file);
@@ -145,7 +165,7 @@ impl Settings {
                     link.send_message(Msg::AvatarImageData(content_type.clone(), res));
                 }));
 
-                Ok(false)
+                Ok(true)
             }
             Msg::AvatarImageData(content_type, result) => {
                 self._file_reader = None;
@@ -163,9 +183,9 @@ impl Settings {
             }
             Msg::AvatarUploaded(result) => {
                 let result = result?;
-
                 let response = result.decode()?;
                 tracing::info!(?response.id, "Avatar uploaded with ID");
+                self.refresh(ctx);
                 Ok(false)
             }
             Msg::ListImages(result) => {
