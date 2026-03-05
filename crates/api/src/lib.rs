@@ -1,3 +1,5 @@
+use core::fmt;
+
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
@@ -5,44 +7,75 @@ use musli_web::api;
 #[musli(crate = musli_core)]
 pub struct Empty;
 
-#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
+#[musli(crate = musli_core, transparent)]
+pub struct AvatarId(u64);
+
+impl AvatarId {
+    #[inline]
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl fmt::Debug for AvatarId {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct World {
+    /// The zoom level of the map.
+    pub zoom: f32,
     /// The width of the world in meters.
     pub width: f32,
     /// The height of the world in meters.
     pub height: f32,
+    /// The radius of a token in meters.
+    pub token_radius: f32,
+    /// The identifier of the player avatar.
+    pub player: AvatarId,
 }
 
-#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
-    /// The x coordinate in meters from the origin (forward / backward).
+    /// The x coordinate in meters from the origin (left / right).
     pub x: f32,
     /// The y coordinate in meters from the origin (up / down).
     pub y: f32,
-    /// The z coordinate in meters from the origin (left / right).
+    /// The z coordinate in meters from the origin (forward / backward).
     pub z: f32,
 }
 
 impl Vec3 {
+    /// A unit vector pointing forward in the world (negative z direction).
+    pub const FORWARD: Self = Self::new(0.0, 0.0, -1.0);
+
     /// Constructs a new position with the given coordinates.
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
+    #[inline]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 }
 
-#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Avatar {
     /// The unique identifier of the avatar.
-    pub id: u64,
+    pub id: AvatarId,
     /// The position of the avatar on the map, in world coordinates.
     pub position: Vec3,
+    /// The direction the avatar is facing, as a unit vector in world coordinates (x/z plane).
+    #[musli(default)]
+    pub front: Vec3,
 }
 
 /// Event emitted when the API is initialized.
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeEvent {
     /// The name of the current user.

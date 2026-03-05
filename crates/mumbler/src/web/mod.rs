@@ -50,7 +50,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use api::{Avatar, Vec3};
+use api::{Avatar, AvatarId, Vec3};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -108,17 +108,22 @@ fn initialize(_: &Backend) -> api::InitializeEvent {
         name: Some("Gilbert".to_owned()),
         avatars: vec![
             Avatar {
-                id: 0,
+                id: AvatarId::new(0),
                 position: Vec3::new(0.0, 0.0, -1.0),
+                front: Vec3::FORWARD,
             },
             Avatar {
-                id: 1,
+                id: AvatarId::new(1),
                 position: Vec3::new(0.0, 0.0, 1.0),
+                front: Vec3::FORWARD,
             },
         ],
         world: api::World {
+            zoom: 1.0,
             width: 100.0,
             height: 100.0,
+            token_radius: 1.0,
+            player: AvatarId::new(0),
         },
     }
 }
