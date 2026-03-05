@@ -5,7 +5,7 @@ use tokio::io::{self, AsyncBufReadExt as _};
 use tokio::time;
 use tokio::time::Instant;
 
-use mumbler::{Link, Position};
+use mumblelink::{Link, Position};
 
 const HELP: &str = "Commands:
   left - Move avatar and camera to the left

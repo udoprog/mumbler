@@ -1,0 +1,58 @@
+@import "_reset";
+@import "_mixins";
+
+$margin: 10px;
+
+:root {
+    --text-color: #d9d9d9;
+    --heading-color: #eee;
+    --link-color: #b3d9ec;
+    --link-hover: #eee;
+    --success-color: #4caf50;
+    --warning-color: #ffcc00;
+}
+
+body {
+    background-color: #121212;
+    color: var(--text-color);
+}
+
+.warning {
+    color: var(--warning-color);
+}
+
+.success {
+    color: var(--success-color);
+}
+
+.status {
+    display: flex;
+    flex-direction: row;
+    gap: 1em;
+    margin-bottom: 1em;
+
+    .connection {
+        font-weight: bold;
+        color: var(--link-color);
+
+        .connection-indicator {
+            margin-left: 0.5em;
+        }
+    }
+
+    .user {
+        margin-left: auto;
+        font-style: italic;
+        color: var(--text-color);
+    }
+}
+
+.container {
+    max-width: 800px;
+    margin: $margin auto;
+    padding: 1em;
+
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    box-shadow: 0 0 $margin rgba(0, 0, 0, 0.5);
+}

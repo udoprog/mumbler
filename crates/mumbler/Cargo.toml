@@ -1,0 +1,27 @@
+[package]
+name = "mumbler"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+bundle = []
+
+[dependencies]
+api = { path = "../api" }
+
+jiff = "0.2.23"
+rust-embed = "8.11.0"
+sqll = "0.12.4"
+tokio = "1.50.0"
+mime_guess = { version = "2.0.4", default-features = false }
+axum = { version = "0.8.1", features = ["http1", "json", "query", "tracing", "http2", "ws"] }
+anyhow = "1.0.102"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+directories-next = "2.0.0"
+clap = { version = "4.5.60", features = ["derive"] }
+tokio-stream = "0.1.18"
+musli-web = { version = "0.1.6", features = ["axum08"] }
+relative-path = "2.0.1"
+tower-http = { version = "0.6.8", features = ["cors"] }
