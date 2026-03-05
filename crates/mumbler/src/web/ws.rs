@@ -72,6 +72,14 @@ impl ws::Handler for Handler {
                 let response = super::select_image(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::DeleteImage => {
+                let request = incoming
+                    .read::<api::DeleteImageRequest>()
+                    .context("missing request")?;
+
+                let response = super::delete_image(&self.backend, request).await?;
+                outgoing.write(response);
+            }
         }
 
         Ok(())

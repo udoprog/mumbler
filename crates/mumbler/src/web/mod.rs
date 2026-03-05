@@ -183,3 +183,11 @@ async fn select_image(
     backend.db().set_config("avatar/image", request.id).await?;
     Ok(api::SelectImageResponse { id: request.id })
 }
+
+async fn delete_image(
+    backend: &Backend,
+    request: api::DeleteImageRequest,
+) -> Result<api::DeleteImageResponse> {
+    backend.db().delete_image(request.id).await?;
+    Ok(api::DeleteImageResponse)
+}

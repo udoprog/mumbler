@@ -163,6 +163,17 @@ pub struct SelectImageResponse {
     pub id: Id,
 }
 
+/// Request to delete a stored image.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct DeleteImageRequest {
+    pub id: Id,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct DeleteImageResponse;
+
 api::define! {
     pub type Initialize;
 
@@ -197,5 +208,12 @@ api::define! {
     impl Endpoint for SelectImage {
         impl Request for SelectImageRequest;
         type Response<'de> = SelectImageResponse;
+    }
+
+    pub type DeleteImage;
+
+    impl Endpoint for DeleteImage {
+        impl Request for DeleteImageRequest;
+        type Response<'de> = DeleteImageResponse;
     }
 }

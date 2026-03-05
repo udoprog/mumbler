@@ -16,6 +16,8 @@ pub(crate) enum Msg {
     ListImages(Result<Packet<api::ListSettings>, ws::Error>),
     SelectImage(api::Id),
     SelectImageResult(Result<Packet<api::SelectImage>, ws::Error>),
+    DeleteImage(api::Id),
+    DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -33,6 +35,7 @@ pub(crate) struct Settings {
     _upload_avatar: ws::Request,
     _list_images: ws::Request,
     _select_image: ws::Request,
+    _delete_image: ws::Request,
 }
 
 impl Component for Settings {
@@ -55,6 +58,7 @@ impl Component for Settings {
             _upload_avatar: ws::Request::new(),
             _list_images: ws::Request::new(),
             _select_image: ws::Request::new(),
+            _delete_image: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -74,13 +78,17 @@ impl Component for Settings {
     fn view(&self, ctx: &Context<Self>) -> Html {
         tracing::info!(?self.images);
 
-        let images =  self.images.iter().map(|image| {
+        let images = self.images.iter().map(|image| {
             let id = image.id;
-            let onclick = ctx.link().callback(move |_| Msg::SelectImage(id));
+            let on_select = ctx.link().callback(move |_| Msg::SelectImage(id));
+            let on_delete = ctx.link().callback(move |_: MouseEvent| Msg::DeleteImage(id));
             let classes = classes!("avatar", (self.selected == Some(id)).then_some("selected"), "clickable");
 
             html! {
-                <img src={format!("/api/image/{}", image.id)} alt={format!("Image {}", image.id)} {onclick} class={classes} />
+                <div class="image-entry">
+                    <img src={format!("/api/image/{}", image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
+                    <button class="btn danger floating icon" onclick={on_delete} title="Remove image">{"ⓧ"}</button>
+                </div>
             }
         });
 
@@ -95,7 +103,7 @@ impl Component for Settings {
             <div class="settings rows">
                 <h2>{"Select Avatar:"}</h2>
 
-                <section class="row">
+                <section>
                     <label for="avatar-file" class="btn">{"Choose Image"}</label>
                     <input
                         id="avatar-file"
@@ -111,7 +119,7 @@ impl Component for Settings {
                     <button {class} onclick={upload}>{"Upload"}</button>
                 </section>
 
-                <div class="row">
+                <div class="gallery">
                     {for images}
                 </div>
             </div>
@@ -211,6 +219,21 @@ impl Settings {
                 let response = result.decode()?;
                 self.selected = Some(response.id);
                 Ok(true)
+            }
+            Msg::DeleteImage(id) => {
+                self._delete_image = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::DeleteImageRequest { id })
+                    .on_packet(ctx.link().callback(Msg::DeleteImageResult))
+                    .send();
+                Ok(false)
+            }
+            Msg::DeleteImageResult(result) => {
+                result?;
+                self.refresh(ctx);
+                Ok(false)
             }
         }
     }

@@ -58,6 +58,7 @@ struct Inner {
     select_images: SendStatement,
     select_image_data: SendStatement,
     select_image: SendStatement,
+    delete_image: SendStatement,
     get_config: SendStatement,
     set_config: SendStatement,
 }
@@ -144,6 +145,7 @@ impl Database {
                 select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 select_image: c.prepare("SELECT id, width, height FROM images WHERE id = ?")?.into_send()?,
+                delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
             }
@@ -210,6 +212,18 @@ impl Database {
             }
 
             Ok(images)
+        });
+
+        task.await?
+    }
+
+    /// Delete an image from the database by its unique identifier.
+    pub(crate) async fn delete_image(&self, id: Id) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.delete_image.execute((BlobId(id),))?;
+            Ok(())
         });
 
         task.await?
