@@ -54,7 +54,7 @@ pub fn main() -> Result<()> {
         None => dirs.config_dir(),
     };
 
-    let paths = Paths::new(&config);
+    let paths = Paths::new(config);
 
     if opts.paths {
         println!("Database: {}", paths.db.display());

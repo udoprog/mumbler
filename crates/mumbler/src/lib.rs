@@ -28,13 +28,10 @@ pub async fn run(b: Backend, bundle: bool) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     let mut future = pin!(web::setup(listener, backend.clone(), bundle)?);
 
-    loop {
-        tokio::select! {
-            result = future.as_mut() => {
-                result?;
-                tracing::info!("Web shut down gracefully");
-                break;
-            }
+    tokio::select! {
+        result = future.as_mut() => {
+            result?;
+            tracing::info!("Web shut down gracefully");
         }
     }
 

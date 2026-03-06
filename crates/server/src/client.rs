@@ -6,6 +6,7 @@ use std::io;
 use anyhow::{Context as _, Result};
 use musli_core::Encode;
 use musli_core::mode::Binary;
+use musli_web::api::{Endpoint, Request};
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 const CAP: usize = 4096;
@@ -22,6 +23,21 @@ impl Scratch {
         Self {
             data: Vec::with_capacity(CAP),
         }
+    }
+
+    /// Write a request.
+    #[inline]
+    pub fn request<R>(&mut self, request: R) -> Result<()>
+    where
+        R: Request,
+    {
+        self.write(&api::server::Header {
+            request: <R::Endpoint as Endpoint>::ID.get(),
+            error: 0,
+        })?;
+
+        self.write(&request)?;
+        Ok(())
     }
 
     /// Write a value to the scratch buffer.

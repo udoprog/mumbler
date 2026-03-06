@@ -6,7 +6,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::{Context as _, Result};
-use api::server;
+use api::server::{ConnectRequest, Header, Request};
 use musli::reader::SliceReader;
 use musli_web::api::MessageId;
 
@@ -89,7 +89,7 @@ impl Peer {
 
                             let mut body = SliceReader::new(body);
 
-                            let header: server::Header = musli::storage::decode(&mut body)?;
+                            let header: Header = musli::storage::decode(&mut body)?;
 
                             if let Some(id) = MessageId::new(header.error) {
                                 let error = if id == MessageId::ERROR_MESSAGE {
@@ -103,13 +103,13 @@ impl Peer {
                                 return Err(anyhow::anyhow!("{}", error.message));
                             }
 
-                            let Some(request) = server::Request::from_raw(header.request) else {
+                            let Some(request) = Request::from_raw(header.request) else {
                                 anyhow::bail!("invalid request type: {}", header.request);
                             };
 
                             match request {
-                                server::Request::Connect => {
-                                    let request: server::ConnectRequest =
+                                Request::Connect => {
+                                    let request: ConnectRequest =
                                         musli::storage::decode(&mut body)?;
                                     tracing::info!(?self.addr, ?request, "client connected");
                                 }
@@ -130,12 +130,7 @@ impl Peer {
 
     /// Connects the peer by sending a connect request.
     pub fn connect(&mut self) -> Result<()> {
-        self.scratch.write(&server::Header {
-            request: server::Request::Connect as u16,
-            error: 0,
-        })?;
-
-        self.scratch.write(&server::ConnectRequest { version: 1 })?;
+        self.scratch.request(ConnectRequest { version: 1 })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

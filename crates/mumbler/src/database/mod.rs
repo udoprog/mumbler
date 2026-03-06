@@ -77,10 +77,10 @@ impl Database {
         let c = if memory {
             open.open_in_memory()?
         } else {
-            if let Some(parent) = paths.db.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = paths.db.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent)?;
             }
 
             tracing::info!("Opening database at {}", paths.db.display());
@@ -257,7 +257,7 @@ impl Database {
             inner.get_config.bind((key,))?;
 
             if let Some(row) = inner.get_config.next::<&[u8]>()? {
-                let value = musli::storage::from_slice::<T>(&row)?;
+                let value = musli::storage::from_slice::<T>(row)?;
                 return Ok(Some(value));
             }
 

@@ -68,10 +68,7 @@ impl<T> Map<T> {
             let ptr = ptr.cast::<T>();
 
             if !ptr.is_aligned() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Mapped pointer is not properly aligned",
-                ));
+                return Err(io::Error::other("Mapped pointer is not properly aligned"));
             }
 
             Ok(Map {

@@ -73,7 +73,9 @@ struct State {
     /// Channel that child tasks used to indicate that they need to wake up.
     receiver: Receiver<usize>,
     sender: Sender<usize>,
-    wakers: HashMap<usize, Arc<IndexWaker>>,
+    wakers: HashMap<usize, Waker>,
+    /// The currently observed parent context. If this changes, we have to
+    /// invalidate all wakers and repoll all peers.
     context: Option<Waker>,
 }
 
@@ -98,22 +100,20 @@ impl State {
         self.wakers.remove(&index);
     }
 
-    fn waker_for(&mut self, index: usize, parent: &Waker) -> Waker {
+    fn waker_for(&mut self, index: usize, parent: &Waker) -> &Waker {
         let sender = &self.sender;
 
-        let arc = self.wakers.entry(index).or_insert_with(|| {
-            Arc::new(IndexWaker {
+        self.wakers.entry(index).or_insert_with(|| {
+            Waker::from(Arc::new(IndexWaker {
                 index,
                 sender: sender.clone(),
                 parent: parent.clone(),
-            })
-        });
-
-        Waker::from(arc.clone())
+            }))
+        })
     }
 
     fn refresh_parent(&mut self, slab: &Slab<Peer>, parent: &Waker) {
-        let changed = self.context.as_ref().map_or(true, |w| !w.will_wake(parent));
+        let changed = self.context.as_ref().is_none_or(|w| !w.will_wake(parent));
 
         if changed {
             self.context = Some(parent.clone());
@@ -151,7 +151,7 @@ impl Future for Peers<'_> {
             };
 
             let waker = state.waker_for(index, cx.waker());
-            let mut cx = Context::from_waker(&waker);
+            let mut cx = Context::from_waker(waker);
 
             if let Poll::Ready(ready) = peer.poll(&mut cx) {
                 return Poll::Ready((index, ready));
@@ -161,7 +161,7 @@ impl Future for Peers<'_> {
         while let Ok(index) = state.receiver.try_recv() {
             if let Some(peer) = slab.get(index) {
                 let waker = state.waker_for(index, cx.waker());
-                let mut cx = Context::from_waker(&waker);
+                let mut cx = Context::from_waker(waker);
 
                 if let Poll::Ready(ready) = peer.poll(&mut cx) {
                     return Poll::Ready((index, ready));

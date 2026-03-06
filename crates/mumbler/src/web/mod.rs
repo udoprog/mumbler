@@ -100,6 +100,7 @@ pub(crate) fn setup(
     })
 }
 
+#[allow(clippy::let_and_return)]
 fn common_routes(router: Router) -> Router {
     let router = router.route("/ws", get(ws::entry));
     let router = router.route("/api/image/{id}", get(image));

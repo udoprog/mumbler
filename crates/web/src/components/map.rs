@@ -603,7 +603,7 @@ impl Component for Map {
             images: HashMap::new(),
         };
 
-        this.refresh(&ctx);
+        this.refresh(ctx);
         this
     }
 
