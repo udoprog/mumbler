@@ -47,7 +47,7 @@ impl PeerState {
             peer,
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
             transform: Transform::origin(),
-            color: api::Color::neutral_gray(),
+            color: api::Color::neutral(),
             image: None,
             room: None,
         }

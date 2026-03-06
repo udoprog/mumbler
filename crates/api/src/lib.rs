@@ -23,8 +23,8 @@ impl Color {
     }
 
     /// A nice neutral gray color (default).
-    pub const fn neutral_gray() -> Self {
-        Self::new(107, 114, 128, 255)
+    pub const fn neutral() -> Self {
+        Self::new(0x66, 0xc5, 0xe5, 255)
     }
 
     /// Convert to a CSS color string.
@@ -201,7 +201,7 @@ impl World {
     /// A world with default settings.
     pub const fn zero() -> Self {
         Self {
-            zoom: 10.0,
+            zoom: 2.0,
             pan: Pan::zero(),
             extent: Extent2::zero(),
             token_radius: 0.5,
@@ -314,7 +314,7 @@ impl Avatar {
         Self {
             transform: Transform::origin(),
             image: None,
-            color: Color::neutral_gray(),
+            color: Color::neutral(),
         }
     }
 }

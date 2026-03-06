@@ -58,7 +58,7 @@ impl Component for Settings {
         let mut this = Self {
             state,
             selected: None,
-            color: api::Color::neutral_gray(),
+            color: api::Color::neutral(),
             images: Vec::new(),
             file: None,
             preview_url: None,

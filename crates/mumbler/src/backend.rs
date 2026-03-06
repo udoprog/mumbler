@@ -64,7 +64,7 @@ impl Default for PeerInfo {
         Self {
             transform: Transform::origin(),
             image: None,
-            color: Color::neutral_gray(),
+            color: Color::neutral(),
         }
     }
 }
@@ -127,7 +127,7 @@ impl Backend {
         let color = database
             .get_config::<Color>("avatar/color")
             .await?
-            .unwrap_or_else(Color::neutral_gray);
+            .unwrap_or_else(Color::neutral);
 
         let transform = database
             .get_config::<Transform>("avatar/transform")

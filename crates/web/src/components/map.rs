@@ -58,6 +58,7 @@ fn draw_grid(cx: &CanvasRenderingContext2d, t: &ViewTransform, extent: &Extent2,
             cx.line_to(px, py2);
             cx.stroke();
         }
+
         x += GRID_STEP;
     }
 
@@ -72,6 +73,7 @@ fn draw_grid(cx: &CanvasRenderingContext2d, t: &ViewTransform, extent: &Extent2,
             cx.line_to(px2, py);
             cx.stroke();
         }
+
         z += GRID_STEP;
     }
 
@@ -359,7 +361,7 @@ impl Map {
                             id: peer_id,
                             transform: api::Transform::origin(),
                             image: None,
-                            color: api::Color::neutral_gray(),
+                            color: api::Color::neutral(),
                         });
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
