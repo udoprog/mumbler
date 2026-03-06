@@ -1,25 +1,23 @@
 use core::pin::pin;
+use core::time::Duration;
 
 use anyhow::{Result, bail};
-use mumbler::remote::api::{Event, PongBody};
-use mumbler::remote::{Client, Peer};
-use tokio::time::{self, Duration, Instant};
-use tracing::Level;
+use tokio::time::{self, Instant};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
-        .init();
+use crate::Backend;
+use crate::remote::api::{Event, PongBody};
+use crate::remote::{Client, Peer};
 
+pub async fn run(b: Backend) -> Result<()> {
     let client = Client::connect("localhost:44114").await?;
     let addr = client.addr()?;
 
+    tracing::info!(?addr, "connected");
+
     let mut peer = Peer::new(addr, client);
+    peer.connect(b"default")?;
 
-    peer.connect()?;
-
-    let mut send_ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
+    let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
     let mut last_ping = None;
 
@@ -29,26 +27,35 @@ async fn main() -> Result<()> {
                 result?;
 
                 while let Some((event, body)) = peer.handle::<Event>()? {
-                    tracing::info!(?event, "received event");
-
                     match event {
                         Event::Pong => {
                             let pong = body.decode::<PongBody>()?;
 
                             if Some(pong.payload) == last_ping {
                                 last_ping = None;
-                                send_ping_timeout.as_mut().reset(Instant::now() + Duration::from_secs(1));
+                                ping_timeout.as_mut().reset(Instant::now() + Duration::from_secs(1));
                             }
                         },
-                        unsupported => {
-                            bail!("unsupported event: {unsupported:?}");
+                        event => {
+                            tracing::info!(?event);
                         }
                     }
                 }
             }
-            _ = send_ping_timeout.as_mut(), if last_ping.is_none() => {
-                tracing::info!("sending ping");
+            ev = b.event() => {
+                let Some(ev) = ev else {
+                    bail!("backend event stream ended");
+                };
 
+                tracing::info!(?ev);
+
+                match ev {
+                    crate::backend::Event::Move(position, front) => {
+                        peer.move_to(position, front)?;
+                    }
+                }
+            }
+            _ = ping_timeout.as_mut(), if last_ping.is_none() => {
                 let payload = rand::random();
                 last_ping = Some(payload);
                 peer.ping(payload)?;

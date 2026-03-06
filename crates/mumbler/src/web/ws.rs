@@ -2,7 +2,6 @@ use core::error::Error as _;
 use core::pin::pin;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::Extension;
@@ -15,14 +14,15 @@ use musli_web::ws;
 use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
+use crate::backend::Event;
 
 struct Handler {
-    backend: Arc<Backend>,
+    backend: Backend,
 }
 
 impl Handler {
-    fn new(service: Arc<Backend>) -> Self {
-        Self { backend: service }
+    fn new(backend: Backend) -> Self {
+        Self { backend }
     }
 }
 
@@ -47,7 +47,8 @@ impl ws::Handler for Handler {
                     .read::<api::UpdatePlayerRequest>()
                     .context("missing request")?;
 
-                tracing::info!(?request);
+                self.backend
+                    .send(Event::Move(request.avatar.position, request.avatar.front));
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -91,7 +92,7 @@ impl ws::Handler for Handler {
 
 pub(super) async fn entry(
     ws: WebSocketUpgrade,
-    Extension(backend): Extension<Arc<Backend>>,
+    Extension(backend): Extension<Backend>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {

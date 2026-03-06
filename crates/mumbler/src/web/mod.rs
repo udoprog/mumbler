@@ -48,7 +48,6 @@ impl From<anyhow::Error> for WebError {
 
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use api::{Id, Vec3};
@@ -72,7 +71,7 @@ pub(crate) fn default_bind(_bundle: bool) -> &'static str {
 
 pub(crate) fn setup(
     listener: TcpListener,
-    backend: Arc<Backend>,
+    backend: Backend,
     bundle: bool,
 ) -> Result<impl Future<Output = Result<()>>> {
     let cors = CorsLayer::new()
@@ -108,7 +107,7 @@ fn common_routes(router: Router) -> Router {
 }
 
 async fn image(
-    Extension(backend): Extension<Arc<Backend>>,
+    Extension(backend): Extension<Backend>,
     Path(id): Path<Id>,
 ) -> Result<impl IntoResponse, WebError> {
     const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;

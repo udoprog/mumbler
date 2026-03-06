@@ -64,6 +64,7 @@ struct Inner {
 }
 
 /// A database connection.
+#[derive(Clone)]
 pub struct Database {
     inner: Arc<Mutex<Inner>>,
 }

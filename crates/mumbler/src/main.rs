@@ -1,11 +1,15 @@
+use core::pin::pin;
+use core::time::Duration;
 use std::env;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use directories_next::ProjectDirs;
-use mumbler::{Backend, Database, Paths};
+use mumbler::{Backend, Database, Paths, client};
 use tokio::runtime::Builder;
+use tokio::time;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
@@ -54,7 +58,7 @@ pub fn main() -> Result<()> {
         None => dirs.config_dir(),
     };
 
-    let paths = Paths::new(config);
+    let paths = Arc::new(Paths::new(config));
 
     if opts.paths {
         println!("Database: {}", paths.db.display());
@@ -66,7 +70,33 @@ pub fn main() -> Result<()> {
     let b = Backend::new(c, paths);
 
     runtime.block_on(async move {
-        mumbler::run(b, !opts.dev).await?;
-        Ok(())
+        let mut client = pin!(client::run(b.clone()));
+        let mut reconnect_timeout = pin!(time::sleep(Duration::from_secs(0)));
+        let mut client_setup = true;
+        let mut mumbler = pin!(mumbler::run(b.clone(), !opts.dev));
+
+        loop {
+            tokio::select! {
+                result = client.as_mut(), if client_setup => {
+                    if let Err(error) = result {
+                        tracing::error!(%error, "client errored");
+                    }
+
+                    client_setup = false;
+                    reconnect_timeout.as_mut().reset(time::Instant::now() + Duration::from_secs(5));
+                    tracing::info!("shutting down client, trying to reconnect in 5s");
+                },
+                _ = reconnect_timeout.as_mut(), if !client_setup => {
+                    tracing::info!("reconnecting client");
+                    client.set(client::run(b.clone()));
+                    reconnect_timeout.as_mut().reset(time::Instant::now() + Duration::from_secs(0));
+                    client_setup = true;
+                }
+                result = mumbler.as_mut() => {
+                    result.context("mumbler")?;
+                    bail!("mumbler exited, shutting down");
+                }
+            }
+        }
     })
 }

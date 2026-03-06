@@ -289,6 +289,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "built"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1601,6 +1610,7 @@ dependencies = [
  "anyhow",
  "api",
  "axum",
+ "bstr",
  "clap",
  "directories-next",
  "image",
@@ -1613,7 +1623,6 @@ dependencies = [
  "rand 0.10.0",
  "relative-path",
  "rust-embed",
- "slab",
  "sqll",
  "tokio",
  "tokio-stream",

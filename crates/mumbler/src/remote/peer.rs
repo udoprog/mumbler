@@ -5,6 +5,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
+use api::Vec3;
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -12,7 +13,9 @@ use musli::storage;
 use musli_core::Decode;
 use musli_web::api::{ErrorMessage, Id, MessageId};
 
-use super::api::{ConnectBody, Header, PingBody, PongBody};
+use crate::remote::api::{MoveToBody, MovedToBody};
+
+use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PeerId, PingBody, PongBody};
 use super::{Buf, Client, Scratch};
 
 const MAX_CAPACITY: usize = 1024 * 1024;
@@ -108,8 +111,12 @@ impl Peer {
     }
 
     /// Connects the peer by sending a connect request.
-    pub fn connect(&mut self) -> Result<()> {
-        self.scratch.send(ConnectBody { version: 1 })?;
+    pub fn connect(&mut self, room: &[u8]) -> Result<()> {
+        self.scratch.send(ConnectBody {
+            version: 1,
+            room: Box::from(room),
+        })?;
+
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -124,6 +131,38 @@ impl Peer {
     /// Send a pong message to the peer.
     pub fn pong(&mut self, payload: u64) -> Result<()> {
         self.scratch.send(PongBody { payload })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having joined the room.
+    pub fn join(&mut self, peer_id: PeerId) -> Result<()> {
+        self.scratch.send(JoinBody { id: peer_id })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having left the room.
+    pub fn leave(&mut self, peer_id: PeerId) -> Result<()> {
+        self.scratch.send(LeaveBody { id: peer_id })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Move the peer to the given position and front.
+    pub fn move_to(&mut self, position: Vec3, front: Vec3) -> Result<()> {
+        self.scratch.send(MoveToBody { position, front })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having moved to the given position and front.
+    pub fn moved_to(&mut self, id: PeerId, position: Vec3, front: Vec3) -> Result<()> {
+        self.scratch.send(MovedToBody {
+            id,
+            position,
+            front,
+        })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
