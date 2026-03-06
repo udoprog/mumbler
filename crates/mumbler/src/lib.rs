@@ -13,6 +13,8 @@ pub mod remote;
 
 pub mod client;
 
+pub mod mumblelink;
+
 use core::pin::pin;
 use std::net::SocketAddr;
 
@@ -32,7 +34,7 @@ pub async fn run(b: Backend, bundle: bool, bind: &str) -> Result<()> {
     tokio::select! {
         result = future.as_mut() => {
             result?;
-            tracing::info!("Web shut down gracefully");
+            tracing::info!("web shut down gracefully");
         }
     }
 

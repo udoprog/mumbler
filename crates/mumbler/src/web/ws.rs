@@ -50,6 +50,8 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
 
                 self.backend.set_transform(request.avatar.transform).await;
+                self.backend
+                    .set_transform_mumblelink(request.avatar.transform);
                 self.update_transform = Some(request.avatar.transform);
             }
             api::Request::UploadImage => {
@@ -130,7 +132,7 @@ pub(super) async fn entry(
                         (result.context("error in server"), true)
                     }
                     () = debounce_timer.as_mut(), if update_transform.is_some() => {
-                        tracing::info!("saving transform");
+                        tracing::debug!("saving transform");
 
                         let result = if let Some(transform) = update_transform.take() {
                             backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")
@@ -146,7 +148,7 @@ pub(super) async fn entry(
                             break;
                         };
 
-                        tracing::info!(?event, "backend event");
+                        tracing::debug!(?event, "backend event");
 
                         let event = match event {
                             BackendEvent::RemoteLost => {

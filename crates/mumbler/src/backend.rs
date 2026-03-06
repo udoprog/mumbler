@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use api::{Color, Id, Transform};
+use parking_lot::Mutex as BlockingMutex;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -103,8 +104,10 @@ struct Inner {
     #[allow(unused)]
     paths: Paths,
     state: Mutex<State>,
+    client_notify: Notify,
+    transform: BlockingMutex<Transform>,
+    transform_notify: Notify,
     images: RwLock<Images>,
-    notify: Notify,
     broadcast: Sender<BackendEvent>,
 }
 
@@ -147,7 +150,9 @@ impl Backend {
                 images: RwLock::new(Images {
                     images: HashMap::new(),
                 }),
-                notify: Notify::new(),
+                client_notify: Notify::new(),
+                transform: BlockingMutex::new(transform),
+                transform_notify: Notify::new(),
                 broadcast,
             }),
         })
@@ -183,7 +188,7 @@ impl Backend {
         let mut state = self.inner.state.lock().await;
         state.player.transform = transform;
         state.player.changed |= TRANSFORM_CHANGED;
-        self.inner.notify.notify_one();
+        self.inner.client_notify.notify_one();
     }
 
     /// Update the player's image.
@@ -191,7 +196,7 @@ impl Backend {
         let mut state = self.inner.state.lock().await;
         state.player.image = image;
         state.player.changed |= IMAGE_CHANGED;
-        self.inner.notify.notify_one();
+        self.inner.client_notify.notify_one();
     }
 
     /// Update the player's color.
@@ -199,7 +204,7 @@ impl Backend {
         let mut state = self.inner.state.lock().await;
         state.player.color = color;
         state.player.changed |= COLOR_CHANGED;
-        self.inner.notify.notify_one();
+        self.inner.client_notify.notify_one();
     }
 
     /// Get the current state, resetting any changed flags.
@@ -211,8 +216,24 @@ impl Backend {
     }
 
     /// Receive the next event.
-    pub(crate) async fn wait(&self) {
-        self.inner.notify.notified().await;
+    pub(crate) async fn client_wait(&self) {
+        self.inner.client_notify.notified().await;
+    }
+
+    /// Get the transform.
+    pub(crate) fn transform(&self) -> Transform {
+        *self.inner.transform.lock()
+    }
+
+    /// Set the transform for mumblelink.
+    pub(crate) fn set_transform_mumblelink(&self, transform: Transform) {
+        *self.inner.transform.lock() = transform;
+        self.inner.transform_notify.notify_one();
+    }
+
+    /// Receive the next transform update.
+    pub(crate) async fn transform_wait(&self) {
+        self.inner.transform_notify.notified().await;
     }
 
     /// Get a reference to the database.

@@ -9,6 +9,7 @@ bundle = []
 
 [dependencies]
 api = { path = "../api" }
+mumblelink = { path = "../mumblelink"}
 
 jiff = "0.2.23"
 rust-embed = "8.11.0"

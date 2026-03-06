@@ -33,7 +33,7 @@ async fn handle_peer(
             }
             Event::Join => {
                 let event = body.decode::<JoinBody>()?;
-                tracing::info!(?event.id, "join");
+                tracing::debug!(?event.id, "join");
 
                 {
                     let mut remote = b.state().await;
@@ -46,7 +46,7 @@ async fn handle_peer(
             }
             Event::Leave => {
                 let event = body.decode::<LeaveBody>()?;
-                tracing::info!(?event.id, "leave");
+                tracing::debug!(?event.id, "leave");
 
                 {
                     let mut remote = b.state().await;
@@ -57,7 +57,7 @@ async fn handle_peer(
             }
             Event::Moved => {
                 let event = body.decode::<UpdatedTransform>()?;
-                tracing::info!(?event.id, ?event.transform, "moved");
+                tracing::debug!(?event.id, ?event.transform, "moved");
 
                 {
                     let mut remote = b.state().await;
@@ -74,7 +74,7 @@ async fn handle_peer(
             }
             Event::UpdatedImage => {
                 let event = body.decode::<UpdatedImageBody>()?;
-                tracing::info!(?event.id, image = ?event.image.as_ref().map(|i| i.len()), "updated image");
+                tracing::debug!(?event.id, image = ?event.image.as_ref().map(|i| i.len()), "updated image");
 
                 let image = {
                     let mut remote = b.state().await;
@@ -104,7 +104,7 @@ async fn handle_peer(
             }
             Event::UpdatedColor => {
                 let event = body.decode::<UpdatedColorBody>()?;
-                tracing::info!(?event.id, color = ?event.color, "updated color");
+                tracing::debug!(?event.id, color = ?event.color, "updated color");
 
                 {
                     let mut remote = b.state().await;
@@ -120,7 +120,7 @@ async fn handle_peer(
                 });
             }
             event => {
-                tracing::info!(?event);
+                tracing::debug!(?event);
             }
         }
     }
@@ -151,7 +151,7 @@ pub async fn run(b: Backend) -> Result<()> {
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
     let mut last_ping = None;
-    let mut wait = pin!(b.wait());
+    let mut wait = pin!(b.client_wait());
 
     peer.update_transform(player.transform)?;
 
@@ -195,7 +195,7 @@ pub async fn run(b: Backend) -> Result<()> {
                     peer.update_color(state.color)?;
                 }
 
-                wait.set(b.wait());
+                wait.set(b.client_wait());
             }
             _ = ping_timeout.as_mut(), if last_ping.is_none() => {
                 let payload = rand::random();

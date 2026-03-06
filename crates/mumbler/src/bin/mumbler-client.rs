@@ -69,22 +69,22 @@ async fn main() -> Result<()> {
                         },
                         Event::Join => {
                             let event = body.decode::<JoinBody>()?;
-                            tracing::info!(?event, "join");
+                            tracing::debug!(?event, "join");
                         }
                         Event::Leave => {
                             let event = body.decode::<LeaveBody>()?;
-                            tracing::info!(?event, "leave");
+                            tracing::debug!(?event, "leave");
                         }
                         Event::Moved => {
                             let event = body.decode::<UpdatedTransform>()?;
-                            tracing::info!(?event, "moved");
+                            tracing::debug!(?event, "moved");
                         }
                         Event::UpdatedImage => {
                             let event = body.decode::<UpdatedImageBody>()?;
-                            tracing::info!(?event, "updated image");
+                            tracing::debug!(?event, "updated image");
                         }
                         event => {
-                            tracing::info!(?event);
+                            tracing::debug!(?event);
                         }
                     }
                 }

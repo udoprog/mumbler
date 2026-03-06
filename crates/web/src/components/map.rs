@@ -274,15 +274,18 @@ impl Component for Map {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         html! {
-            <div class="map-sizer" ref={self.canvas_sizer.clone()}>
-                <canvas id="map" ref={self.canvas_ref.clone()}
-                    onmousedown={ctx.link().callback(Msg::MouseDown)}
-                    onmousemove={ctx.link().callback(Msg::MouseMove)}
-                    onmouseup={ctx.link().callback(Msg::MouseUp)}
-                    onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
-                    onwheel={ctx.link().callback(Msg::Wheel)}
-                ></canvas>
-            </div>
+            <>
+                {self.player.as_ref().map(|p| format!("{:?}", p.transform))}
+                <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                    <canvas id="map" ref={self.canvas_ref.clone()}
+                        onmousedown={ctx.link().callback(Msg::MouseDown)}
+                        onmousemove={ctx.link().callback(Msg::MouseMove)}
+                        onmouseup={ctx.link().callback(Msg::MouseUp)}
+                        onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
+                        onwheel={ctx.link().callback(Msg::Wheel)}
+                    ></canvas>
+                </div>
+            </>
         }
     }
 }
@@ -306,7 +309,7 @@ impl Map {
                 let initialize = result?;
                 let initialize = initialize.decode()?;
 
-                tracing::info!(?initialize, "initialize");
+                tracing::debug!(?initialize, "initialize");
 
                 self.world = Some(initialize.world);
                 self.player = Some(initialize.player);
@@ -329,7 +332,7 @@ impl Map {
                 let update = update?;
                 let update = update.decode()?;
 
-                tracing::info!(?update, "remote avatar update");
+                tracing::debug!(?update, "remote avatar update");
 
                 match update {
                     api::RemoteAvatarUpdateBody::RemoteLost => {
@@ -399,23 +402,23 @@ impl Map {
             }
             Msg::MouseDown(e) => {
                 self.on_mouse_down(e)?;
-                Ok(false)
+                Ok(true)
             }
             Msg::MouseMove(e) => {
                 self.on_mouse_move(e)?;
-                Ok(false)
+                Ok(true)
             }
             Msg::MouseUp(e) => {
                 self.on_mouse_up(e)?;
-                Ok(false)
+                Ok(true)
             }
             Msg::MouseLeave => {
                 self.on_mouse_leave()?;
-                Ok(false)
+                Ok(true)
             }
             Msg::Wheel(e) => {
                 self.on_wheel(e)?;
-                Ok(false)
+                Ok(true)
             }
         }
     }
@@ -499,6 +502,15 @@ impl Map {
             if dist >= ARROW_THRESHOLD {
                 self.arrow_target = Some((mx, my));
                 needs_redraw = true;
+
+                // Update front direction in real-time as the user drags
+                if let Some(a) = &mut self.player {
+                    let angle_rad = (my - py).atan2(mx - px);
+                    let dir_x = angle_rad.cos() as f32;
+                    let dir_z = angle_rad.sin() as f32;
+                    a.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
+                    self.update = true;
+                }
             }
         }
 
@@ -682,8 +694,8 @@ impl Map {
             player: false,
         };
 
-        let avatars = self.player.iter().map(player_avatar);
-        let avatars = avatars.chain(self.remote_avatars.iter().map(remote_avatar));
+        let avatars = self.remote_avatars.iter().map(remote_avatar);
+        let avatars = avatars.chain(self.player.iter().map(player_avatar));
 
         for a in avatars {
             let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);

@@ -1616,6 +1616,7 @@ dependencies = [
  "image",
  "jiff",
  "mime_guess",
+ "mumblelink",
  "musli",
  "musli-core",
  "musli-web",

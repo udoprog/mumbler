@@ -234,7 +234,7 @@ impl State {
                 }
                 Event::Connect => {
                     let connect = body.decode::<ConnectBody>()?;
-                    tracing::info!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
+                    tracing::debug!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
 
                     if let Some(old_room) = this.room.replace(connect.room.clone()) {
                         self.leave_room(&old_room, this.id, peers);
@@ -246,7 +246,7 @@ impl State {
                 }
                 Event::Move => {
                     let event = body.decode::<UpdateTransform>()?;
-                    tracing::info!(?event.transform, "move");
+                    tracing::debug!(?event.transform, "move");
 
                     this.transform = event.transform;
 
@@ -254,7 +254,7 @@ impl State {
                         continue;
                     };
 
-                    tracing::info! {
+                    tracing::debug! {
                         room.name = ?BStr::new(&room.name),
                         members = ?room.members,
                         transform = ?this.transform,
@@ -277,7 +277,7 @@ impl State {
                 }
                 Event::UpdateImage => {
                     let event = body.decode::<UpdateImageBody>()?;
-                    tracing::info!(image = ?event.image.as_ref().map(|i| i.len()), "update image");
+                    tracing::debug!(image = ?event.image.as_ref().map(|i| i.len()), "update image");
 
                     this.image = event.image.clone();
 
@@ -285,7 +285,7 @@ impl State {
                         continue;
                     };
 
-                    tracing::info! {
+                    tracing::debug! {
                         room.name = ?BStr::new(&room.name),
                         members = ?room.members,
                         image = ?this.image.as_ref().map(|i| i.len()),
@@ -308,7 +308,7 @@ impl State {
                 }
                 Event::UpdateColor => {
                     let event = body.decode::<UpdateColorBody>()?;
-                    tracing::info!(color = ?event.color, "update color");
+                    tracing::debug!(color = ?event.color, "update color");
 
                     this.color = event.color;
 
@@ -316,7 +316,7 @@ impl State {
                         continue;
                     };
 
-                    tracing::info! {
+                    tracing::debug! {
                         room.name = ?BStr::new(&room.name),
                         members = ?room.members,
                         color = ?this.color,
@@ -416,14 +416,14 @@ impl State {
             room.members.push(joining.id);
         }
 
-        tracing::info!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
+        tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
 
         for id in room.members.iter() {
             let Some(other) = peers.get(id) else {
                 continue;
             };
 
-            tracing::info!(?id, transform = ?other.transform, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
+            tracing::debug!(?id, transform = ?other.transform, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
 
             if let Err(e) = joining.peer.join(other.id) {
                 tracing::error!(?id, ?e, "failed to send join");

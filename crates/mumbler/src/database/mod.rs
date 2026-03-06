@@ -83,7 +83,7 @@ impl Database {
                 fs::create_dir_all(parent)?;
             }
 
-            tracing::info!("Opening database at {}", paths.db.display());
+            tracing::info!(path = ?paths.db.display(), "opening database");
             open.open(&paths.db)?
         };
 
@@ -121,7 +121,7 @@ impl Database {
         to_run.sort();
 
         for path in to_run {
-            tracing::info!(?path, "Applying migration");
+            tracing::info!(?path, "applying migration");
 
             let sql = Migrations::get(path.as_str())
                 .expect("embedded migration")

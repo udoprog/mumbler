@@ -155,6 +155,24 @@ pub struct Vec3 {
     pub z: f32,
 }
 
+impl Vec3 {
+    /// Convert the vector to an array of three floats.
+    #[inline]
+    pub fn as_array(&self) -> [f32; 3] {
+        [self.x, self.y, self.z]
+    }
+
+    /// Invert the z coordinate.
+    #[inline]
+    pub fn invert_z(&self) -> Self {
+        Self {
+            x: self.x,
+            y: self.y,
+            z: -self.z,
+        }
+    }
+}
+
 impl fmt::Debug for Vec3 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Vec3")

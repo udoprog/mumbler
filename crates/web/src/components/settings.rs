@@ -86,8 +86,6 @@ impl Component for Settings {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        tracing::info!(?self.images);
-
         let images = self.images.iter().map(|image| {
             let id = image.id;
             let on_select = ctx.link().callback(move |_| Msg::SelectImage(id));
@@ -255,8 +253,7 @@ impl Settings {
             }
             Msg::AvatarUploaded(result) => {
                 let result = result?;
-                let response = result.decode()?;
-                tracing::info!(?response.id, "Avatar uploaded with ID");
+                _ = result.decode()?;
                 self.refresh(ctx);
                 Ok(false)
             }
