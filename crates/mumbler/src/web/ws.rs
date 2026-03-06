@@ -93,6 +93,14 @@ impl ws::Handler for Handler {
                 let response = super::select_color(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::UpdateWorld => {
+                let request = incoming
+                    .read::<api::UpdateWorldRequest>()
+                    .context("missing request")?;
+
+                let response = super::update_world(&self.backend, request).await?;
+                outgoing.write(response);
+            }
             api::Request::Unknown(id) => {
                 anyhow::bail!("unknown request type: {id}");
             }

@@ -24,6 +24,12 @@ body {
     color: var(--text-color);
 }
 
+.pre {
+    font-family: "Courier New", Courier, monospace;
+    background-color: #1e1e1e;
+    overflow-x: auto;
+}
+
 .rows {
     display: flex;
     flex-direction: column;

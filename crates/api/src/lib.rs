@@ -133,15 +133,80 @@ pub struct Extent2 {
     pub y: Span,
 }
 
+impl Extent2 {
+    /// Returns `true` if the point `(x, y)` lies within the extent.
+    #[inline]
+    pub fn contains(self, x: f32, y: f32) -> bool {
+        self.x.contains(x) && self.y.contains(y)
+    }
+
+    /// A zero extent at the origin.
+    pub const fn zero() -> Self {
+        Self {
+            x: Span {
+                start: -10.0,
+                end: 10.0,
+            },
+            y: Span {
+                start: -10.0,
+                end: 10.0,
+            },
+        }
+    }
+}
+
+/// Represents a 2D pan offset in canvas pixels.
+#[derive(Clone, Copy, Debug, Default, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Pan {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl Pan {
+    #[inline]
+    pub const fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    #[inline]
+    pub const fn zero() -> Self {
+        Self::new(0.0, 0.0)
+    }
+
+    /// Add a delta to the pan offset.
+    #[inline]
+    pub fn add(&self, dx: f64, dy: f64) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+        }
+    }
+}
+
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct World {
     /// The zoom level of the map.
     pub zoom: f32,
+    /// The pan offset in canvas pixels.
+    pub pan: Pan,
     /// The extent of the world in meters.
     pub extent: Extent2,
     /// The radius of a token in meters.
     pub token_radius: f32,
+}
+
+impl World {
+    /// A world with default settings.
+    pub const fn zero() -> Self {
+        Self {
+            zoom: 10.0,
+            pan: Pan::zero(),
+            extent: Extent2::zero(),
+            token_radius: 0.5,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default, Encode, Decode)]
@@ -242,6 +307,18 @@ pub struct Avatar {
     pub color: Color,
 }
 
+impl Avatar {
+    /// A default avatar with no image, neutral gray color, at the origin facing
+    /// forward.
+    pub const fn zero() -> Self {
+        Self {
+            transform: Transform::origin(),
+            image: None,
+            color: Color::neutral_gray(),
+        }
+    }
+}
+
 /// Event emitted when the API is initialized.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -321,6 +398,18 @@ pub struct SelectColorResponse {
     pub color: Color,
 }
 
+/// Request to update world settings (pan and zoom).
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateWorldRequest {
+    pub pan: Pan,
+    pub zoom: f32,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateWorldResponse;
+
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum RemoteAvatarUpdateBody {
@@ -380,6 +469,13 @@ api::define! {
     impl Endpoint for SelectColor {
         impl Request for SelectColorRequest;
         type Response<'de> = SelectColorResponse;
+    }
+
+    pub type UpdateWorld;
+
+    impl Endpoint for UpdateWorld {
+        impl Request for UpdateWorldRequest;
+        type Response<'de> = UpdateWorldResponse;
     }
 
     pub type RemoteAvatarUpdate;

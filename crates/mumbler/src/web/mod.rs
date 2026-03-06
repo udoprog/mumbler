@@ -160,22 +160,26 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
         }
     }
 
+    let zoom = b
+        .db()
+        .get_config::<f32>("world/zoom")
+        .await?
+        .unwrap_or(10.0);
+
+    let pan = b
+        .db()
+        .get_config::<api::Pan>("world/pan")
+        .await?
+        .unwrap_or_else(api::Pan::zero);
+
     let ev = api::InitializeEvent {
         player,
         name: Some("Gilbert".to_owned()),
         remote_avatars,
         world: api::World {
-            zoom: 10.0,
-            extent: api::Extent2 {
-                x: api::Span {
-                    start: -50.0,
-                    end: 50.0,
-                },
-                y: api::Span {
-                    start: -50.0,
-                    end: 50.0,
-                },
-            },
+            zoom,
+            pan,
+            extent: api::Extent2::zero(),
             token_radius: 0.5,
         },
     };
@@ -235,4 +239,13 @@ async fn select_color(
     backend.db().set_config("avatar/color", color).await?;
     backend.set_color(color).await;
     Ok(api::SelectColorResponse { color })
+}
+
+async fn update_world(
+    backend: &Backend,
+    request: api::UpdateWorldRequest,
+) -> Result<api::UpdateWorldResponse> {
+    backend.db().set_config("world/pan", request.pan).await?;
+    backend.db().set_config("world/zoom", request.zoom).await?;
+    Ok(api::UpdateWorldResponse)
 }

@@ -149,7 +149,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
     }
 
     b.broadcast(BackendEvent::RemoteLost);
-    
+
     tracing::info!(?host, ?port, "connecting to mumbler-server");
 
     let client = Client::connect((host, port)).await?;

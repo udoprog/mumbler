@@ -105,7 +105,7 @@ struct ViewTransform {
 }
 
 impl ViewTransform {
-    fn new(canvas: &HtmlCanvasElement, extent: &Extent2, pan: (f64, f64), zoom: f64) -> Self {
+    fn new(canvas: &HtmlCanvasElement, extent: &Extent2, pan: api::Pan, zoom: f64) -> Self {
         let canvas_min = canvas.width().min(canvas.height()) as f64;
         let world_w = (extent.x.end - extent.x.start) as f64;
         let world_h = (extent.y.end - extent.y.start) as f64;
@@ -113,8 +113,8 @@ impl ViewTransform {
 
         let world_mid_x = ((extent.x.start + extent.x.end) / 2.0) as f64;
         let world_mid_y = ((extent.y.start + extent.y.end) / 2.0) as f64;
-        let center_x = canvas.width() as f64 / 2.0 + pan.0 - world_mid_x * scale;
-        let center_y = canvas.height() as f64 / 2.0 + pan.1 - world_mid_y * scale;
+        let center_x = canvas.width() as f64 / 2.0 + pan.x - world_mid_x * scale;
+        let center_y = canvas.height() as f64 / 2.0 + pan.y - world_mid_y * scale;
 
         Self {
             scale,
@@ -139,21 +139,22 @@ impl ViewTransform {
 pub(crate) struct Map {
     _initialize: ws::Request,
     _update_avatars: ws::Request,
+    _update_world: ws::Request,
     _state_change: ws::StateListener,
     _remote_avatar_listener: ws::Listener,
     state: ws::State,
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
     /// World configuration.
-    world: Option<World>,
+    world: World,
     /// List of local avatars that need to be updated remotely.
     update: bool,
+    /// Whether world settings need to be updated.
+    update_world: bool,
     /// The player avatar.
-    player: Option<Avatar>,
+    player: Avatar,
     /// Avatars in the world and their positions.
     remote_avatars: Vec<RemoteAvatar>,
-    /// Current pan offset in canvas pixels.
-    pan: (f64, f64),
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
@@ -170,6 +171,7 @@ pub(crate) struct Map {
 pub(crate) enum Msg {
     Initialize(Result<Packet<api::Initialize>, ws::Error>),
     AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
+    WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
     RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     StateChanged(ws::State),
     Resized,
@@ -204,16 +206,17 @@ impl Component for Map {
         let mut this = Self {
             _initialize: ws::Request::new(),
             _update_avatars: ws::Request::new(),
+            _update_world: ws::Request::new(),
             _remote_avatar_listener: remote_avatar_listener,
             _state_change,
             state,
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
-            world: None,
-            player: None,
+            world: api::World::zero(),
+            player: api::Avatar::zero(),
             remote_avatars: Vec::new(),
             update: false,
-            pan: (0.0, 0.0),
+            update_world: false,
             pan_anchor: None,
             start_press: None,
             arrow_target: None,
@@ -269,13 +272,21 @@ impl Component for Map {
             self.update = false;
         }
 
+        if self.update_world {
+            self.send_world_updates(ctx);
+            self.update_world = false;
+        }
+
         changed
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        let p = self.player.transform.position;
+
         html! {
-            <>
-                {self.player.as_ref().map(|p| format!("{:?}", p.transform))}
+            <div class="rows">
+                <div class="pre">{format!("x: {:.02}, y: {:.02}, z: {:.02}", p.x, p.y, p.z)}</div>
+
                 <div class="map-sizer" ref={self.canvas_sizer.clone()}>
                     <canvas id="map" ref={self.canvas_ref.clone()}
                         onmousedown={ctx.link().callback(Msg::MouseDown)}
@@ -285,7 +296,7 @@ impl Component for Map {
                         onwheel={ctx.link().callback(Msg::Wheel)}
                     ></canvas>
                 </div>
-            </>
+            </div>
         }
     }
 }
@@ -311,8 +322,8 @@ impl Map {
 
                 tracing::debug!(?initialize, "initialize");
 
-                self.world = Some(initialize.world);
-                self.player = Some(initialize.player);
+                self.world = initialize.world;
+                self.player = initialize.player;
                 self.remote_avatars = initialize.remote_avatars;
 
                 self.load_initialize_images(ctx);
@@ -326,6 +337,11 @@ impl Map {
             Msg::AvatarsUpdated(result) => {
                 result?;
                 self.update = false;
+                Ok(false)
+            }
+            Msg::WorldUpdated(result) => {
+                result?;
+                self.update_world = false;
                 Ok(false)
             }
             Msg::RemoteAvatarUpdate(update) => {
@@ -424,18 +440,27 @@ impl Map {
     }
 
     fn send_updates(&mut self, ctx: &Context<Self>) {
-        let Some(avatar) = &self.player else {
-            return;
-        };
-
         self._update_avatars = ctx
             .props()
             .ws
             .request()
             .body(api::UpdatePlayerRequest {
-                avatar: avatar.clone(),
+                avatar: self.player.clone(),
             })
             .on_packet(ctx.link().callback(Msg::AvatarsUpdated))
+            .send();
+    }
+
+    fn send_world_updates(&mut self, ctx: &Context<Self>) {
+        self._update_world = ctx
+            .props()
+            .ws
+            .request()
+            .body(api::UpdateWorldRequest {
+                pan: self.world.pan,
+                zoom: self.world.zoom,
+            })
+            .on_packet(ctx.link().callback(Msg::WorldUpdated))
             .send();
     }
 
@@ -443,10 +468,6 @@ impl Map {
         let needs_redraw = 'out: {
             match e.button() {
                 0 => {
-                    let Some(w) = &self.world else {
-                        break 'out false;
-                    };
-
                     let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
                         break 'out false;
                     };
@@ -455,15 +476,16 @@ impl Map {
                     self.start_press = Some(pos);
                     self.arrow_target = None;
 
-                    let t = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
+                    let t = ViewTransform::new(
+                        &canvas,
+                        &self.world.extent,
+                        self.world.pan,
+                        self.world.zoom as f64,
+                    );
                     let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
 
-                    let Some(a) = &mut self.player else {
-                        break 'out false;
-                    };
-
-                    a.transform.position.x = world_x as f32;
-                    a.transform.position.z = world_z as f32;
+                    self.player.transform.position.x = world_x as f32;
+                    self.player.transform.position.z = world_z as f32;
                     self.update = true;
                     true
                 }
@@ -489,8 +511,9 @@ impl Map {
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = e.client_x() as f64 - ax;
             let dy = e.client_y() as f64 - ay;
-            self.pan = (self.pan.0 + dx, self.pan.1 + dy);
+            self.world.pan = self.world.pan.add(dx, dy);
             self.pan_anchor = Some((e.client_x() as f64, e.client_y() as f64));
+            self.update_world = true;
             needs_redraw = true;
         }
 
@@ -504,13 +527,11 @@ impl Map {
                 needs_redraw = true;
 
                 // Update front direction in real-time as the user drags
-                if let Some(a) = &mut self.player {
-                    let angle_rad = (my - py).atan2(mx - px);
-                    let dir_x = angle_rad.cos() as f32;
-                    let dir_z = angle_rad.sin() as f32;
-                    a.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
-                    self.update = true;
-                }
+                let angle_rad = (my - py).atan2(mx - px);
+                let dir_x = angle_rad.cos() as f32;
+                let dir_z = angle_rad.sin() as f32;
+                self.player.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
+                self.update = true;
             }
         }
 
@@ -533,15 +554,11 @@ impl Map {
                         break 'out false;
                     };
 
-                    let Some(a) = &mut self.player else {
-                        break 'out false;
-                    };
-
                     let angle_rad = (my - cy).atan2(mx - cx);
                     let dir_x = angle_rad.cos() as f32;
                     let dir_z = angle_rad.sin() as f32;
 
-                    a.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
+                    self.player.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
                     self.update = true;
                     true
                 }
@@ -591,20 +608,27 @@ impl Map {
         let mx = e.offset_x() as f64;
         let my = e.offset_y() as f64;
 
-        let Some(w) = &mut self.world else {
-            return Ok(());
-        };
-
-        let t_before = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
+        let t_before = ViewTransform::new(
+            &canvas,
+            &self.world.extent,
+            self.world.pan,
+            self.world.zoom as f64,
+        );
         let (wx, wz) = t_before.canvas_to_world(mx, my);
 
-        w.zoom = (w.zoom * delta).clamp(0.1, 20.0);
+        self.world.zoom = (self.world.zoom * delta).clamp(0.1, 20.0);
 
-        let t_after = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
+        let t_after = ViewTransform::new(
+            &canvas,
+            &self.world.extent,
+            self.world.pan,
+            self.world.zoom as f64,
+        );
         let (cx2, cy2) = t_after.world_to_canvas(wx as f32, wz as f32);
-        self.pan.0 += mx - cx2;
-        self.pan.1 += my - cy2;
+        self.world.pan.x += mx - cx2;
+        self.world.pan.y += my - cy2;
 
+        self.update_world = true;
         self.redraw()?;
         Ok(())
     }
@@ -613,7 +637,7 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.player.iter().flat_map(|a| a.image);
+        let ids = self.player.image.into_iter();
         let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
 
         for id in ids {
@@ -658,10 +682,6 @@ impl Map {
             player: bool,
         }
 
-        let Some(w) = &self.world else {
-            return Ok(());
-        };
-
         let canvas = self
             .canvas_ref
             .cast::<HtmlCanvasElement>()
@@ -675,10 +695,15 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let t = ViewTransform::new(&canvas, &w.extent, self.pan, w.zoom as f64);
-        let token_radius = w.token_radius as f64 * t.scale;
+        let t = ViewTransform::new(
+            &canvas,
+            &self.world.extent,
+            self.world.pan,
+            self.world.zoom as f64,
+        );
+        let token_radius = self.world.token_radius as f64 * t.scale;
 
-        draw_grid(&cx, &t, &w.extent, w.zoom);
+        draw_grid(&cx, &t, &self.world.extent, self.world.zoom);
 
         let player_avatar = |a: &Avatar| RenderAvatar {
             transform: a.transform,
@@ -695,7 +720,7 @@ impl Map {
         };
 
         let avatars = self.remote_avatars.iter().map(remote_avatar);
-        let avatars = avatars.chain(self.player.iter().map(player_avatar));
+        let avatars = avatars.chain([player_avatar(&self.player)]);
 
         for a in avatars {
             let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
