@@ -3,7 +3,7 @@ use core::pin::{Pin, pin};
 use core::time::Duration;
 
 use anyhow::{Result, bail};
-use api::Vec3;
+use api::Transform;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
@@ -39,8 +39,7 @@ async fn handle_peer(
                     let mut remote = b.state().await;
                     let peer = remote.peers.entry(event.id).or_default();
 
-                    peer.position = Vec3::ZERO;
-                    peer.front = Vec3::FORWARD;
+                    peer.transform = Transform::origin();
                 }
 
                 b.broadcast(BackendEvent::Join { peer_id: event.id });
@@ -58,21 +57,19 @@ async fn handle_peer(
             }
             Event::Moved => {
                 let event = body.decode::<MovedToBody>()?;
-                tracing::info!(?event.id, ?event.position, ?event.front, "moved");
+                tracing::info!(?event.id, ?event.transform, "moved");
 
                 {
                     let mut remote = b.state().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.position = event.position;
-                        peer.front = event.front;
+                        peer.transform = event.transform;
                     }
                 }
 
                 b.broadcast(BackendEvent::Moved {
                     peer_id: event.id,
-                    position: event.position,
-                    front: event.front,
+                    transform: event.transform,
                 });
             }
             Event::UpdatedImage => {
@@ -156,7 +153,7 @@ pub async fn run(b: Backend) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.wait());
 
-    peer.move_to(player.position, player.front)?;
+    peer.move_to(player.transform)?;
 
     let image = 'image: {
         let Some(image) = player.image else {
@@ -178,8 +175,8 @@ pub async fn run(b: Backend) -> Result<()> {
             () = wait.as_mut() => {
                 let state = b.take_player().await;
 
-                if state.is_translated() {
-                    peer.move_to(state.position, state.front)?;
+                if state.is_transform() {
+                    peer.move_to(state.transform)?;
                 }
 
                 if state.is_image() {

@@ -2,55 +2,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Color, Id, Vec3};
+use api::{Color, Id, Transform};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{Database, Paths};
 
-const TRANSLATION_CHANGED: u8 = 0b0000_0001;
+const TRANSFORM_CHANGED: u8 = 0b0000_0001;
 const IMAGE_CHANGED: u8 = 0b0000_0010;
 const COLOR_CHANGED: u8 = 0b0000_0100;
 
 #[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
     RemoteLost,
-    Join {
-        peer_id: Id,
-    },
-    Leave {
-        peer_id: Id,
-    },
-    Moved {
-        peer_id: Id,
-        position: Vec3,
-        front: Vec3,
-    },
-    ImageUpdated {
-        peer_id: Id,
-        image: Option<Id>,
-    },
-    ColorUpdated {
-        peer_id: Id,
-        color: Color,
-    },
+    Join { peer_id: Id },
+    Leave { peer_id: Id },
+    Moved { peer_id: Id, transform: Transform },
+    ImageUpdated { peer_id: Id, image: Option<Id> },
+    ColorUpdated { peer_id: Id, color: Color },
 }
 
 /// State for the backend.
 #[derive(Debug, Clone)]
 pub(crate) struct Player {
-    pub(crate) position: Vec3,
-    pub(crate) front: Vec3,
+    pub(crate) transform: Transform,
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
     changed: u8,
 }
 
 impl Player {
-    /// Check if translation has changed in the current state.
+    /// Check if the transform has changed in the current state.
     #[inline]
-    pub(crate) fn is_translated(&self) -> bool {
-        self.changed & TRANSLATION_CHANGED != 0
+    pub(crate) fn is_transform(&self) -> bool {
+        self.changed & TRANSFORM_CHANGED != 0
     }
 
     /// Check if the player's image has changed.
@@ -68,8 +53,7 @@ impl Player {
 
 /// Information about a remote peer.
 pub(crate) struct PeerInfo {
-    pub(crate) position: Vec3,
-    pub(crate) front: Vec3,
+    pub(crate) transform: Transform,
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
 }
@@ -77,8 +61,7 @@ pub(crate) struct PeerInfo {
 impl Default for PeerInfo {
     fn default() -> Self {
         Self {
-            position: Vec3::ZERO,
-            front: Vec3::FORWARD,
+            transform: Transform::origin(),
             image: None,
             color: Color::neutral_gray(),
         }
@@ -149,8 +132,7 @@ impl Backend {
                 paths,
                 state: Mutex::new(State {
                     player: Player {
-                        position: Vec3::ZERO,
-                        front: Vec3::FORWARD,
+                        transform: Transform::origin(),
                         image,
                         color,
                         changed: 0,
@@ -192,11 +174,10 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_position_front(&self, position: Vec3, front: Vec3) {
+    pub(crate) async fn set_transform(&self, transform: Transform) {
         let mut state = self.inner.state.lock().await;
-        state.player.position = position;
-        state.player.front = front;
-        state.player.changed |= TRANSLATION_CHANGED;
+        state.player.transform = transform;
+        state.player.changed |= TRANSFORM_CHANGED;
         self.inner.notify.notify_one();
     }
 

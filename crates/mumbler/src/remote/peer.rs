@@ -5,7 +5,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::{Color, Id, Vec3};
+use api::{Color, Id, Transform};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -152,8 +152,8 @@ impl Peer {
     }
 
     /// Move the peer to the given position and front.
-    pub fn move_to(&mut self, position: Vec3, front: Vec3) -> Result<()> {
-        self.scratch.send(MoveToBody { position, front })?;
+    pub fn move_to(&mut self, transform: Transform) -> Result<()> {
+        self.scratch.send(MoveToBody { transform })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -187,12 +187,8 @@ impl Peer {
     }
 
     /// Mark the given peer as having moved to the given position and front.
-    pub fn moved_to(&mut self, id: Id, position: Vec3, front: Vec3) -> Result<()> {
-        self.scratch.send(MovedToBody {
-            id,
-            position,
-            front,
-        })?;
+    pub fn moved_to(&mut self, id: Id, transform: Transform) -> Result<()> {
+        self.scratch.send(MovedToBody { id, transform })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

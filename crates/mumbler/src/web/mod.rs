@@ -145,8 +145,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
         let state = b.state().await;
 
         player = api::Avatar {
-            position: state.player.position,
-            front: state.player.front,
+            transform: state.player.transform,
             image: state.player.image,
             color: state.player.color.clone(),
         };
@@ -154,8 +153,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
         for (id, peer) in state.peers.iter() {
             remote_avatars.push(api::RemoteAvatar {
                 id: Id::new(id.get()),
-                position: peer.position,
-                front: peer.front,
+                transform: peer.transform,
                 image: peer.image,
                 color: peer.color.clone(),
             });

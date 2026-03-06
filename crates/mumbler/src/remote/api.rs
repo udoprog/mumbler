@@ -1,7 +1,7 @@
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{Color, Id, Vec3};
+use ::api::{Color, Id, Transform};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -60,10 +60,8 @@ pub struct LeaveBody {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct MoveToBody {
-    /// The position of the peer.
-    pub position: Vec3,
-    /// The front of the peer.
-    pub front: Vec3,
+    /// The transform (position and orientation) of the peer.
+    pub transform: Transform,
 }
 
 /// Information that a peer moved.
@@ -72,10 +70,8 @@ pub struct MoveToBody {
 pub struct MovedToBody {
     /// The peer that moved.
     pub id: Id,
-    /// The position of the peer.
-    pub position: Vec3,
-    /// The front of the peer.
-    pub front: Vec3,
+    /// The transform (position and orientation) of the peer.
+    pub transform: Transform,
 }
 
 #[derive(Debug, Encode, Decode)]

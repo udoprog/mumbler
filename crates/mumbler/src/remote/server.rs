@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::task::Wake;
 
 use anyhow::{Context as _, Result};
-use api::{Id, Vec3};
+use api::{Id, Transform};
 use bstr::BStr;
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
@@ -30,10 +30,8 @@ struct PeerState {
     ///
     /// The timeout is reset every time a ping is received.
     timeout: Pin<Box<Sleep>>,
-    /// The current position of the peer.
-    position: Vec3,
-    /// The current front vector of the peer.
-    front: Vec3,
+    /// The current transform (position and orientation) of the peer.
+    transform: Transform,
     /// The current image of the peer.
     image: Option<Vec<u8>>,
     /// The room the peer is in.
@@ -46,8 +44,7 @@ impl PeerState {
             id: Id::new(rand::random()),
             peer,
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
-            position: Vec3::ZERO,
-            front: Vec3::FORWARD,
+            transform: Transform::origin(),
             image: None,
             room: None,
         }
@@ -243,11 +240,10 @@ impl State {
                 }
                 Event::Move => {
                     let event = body.decode::<MoveToBody>()?;
-                    tracing::info!(?event.position, ?event.front, "move");
+                    tracing::info!(?event.transform, "move");
 
-                    this.position = event.position;
-                    this.front = event.front;
-                    moves.push((event.position, event.front));
+                    this.transform = event.transform;
+                    moves.push(event.transform);
                 }
                 Event::UpdateImage => {
                     let event = body.decode::<UpdateImageBody>()?;
@@ -282,13 +278,13 @@ impl State {
                     continue;
                 };
 
-                tracing::info!(?id, position = ?other.position, front = ?other.front, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
+                tracing::info!(?id, transform = ?other.transform, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
 
                 if let Err(e) = this.peer.join(other.id) {
                     tracing::error!(?id, ?e, "failed to send join");
                 }
 
-                if let Err(e) = this.peer.moved_to(other.id, other.position, other.front) {
+                if let Err(e) = this.peer.moved_to(other.id, other.transform) {
                     tracing::error!(?id, ?e, "failed to send move");
                 }
 
@@ -300,7 +296,7 @@ impl State {
             }
         }
 
-        for (position, front) in moves {
+        for transform in moves {
             let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
                 continue;
             };
@@ -308,8 +304,7 @@ impl State {
             tracing::info! {
                 room.name = ?BStr::new(&room.name),
                 members = ?room.members,
-                ?position,
-                ?front,
+                ?transform,
                 "broadcasting move"
             };
 
@@ -319,7 +314,7 @@ impl State {
                 }
 
                 if let Some(peer) = peers.get_mut(id) {
-                    if let Err(e) = peer.peer.moved_to(this.id, position, front) {
+                    if let Err(e) = peer.peer.moved_to(this.id, transform) {
                         tracing::error!(?id, ?e, "failed to send move");
                     } else {
                         self.poll.insert(*id);

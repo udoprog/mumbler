@@ -338,8 +338,7 @@ impl Map {
                     api::RemoteAvatarUpdateBody::Join { peer_id } => {
                         self.remote_avatars.push(RemoteAvatar {
                             id: peer_id,
-                            position: Vec3::ZERO,
-                            front: Vec3::FORWARD,
+                            transform: api::Transform::origin(),
                             image: None,
                             color: api::Color::neutral_gray(),
                         });
@@ -347,14 +346,9 @@ impl Map {
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
                         self.remote_avatars.retain(|a| a.id != peer_id);
                     }
-                    api::RemoteAvatarUpdateBody::Move {
-                        peer_id,
-                        position,
-                        front,
-                    } => {
+                    api::RemoteAvatarUpdateBody::Move { peer_id, transform } => {
                         if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
-                            a.position = position;
-                            a.front = front;
+                            a.transform = transform;
                         }
                     }
                     api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image } => {
@@ -465,8 +459,8 @@ impl Map {
                         break 'out false;
                     };
 
-                    a.position.x = world_x as f32;
-                    a.position.z = world_z as f32;
+                    a.transform.position.x = world_x as f32;
+                    a.transform.position.z = world_z as f32;
                     self.update = true;
                     true
                 }
@@ -535,7 +529,7 @@ impl Map {
                     let dir_x = angle_rad.cos() as f32;
                     let dir_z = angle_rad.sin() as f32;
 
-                    a.front = api::Vec3::new(dir_x, 0.0, dir_z);
+                    a.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
                     self.update = true;
                     true
                 }
@@ -646,8 +640,7 @@ impl Map {
 
     fn redraw(&self) -> Result<(), Error> {
         struct RenderAvatar {
-            position: Vec3,
-            front: Vec3,
+            transform: api::Transform,
             image: Option<Id>,
             color: api::Color,
             player: bool,
@@ -676,16 +669,14 @@ impl Map {
         draw_grid(&cx, &t, &w.extent, w.zoom);
 
         let player_avatar = |a: &Avatar| RenderAvatar {
-            position: a.position,
-            front: a.front,
+            transform: a.transform,
             image: a.image,
             color: a.color,
             player: true,
         };
 
         let remote_avatar = |a: &RemoteAvatar| RenderAvatar {
-            position: a.position,
-            front: a.front,
+            transform: a.transform,
             image: a.image,
             color: a.color,
             player: false,
@@ -695,7 +686,7 @@ impl Map {
         let avatars = avatars.chain(self.remote_avatars.iter().map(remote_avatar));
 
         for a in avatars {
-            let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
+            let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
 
             // Draw avatar token: circular image if available, otherwise a filled circle.
             let image_drawn = 'draw: {
@@ -745,13 +736,13 @@ impl Map {
             let front = if a.player
                 && let Some((mx, my)) = self.arrow_target
             {
-                let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
+                let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
                 let angle_rad = (my - y).atan2(mx - x);
                 let dir_x = angle_rad.cos() as f32;
                 let dir_z = angle_rad.sin() as f32;
                 Vec3::new(dir_x, 0.0, dir_z)
             } else {
-                a.front
+                a.transform.front
             };
 
             // Only draw the facing arc when the avatar has a non-zero facing direction.

@@ -47,9 +47,7 @@ impl ws::Handler for Handler {
                     .read::<api::UpdatePlayerRequest>()
                     .context("missing request")?;
 
-                self.backend
-                    .set_position_front(request.avatar.position, request.avatar.front)
-                    .await;
+                self.backend.set_transform(request.avatar.transform).await;
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -136,8 +134,8 @@ pub(super) async fn entry(
                             BackendEvent::Leave { peer_id } => {
                                 api::RemoteAvatarUpdateBody::Leave { peer_id }
                             },
-                            BackendEvent::Moved { peer_id, position, front } => {
-                                api::RemoteAvatarUpdateBody::Move { peer_id, position, front }
+                            BackendEvent::Moved { peer_id, transform } => {
+                                api::RemoteAvatarUpdateBody::Move { peer_id, transform }
                             },
                             BackendEvent::ImageUpdated { peer_id, image } => {
                                 api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image }

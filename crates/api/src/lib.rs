@@ -167,16 +167,35 @@ impl Vec3 {
     }
 }
 
+/// Represents a position and orientation in 3D space.
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Transform {
+    /// The position in world coordinates.
+    pub position: Vec3,
+    /// The direction facing as a unit vector.
+    pub front: Vec3,
+}
+
+impl Transform {
+    /// Creates a new transform with the given position and front direction.
+    pub const fn new(position: Vec3, front: Vec3) -> Self {
+        Self { position, front }
+    }
+
+    /// A transform at the origin facing forward.
+    pub const fn origin() -> Self {
+        Self::new(Vec3::ZERO, Vec3::FORWARD)
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct RemoteAvatar {
     /// The identifier of the remote avatar.
     pub id: Id,
-    /// The position of the avatar on the map, in world coordinates.
-    pub position: Vec3,
-    /// The direction the avatar is facing, as a unit vector in world
-    /// coordinates (x/z plane).
-    pub front: Vec3,
+    /// The transform (position and orientation) of the avatar.
+    pub transform: Transform,
     /// Indicates if the remote avatar has an image.
     pub image: Option<Id>,
     /// The custom color for the avatar.
@@ -186,10 +205,8 @@ pub struct RemoteAvatar {
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Avatar {
-    /// The position of the avatar on the map, in world coordinates.
-    pub position: Vec3,
-    /// The direction the avatar is facing, as a unit vector in world coordinates (x/z plane).
-    pub front: Vec3,
+    /// The transform (position and orientation) of the avatar.
+    pub transform: Transform,
     /// The unique identifier of the avatar image, if any.
     pub image: Option<Id>,
     /// The custom color for the avatar.
@@ -279,25 +296,11 @@ pub struct SelectColorResponse {
 #[musli(crate = musli_core)]
 pub enum RemoteAvatarUpdateBody {
     RemoteLost,
-    Join {
-        peer_id: Id,
-    },
-    Leave {
-        peer_id: Id,
-    },
-    Move {
-        peer_id: Id,
-        position: Vec3,
-        front: Vec3,
-    },
-    ImageUpdated {
-        peer_id: Id,
-        image: Option<Id>,
-    },
-    ColorUpdated {
-        peer_id: Id,
-        color: Color,
-    },
+    Join { peer_id: Id },
+    Leave { peer_id: Id },
+    Move { peer_id: Id, transform: Transform },
+    ImageUpdated { peer_id: Id, image: Option<Id> },
+    ColorUpdated { peer_id: Id, color: Color },
 }
 
 api::define! {
