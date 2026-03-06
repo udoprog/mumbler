@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_6, TAU};
 
 use api::{Avatar, Extent2, Id, RemoteAvatar, Vec3, World};
+use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -17,9 +18,12 @@ use crate::ws;
 
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f64 = 5.0;
+const MOVEMENT_SPEED: f32 = 5.0;
+const ANIMATION_FPS: u32 = 60;
+const HALF_SPAN: f64 = FRAC_PI_6;
 
-/// Draws a 30° directional arc just outside the token circle to indicate facing.
-/// `angle` is the canvas-space angle (radians) of the facing direction.
+/// Draws a 30° directional arc just outside the token circle to indicate
+/// facing. `angle` is the canvas-space angle (radians) of the facing direction.
 /// The arc is centred on that angle and spans ±15°.
 fn draw_facing_arc(
     cx: &CanvasRenderingContext2d,
@@ -29,8 +33,6 @@ fn draw_facing_arc(
     angle: f64,
     line_width: f64,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    const HALF_SPAN: f64 = FRAC_PI_6;
-
     cx.set_line_width(line_width);
     cx.begin_path();
     cx.arc(x, y, radius, angle - HALF_SPAN, angle + HALF_SPAN)?;
@@ -168,6 +170,10 @@ pub(crate) struct Map {
     /// Loaded avatar images, keyed by image id.
     /// The closure must be kept alive alongside the element for the onload callback to fire.
     images: HashMap<Id, (HtmlImageElement, Option<Closure<dyn FnMut()>>)>,
+    /// Target position for interpolated movement.
+    move_target: Option<Vec3>,
+    /// Animation interval for smooth movement.
+    _animation_interval: Option<Interval>,
 }
 
 pub(crate) enum Msg {
@@ -183,6 +189,7 @@ pub(crate) enum Msg {
     MouseUp(MouseEvent),
     MouseLeave,
     Wheel(WheelEvent),
+    AnimationFrame,
 }
 
 #[derive(Properties, PartialEq)]
@@ -224,6 +231,8 @@ impl Component for Map {
             arrow_target: None,
             _resize_observer: None,
             images: HashMap::new(),
+            move_target: None,
+            _animation_interval: None,
         };
 
         this.refresh(ctx);
@@ -277,6 +286,16 @@ impl Component for Map {
         if self.update_world {
             self.send_world_updates(ctx);
             self.update_world = false;
+        }
+
+        if self._animation_interval.is_none() && self.move_target.is_some() {
+            let link = ctx.link().clone();
+
+            let interval = Interval::new((1000 / ANIMATION_FPS) as u32, move || {
+                link.send_message(Msg::AnimationFrame);
+            });
+
+            self._animation_interval = Some(interval);
         }
 
         changed
@@ -438,7 +457,39 @@ impl Map {
                 self.on_wheel(e)?;
                 Ok(true)
             }
+            Msg::AnimationFrame => {
+                self.interpolate_movement();
+                self.redraw()?;
+                Ok(false)
+            }
         }
+    }
+
+    fn interpolate_movement(&mut self) {
+        let Some(target) = self.move_target else {
+            return;
+        };
+
+        let current = self.player.transform.position;
+        let dx = target.x - current.x;
+        let dz = target.z - current.z;
+        let distance = (dx * dx + dz * dz).sqrt();
+
+        if distance < 0.01 {
+            self.player.transform.position = target;
+            self.move_target = None;
+            self._animation_interval = None;
+            self.update = true;
+            return;
+        }
+
+        let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
+        let move_distance = step.min(distance);
+        let ratio = move_distance / distance;
+
+        self.player.transform.position.x += dx * ratio;
+        self.player.transform.position.z += dz * ratio;
+        self.update = true;
     }
 
     fn send_updates(&mut self, ctx: &Context<Self>) {
@@ -484,11 +535,10 @@ impl Map {
                         self.world.pan,
                         self.world.zoom as f64,
                     );
-                    let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
 
-                    self.player.transform.position.x = world_x as f32;
-                    self.player.transform.position.z = world_z as f32;
-                    self.update = true;
+                    let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
+                    self.move_target = Some(Vec3::new(world_x as f32, 0.0, world_z as f32));
+
                     true
                 }
                 1 => {
@@ -787,7 +837,7 @@ impl Map {
             // Only draw the facing arc when the avatar has a non-zero facing direction.
             if front.x.hypot(-front.z) > 0.01 {
                 let angle = (-front.z as f64).atan2(front.x as f64);
-                let arc_radius = token_radius * 1.4;
+                let arc_radius = token_radius * 1.5;
                 cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
             }
