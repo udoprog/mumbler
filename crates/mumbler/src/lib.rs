@@ -9,11 +9,8 @@ pub use self::backend::Backend;
 mod paths;
 pub use self::paths::Paths;
 
-#[cfg(feature = "remote")]
 pub mod remote;
 
-#[cfg_attr(feature = "remote", path = "client/impl.rs")]
-#[cfg_attr(not(feature = "remote"), path = "client/fake.rs")]
 pub mod client;
 
 use core::pin::pin;
@@ -24,8 +21,8 @@ use tokio::net::TcpListener;
 
 use self::web::default_bind;
 
-pub async fn run(b: Backend, bundle: bool) -> Result<()> {
-    let addr: SocketAddr = default_bind(bundle).parse()?;
+pub async fn run(b: Backend, bundle: bool, bind: &str) -> Result<()> {
+    let addr: SocketAddr = default_bind(bundle, bind).parse()?;
 
     tracing::info!("Listening on http://{addr}");
 

@@ -1,5 +1,4 @@
 use core::future::Future;
-use core::net::SocketAddr;
 use core::pin::Pin;
 use core::task::Waker;
 use core::task::{Context, Poll};
@@ -11,25 +10,32 @@ use std::sync::Arc;
 use std::task::Wake;
 
 use anyhow::{Context as _, Result};
+use api::{Id, Vec3};
 use bstr::BStr;
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::{MoveToBody, PeerId};
+use crate::remote::api::{MoveToBody, UpdateImageBody};
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
 
 struct PeerState {
     /// The unique identifier of this peer.
-    id: PeerId,
+    id: Id,
     /// The peer state.
     peer: Peer,
     /// If this timeout is reached, the peer is disconnected.
     ///
     /// The timeout is reset every time a ping is received.
     timeout: Pin<Box<Sleep>>,
+    /// The current position of the peer.
+    position: Vec3,
+    /// The current front vector of the peer.
+    front: Vec3,
+    /// The current image of the peer.
+    image: Option<Vec<u8>>,
     /// The room the peer is in.
     room: Option<Box<[u8]>>,
 }
@@ -37,9 +43,12 @@ struct PeerState {
 impl PeerState {
     fn new(peer: Peer) -> Self {
         Self {
-            id: PeerId::random(),
+            id: Id::new(rand::random()),
             peer,
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
+            position: Vec3::ZERO,
+            front: Vec3::FORWARD,
+            image: None,
             room: None,
         }
     }
@@ -76,29 +85,32 @@ pub async fn run(bind: &str) -> Result<()> {
                 state.register(id);
             }
             (id, result) = Peers::new(&mut peers, &mut wakers, &mut state) => {
-                let Some(addr) = peers.get(&id).map(|p| p.peer.addr()) else {
+                let Some(mut peer) = peers.remove(&id) else {
+                    tracing::warn!(?id, "peer not found removed");
                     continue;
                 };
 
                 let remove = 'out: {
                     if let Err(error) = result {
-                        tracing::error!(?addr, ?error, "peer errored, disconnecting");
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "peer errored, disconnecting");
                         break 'out true;
                     }
 
-                    if let Err(error) = state.handle(addr, &mut peers, id).await {
-                        tracing::error!(?addr, ?error, "peer errored, disconnecting");
+                    if let Err(error) = state.handle(&mut peer, &mut peers).await {
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "peer errored, disconnecting");
                         break 'out true;
                     }
 
                     // We have to re-poll the peer to set it up for future
                     // wakeups.
-                    state.poll.insert(id);
+                    state.poll.insert(peer.id);
                     false
                 };
 
                 if remove {
-                    state.remove_peer(id, &mut wakers, &mut peers);
+                    state.remove_peer(peer, &mut peers, &mut wakers);
+                } else {
+                    peers.insert(id, peer);
                 }
             }
         }
@@ -107,8 +119,8 @@ pub async fn run(bind: &str) -> Result<()> {
 
 #[derive(Clone)]
 struct IndexWaker {
-    id: PeerId,
-    receiver: Arc<Mutex<BTreeSet<PeerId>>>,
+    id: Id,
+    receiver: Arc<Mutex<BTreeSet<Id>>>,
     parent: Waker,
 }
 
@@ -126,10 +138,11 @@ impl Wake for IndexWaker {
     }
 }
 
-#[derive(Default)]
 struct Room {
+    /// The name of this room.
+    name: Box<[u8]>,
     /// The members of this room.
-    members: Vec<PeerId>,
+    members: Vec<Id>,
 }
 
 struct Wakers {
@@ -137,9 +150,9 @@ struct Wakers {
     /// invalidate all wakers and repoll all peers.
     waker: Option<Waker>,
     /// Cached wakers for each peer.
-    wakers: HashMap<PeerId, Waker>,
+    wakers: HashMap<Id, Waker>,
     /// Channel that child tasks used to indicate that they need to wake up.
-    receiver: Arc<Mutex<BTreeSet<PeerId>>>,
+    receiver: Arc<Mutex<BTreeSet<Id>>>,
 }
 
 impl Wakers {
@@ -153,11 +166,11 @@ impl Wakers {
     }
 
     #[inline]
-    fn remove(&mut self, id: PeerId) {
+    fn remove(&mut self, id: Id) {
         self.wakers.remove(&id);
     }
 
-    fn refresh_parent<T>(&mut self, state: &mut State, peers: &HashMap<PeerId, T>, parent: &Waker) {
+    fn refresh_parent<T>(&mut self, state: &mut State, peers: &HashMap<Id, T>, parent: &Waker) {
         let changed = self.waker.as_ref().is_none_or(|w| !w.will_wake(parent));
 
         if changed {
@@ -170,7 +183,7 @@ impl Wakers {
         }
     }
 
-    fn waker_for(&mut self, id: PeerId, parent: &Waker) -> &mut Waker {
+    fn waker_for(&mut self, id: Id, parent: &Waker) -> &mut Waker {
         match self.wakers.entry(id) {
             hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hash_map::Entry::Vacant(entry) => entry.insert(Waker::from(Arc::new(IndexWaker {
@@ -187,7 +200,7 @@ struct State {
     ///
     /// Peers are added here initially when they connect, or when their buffers
     /// are written to.
-    poll: BTreeSet<PeerId>,
+    poll: BTreeSet<Id>,
     /// Available client contexts.
     rooms: HashMap<Box<[u8]>, Room>,
 }
@@ -200,43 +213,48 @@ impl State {
         }
     }
 
-    fn register(&mut self, id: PeerId) {
+    fn register(&mut self, id: Id) {
         self.poll.insert(id);
     }
 
-    #[tracing::instrument(skip_all, fields(addr))]
+    #[tracing::instrument(skip_all, fields(id = ?this.id, addr = ?this.peer.addr()))]
     async fn handle(
         &mut self,
-        addr: SocketAddr,
-        peers: &mut HashMap<PeerId, PeerState>,
-        peer_id: PeerId,
+        this: &mut PeerState,
+        peers: &mut HashMap<Id, PeerState>,
     ) -> Result<()> {
-        _ = addr;
-
-        let Some(peer) = peers.get_mut(&peer_id) else {
-            return Ok(());
-        };
-
-        let mut join = Vec::new();
+        let mut connected = Vec::new();
         let mut moves = Vec::new();
+        let mut images = Vec::new();
 
-        while let Some((message, body)) = peer.peer.handle::<Event>()? {
+        while let Some((message, body)) = this.peer.handle::<Event>()? {
             match message {
-                Event::Ping => {
-                    let ping = body.decode::<PingBody>()?;
-                    peer.timeout
-                        .as_mut()
-                        .reset(time::Instant::now() + Duration::from_secs(5));
-                    peer.peer.pong(ping.payload)?;
-                }
                 Event::Connect => {
                     let connect = body.decode::<ConnectBody>()?;
                     tracing::info!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
-                    join.push(connect.room);
+                    connected.push(connect.room);
+                }
+                Event::Ping => {
+                    let ping = body.decode::<PingBody>()?;
+                    this.timeout
+                        .as_mut()
+                        .reset(time::Instant::now() + Duration::from_secs(5));
+                    this.peer.pong(ping.payload)?;
                 }
                 Event::Move => {
-                    let m = body.decode::<MoveToBody>()?;
-                    moves.push((m.position, m.front));
+                    let event = body.decode::<MoveToBody>()?;
+                    tracing::info!(?event.position, ?event.front, "move");
+
+                    this.position = event.position;
+                    this.front = event.front;
+                    moves.push((event.position, event.front));
+                }
+                Event::UpdateImage => {
+                    let event = body.decode::<UpdateImageBody>()?;
+                    tracing::info!(image = ?event.image.as_ref().map(|i| i.len()), "update image");
+
+                    this.image = event.image.clone();
+                    images.push(event.image)
                 }
                 event => {
                     return Err(anyhow::anyhow!("unsupported event: {event:?}"));
@@ -244,46 +262,92 @@ impl State {
             }
         }
 
-        for room in join {
-            if let Some(room_name) = peers
-                .get_mut(&peer_id)
-                .and_then(|p| p.room.replace(room.clone()))
-            {
-                self.leave_room(&room_name, peer_id, peers);
+        // We have just connected, so send all information about other peers to
+        // the new peer.
+        for name in connected {
+            if let Some(room_name) = this.room.replace(name.clone()) {
+                self.leave_room(&room_name, this.id, peers);
             }
 
-            if let Some(room) = self.rooms.get(&room)
-                && let Some(peer) = peers.get_mut(&peer_id)
-            {
-                for id in room.members.iter() {
-                    if let Err(e) = peer.peer.join(*id) {
-                        tracing::error!(?id, ?e, "failed to send join message");
-                    } else {
-                        self.poll.insert(peer_id);
-                    }
-                }
-            }
+            self.join_room(&name, this.id, peers);
 
-            self.join_room(&room, peer_id, peers);
-        }
-
-        for (position, front) in moves {
-            let Some(room) = peers
-                .get(&peer_id)
-                .and_then(|p| p.room.as_ref())
-                .and_then(|r| self.rooms.get(r))
-            else {
+            let Some(room) = self.rooms.get(&name) else {
                 continue;
             };
 
+            tracing::info!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
+
             for id in room.members.iter() {
-                if *id == peer_id {
+                let Some(other) = peers.get(id) else {
+                    continue;
+                };
+
+                tracing::info!(?id, position = ?other.position, front = ?other.front, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
+
+                if let Err(e) = this.peer.join(other.id) {
+                    tracing::error!(?id, ?e, "failed to send join");
+                }
+
+                if let Err(e) = this.peer.moved_to(other.id, other.position, other.front) {
+                    tracing::error!(?id, ?e, "failed to send move");
+                }
+
+                if let Err(e) = this.peer.updated_image(other.id, other.image.clone()) {
+                    tracing::error!(?id, ?e, "failed to send image update");
+                }
+
+                self.poll.insert(this.id);
+            }
+        }
+
+        for (position, front) in moves {
+            let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                continue;
+            };
+
+            tracing::info! {
+                room.name = ?BStr::new(&room.name),
+                members = ?room.members,
+                ?position,
+                ?front,
+                "broadcasting move"
+            };
+
+            for id in room.members.iter() {
+                if *id == this.id {
                     continue;
                 }
 
                 if let Some(peer) = peers.get_mut(id) {
-                    if let Err(e) = peer.peer.moved_to(peer_id, position, front) {
-                        tracing::error!(?id, ?e, "failed to send move message");
+                    if let Err(e) = peer.peer.moved_to(this.id, position, front) {
+                        tracing::error!(?id, ?e, "failed to send move");
+                    } else {
+                        self.poll.insert(*id);
+                    }
+                }
+            }
+        }
+
+        for image in images {
+            let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                continue;
+            };
+
+            tracing::info! {
+                room.name = ?BStr::new(&room.name),
+                members = ?room.members,
+                image = ?image.as_ref().map(|i| i.len()),
+                "broadcasting image update"
+            };
+
+            for id in room.members.iter() {
+                if *id == this.id {
+                    continue;
+                }
+
+                if let Some(peer) = peers.get_mut(id) {
+                    if let Err(e) = peer.peer.updated_image(this.id, image.clone()) {
+                        tracing::error!(?id, ?e, "failed to send image update");
                     } else {
                         self.poll.insert(*id);
                     }
@@ -296,44 +360,34 @@ impl State {
 
     fn remove_peer(
         &mut self,
-        id: PeerId,
+        peer: PeerState,
+        peers: &mut HashMap<Id, PeerState>,
         wakers: &mut Wakers,
-        peers: &mut HashMap<PeerId, PeerState>,
     ) {
-        let Some(peer) = peers.remove(&id) else {
-            tracing::warn!(?id, "peer already removed");
-            return;
-        };
-
         if let Some(room) = peer.room {
             self.leave_room(&room, peer.id, peers);
         }
 
-        self.poll.remove(&id);
-        wakers.remove(id);
+        self.poll.remove(&peer.id);
+        wakers.remove(peer.id);
     }
 
-    fn leave_room(
-        &mut self,
-        room_name: &[u8],
-        peer_id: PeerId,
-        peers: &mut HashMap<PeerId, PeerState>,
-    ) {
+    fn leave_room(&mut self, room_name: &[u8], leaving_id: Id, peers: &mut HashMap<Id, PeerState>) {
         let Some(room) = self.rooms.get_mut(room_name) else {
             return;
         };
 
-        room.members.retain(|&id| id != peer_id);
+        room.members.retain(|&id| id != leaving_id);
 
         for id in room.members.iter() {
             let Some(peer) = peers.get_mut(id) else {
                 continue;
             };
 
-            if let Err(e) = peer.peer.leave(peer_id) {
-                tracing::error!(?id, ?e, "failed to send leave message");
+            if let Err(e) = peer.peer.leave(leaving_id) {
+                tracing::error!(?id, ?e, "failed to send leave");
             } else {
-                self.poll.insert(peer_id);
+                self.poll.insert(leaving_id);
             }
         }
 
@@ -344,36 +398,42 @@ impl State {
         }
     }
 
-    fn join_room(&mut self, room: &[u8], peer_id: PeerId, peers: &mut HashMap<PeerId, PeerState>) {
-        let room = self.rooms.entry(Box::<[u8]>::from(room)).or_default();
+    fn join_room(&mut self, room: &[u8], joining_id: Id, peers: &mut HashMap<Id, PeerState>) {
+        let room = self
+            .rooms
+            .entry(Box::<[u8]>::from(room))
+            .or_insert_with(|| Room {
+                name: Box::from(room),
+                members: Vec::new(),
+            });
 
         for id in room.members.iter() {
             let Some(peer) = peers.get_mut(id) else {
                 continue;
             };
 
-            if let Err(e) = peer.peer.join(peer_id) {
-                tracing::error!(?id, ?e, "failed to send leave message");
+            if let Err(e) = peer.peer.join(joining_id) {
+                tracing::error!(?id, ?e, "failed to send join");
             } else {
-                self.poll.insert(peer_id);
+                self.poll.insert(joining_id);
             }
         }
 
-        if !room.members.contains(&peer_id) {
-            room.members.push(peer_id);
+        if !room.members.contains(&joining_id) {
+            room.members.push(joining_id);
         }
     }
 }
 
 struct Peers<'a> {
-    peers: &'a mut HashMap<PeerId, PeerState>,
+    peers: &'a mut HashMap<Id, PeerState>,
     wakers: &'a mut Wakers,
     state: &'a mut State,
 }
 
 impl<'a> Peers<'a> {
     fn new(
-        peers: &'a mut HashMap<PeerId, PeerState>,
+        peers: &'a mut HashMap<Id, PeerState>,
         wakers: &'a mut Wakers,
         state: &'a mut State,
     ) -> Self {
@@ -386,7 +446,7 @@ impl<'a> Peers<'a> {
 }
 
 impl Future for Peers<'_> {
-    type Output = (PeerId, io::Result<()>);
+    type Output = (Id, io::Result<()>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self {
@@ -406,7 +466,6 @@ impl Future for Peers<'_> {
             let mut cx = Context::from_waker(waker);
 
             if let Poll::Ready(result) = peer.poll(&mut cx) {
-                tracing::warn!("READY");
                 return Poll::Ready((id, result));
             }
         }

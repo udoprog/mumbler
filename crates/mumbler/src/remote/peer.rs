@@ -5,17 +5,17 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::Vec3;
+use api::{Id, Vec3};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
 use musli::storage;
 use musli_core::Decode;
-use musli_web::api::{ErrorMessage, Id, MessageId};
+use musli_web::api::{ErrorMessage, MessageId};
 
-use crate::remote::api::{MoveToBody, MovedToBody};
+use crate::remote::api::{MoveToBody, MovedToBody, UpdateImageBody, UpdatedImageBody};
 
-use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PeerId, PingBody, PongBody};
+use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
 use super::{Buf, Client, Scratch};
 
 const MAX_CAPACITY: usize = 1024 * 1024;
@@ -58,7 +58,7 @@ impl Peer {
     #[inline]
     pub fn handle<M>(&mut self) -> Result<Option<(M, Body<'_>)>>
     where
-        M: Id,
+        M: musli_web::api::Id,
     {
         loop {
             match self.state {
@@ -136,15 +136,15 @@ impl Peer {
     }
 
     /// Mark the given peer as having joined the room.
-    pub fn join(&mut self, peer_id: PeerId) -> Result<()> {
-        self.scratch.send(JoinBody { id: peer_id })?;
+    pub fn join(&mut self, id: Id) -> Result<()> {
+        self.scratch.send(JoinBody { id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
     /// Mark the given peer as having left the room.
-    pub fn leave(&mut self, peer_id: PeerId) -> Result<()> {
-        self.scratch.send(LeaveBody { id: peer_id })?;
+    pub fn leave(&mut self, id: Id) -> Result<()> {
+        self.scratch.send(LeaveBody { id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -156,8 +156,22 @@ impl Peer {
         Ok(())
     }
 
+    /// Update the peer's image.
+    pub fn update_image(&mut self, image: Option<Vec<u8>>) -> Result<()> {
+        self.scratch.send(UpdateImageBody { image })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Update the peer's image.
+    pub fn updated_image(&mut self, peer_id: Id, image: Option<Vec<u8>>) -> Result<()> {
+        self.scratch.send(UpdatedImageBody { id: peer_id, image })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
     /// Mark the given peer as having moved to the given position and front.
-    pub fn moved_to(&mut self, id: PeerId, position: Vec3, front: Vec3) -> Result<()> {
+    pub fn moved_to(&mut self, id: Id, position: Vec3, front: Vec3) -> Result<()> {
         self.scratch.send(MovedToBody {
             id,
             position,

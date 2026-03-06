@@ -14,7 +14,7 @@ use musli_web::ws;
 use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
-use crate::backend::Event;
+use crate::backend::BackendEvent;
 
 struct Handler {
     backend: Backend,
@@ -48,7 +48,8 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
 
                 self.backend
-                    .send(Event::Move(request.avatar.position, request.avatar.front));
+                    .set_position_front(request.avatar.position, request.avatar.front)
+                    .await;
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -97,19 +98,64 @@ pub(super) async fn entry(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| {
+        let mut events = backend.subscribe();
+
         let future = async move {
-            tracing::info!("Client connected");
+            tracing::info!("connected");
 
-            let server = pin!(axum08::server(socket, Handler::new(backend)));
+            let mut server = pin!(axum08::server(socket, Handler::new(backend)));
 
-            if let Err(error) = server.run().await {
-                tracing::error!("{error}");
+            loop {
+                let (result, done) = tokio::select! {
+                    result = server.as_mut().run() => {
+                        (result, true)
+                    }
+                    event = events.recv() => {
+                        let Ok(event) = event else {
+                            tracing::error!("backend event stream error: {event:?}");
+                            break;
+                        };
 
-                let mut source = error.source();
+                        tracing::info!(?event, "backend event");
 
-                while let Some(cause) = source.take() {
-                    tracing::error!("Caused by: {cause}");
-                    source = cause.source();
+                        let event = match event {
+                            BackendEvent::RemoteLost => {
+                                api::RemoteAvatarUpdateBody::RemoteLost
+                            },
+                            BackendEvent::Join { peer_id } => {
+                                api::RemoteAvatarUpdateBody::Join { peer_id }
+                            },
+                            BackendEvent::Leave { peer_id } => {
+                                api::RemoteAvatarUpdateBody::Leave { peer_id }
+                            },
+                            BackendEvent::Moved { peer_id, position, front } => {
+                                api::RemoteAvatarUpdateBody::Move { peer_id, position, front }
+                            },
+                            BackendEvent::ImageUpdated { peer_id, image } => {
+                                api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image }
+                            }
+                        };
+
+                        (server.as_mut().broadcast(event), false)
+                    }
+                };
+
+                if let Err(error) = result {
+                    tracing::error!("{error}");
+
+                    let mut source = error.source();
+
+                    while let Some(cause) = source.take() {
+                        tracing::error!("Caused by: {cause}");
+                        source = cause.source();
+                    }
+
+                    break;
+                }
+
+                if done {
+                    tracing::warn!("Websocket server future completed, shutting down connection");
+                    break;
                 }
             }
         };

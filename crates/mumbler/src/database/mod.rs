@@ -25,7 +25,7 @@ struct BlobId(Id);
 impl BindValue for BlobId {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        let bytes = self.0.as_u64().to_le_bytes();
+        let bytes = self.0.get().to_le_bytes();
         bytes.bind_value(stmt, index)
     }
 }
@@ -57,7 +57,6 @@ struct Inner {
     insert_image: SendStatement,
     select_images: SendStatement,
     select_image_data: SendStatement,
-    select_image: SendStatement,
     delete_image: SendStatement,
     get_config: SendStatement,
     set_config: SendStatement,
@@ -145,7 +144,6 @@ impl Database {
                 insert_image: c.prepare("INSERT INTO images (id, width, height, content_type, data) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
                 select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
-                select_image: c.prepare("SELECT id, width, height FROM images WHERE id = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
@@ -166,27 +164,6 @@ impl Database {
 
             if let Some(data) = inner.select_image_data.next::<Vec<u8>>()? {
                 return Ok(Some(data));
-            }
-
-            Ok(None)
-        });
-
-        task.await?
-    }
-
-    /// Get a specific image by its unique identifier.
-    pub(crate) async fn get_image(&self, id: Id) -> Result<Option<Image>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_image.bind(BlobId(id))?;
-
-            if let Some((BlobId(id), width, height)) =
-                inner.select_image.next::<(BlobId, u32, u32)>()?
-            {
-                let image = Image { id, width, height };
-
-                return Ok(Some(image));
             }
 
             Ok(None)

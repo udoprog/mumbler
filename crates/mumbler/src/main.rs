@@ -2,7 +2,6 @@ use core::pin::pin;
 use core::time::Duration;
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -29,6 +28,8 @@ struct Opts {
     /// Work as development server.
     #[arg(long)]
     dev: bool,
+    #[arg(long, default_value = "127.0.0.1:8080")]
+    bind: String,
 }
 
 pub fn main() -> Result<()> {
@@ -58,7 +59,7 @@ pub fn main() -> Result<()> {
         None => dirs.config_dir(),
     };
 
-    let paths = Arc::new(Paths::new(config));
+    let paths = Paths::new(config);
 
     if opts.paths {
         println!("Database: {}", paths.db.display());
@@ -67,13 +68,14 @@ pub fn main() -> Result<()> {
 
     let runtime = Builder::new_current_thread().enable_all().build()?;
     let c = Database::open(&paths, opts.memory)?;
-    let b = Backend::new(c, paths);
 
     runtime.block_on(async move {
+        let b = Backend::new(c, paths).await;
+
         let mut client = pin!(client::run(b.clone()));
         let mut reconnect_timeout = pin!(time::sleep(Duration::from_secs(0)));
         let mut client_setup = true;
-        let mut mumbler = pin!(mumbler::run(b.clone(), !opts.dev));
+        let mut mumbler = pin!(mumbler::run(b.clone(), !opts.dev, &opts.bind));
 
         loop {
             tokio::select! {

@@ -1,6 +1,8 @@
 mod id;
 pub use id::Id;
 
+use core::fmt;
+
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
@@ -72,7 +74,7 @@ pub struct World {
     pub token_radius: f32,
 }
 
-#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
+#[derive(Clone, Copy, Default, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
     /// The x coordinate in meters from the origin (left / right).
@@ -81,6 +83,16 @@ pub struct Vec3 {
     pub y: f32,
     /// The z coordinate in meters from the origin (forward / backward).
     pub z: f32,
+}
+
+impl fmt::Debug for Vec3 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Vec3")
+            .field(&self.x)
+            .field(&self.y)
+            .field(&self.z)
+            .finish()
+    }
 }
 
 impl Vec3 {
@@ -98,9 +110,21 @@ impl Vec3 {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct Avatar {
-    /// The unique identifier of the avatar.
+pub struct RemoteAvatar {
+    /// The identifier of the remote avatar.
     pub id: Id,
+    /// The position of the avatar on the map, in world coordinates.
+    pub position: Vec3,
+    /// The direction the avatar is facing, as a unit vector in world
+    /// coordinates (x/z plane).
+    pub front: Vec3,
+    /// Indicates if the remote avatar has an image.
+    pub image: Option<Id>,
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Avatar {
     /// The position of the avatar on the map, in world coordinates.
     pub position: Vec3,
     /// The direction the avatar is facing, as a unit vector in world coordinates (x/z plane).
@@ -117,12 +141,10 @@ pub struct InitializeEvent {
     pub player: Avatar,
     /// The name of the current user.
     pub name: Option<String>,
-    /// List of current avatars.
-    pub avatars: Vec<Avatar>,
+    /// List of remote avatars.
+    pub remote_avatars: Vec<RemoteAvatar>,
     /// The configuration of the world.
     pub world: World,
-    /// Included images.
-    pub images: Vec<Image>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -174,6 +196,27 @@ pub struct DeleteImageRequest {
 #[musli(crate = musli_core)]
 pub struct DeleteImageResponse;
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub enum RemoteAvatarUpdateBody {
+    RemoteLost,
+    Join {
+        peer_id: Id,
+    },
+    Leave {
+        peer_id: Id,
+    },
+    Move {
+        peer_id: Id,
+        position: Vec3,
+        front: Vec3,
+    },
+    ImageUpdated {
+        peer_id: Id,
+        image: Option<Id>,
+    },
+}
+
 api::define! {
     pub type Initialize;
 
@@ -215,5 +258,11 @@ api::define! {
     impl Endpoint for DeleteImage {
         impl Request for DeleteImageRequest;
         type Response<'de> = DeleteImageResponse;
+    }
+
+    pub type RemoteAvatarUpdate;
+
+    impl Broadcast for RemoteAvatarUpdate {
+        impl Event for RemoteAvatarUpdateBody;
     }
 }

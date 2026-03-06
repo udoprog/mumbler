@@ -1,7 +1,8 @@
+use core::mem;
 use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_6, TAU};
 
-use api::{Avatar, Extent2, Id, Vec3, World};
+use api::{Avatar, Extent2, Id, RemoteAvatar, Vec3, World};
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -141,8 +142,8 @@ pub(crate) struct Map {
     _initialize: ws::Request,
     _update_avatars: ws::Request,
     _state_change: ws::StateListener,
+    _remote_avatar_listener: ws::Listener,
     state: ws::State,
-    initialize: Packet<api::Initialize>,
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
     /// World configuration.
@@ -152,7 +153,7 @@ pub(crate) struct Map {
     /// The player avatar.
     player: Option<Avatar>,
     /// Avatars in the world and their positions.
-    avatars: Vec<Avatar>,
+    remote_avatars: Vec<RemoteAvatar>,
     /// Current pan offset in canvas pixels.
     pan: (f64, f64),
     /// Mouse position at the start of a middle-mouse drag.
@@ -171,6 +172,7 @@ pub(crate) struct Map {
 pub(crate) enum Msg {
     Initialize(Result<Packet<api::Initialize>, ws::Error>),
     AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
+    RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     StateChanged(ws::State),
     Resized,
     ImageLoaded(Id),
@@ -184,6 +186,107 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
+}
+
+impl Component for Map {
+    type Message = Msg;
+    type Properties = Props;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        let (state, _state_change) = ctx
+            .props()
+            .ws
+            .on_state_change(ctx.link().callback(Msg::StateChanged));
+
+        let remote_avatar_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::RemoteAvatarUpdate>(ctx.link().callback(Msg::RemoteAvatarUpdate));
+
+        let mut this = Self {
+            _initialize: ws::Request::new(),
+            _update_avatars: ws::Request::new(),
+            _remote_avatar_listener: remote_avatar_listener,
+            _state_change,
+            state,
+            canvas_sizer: NodeRef::default(),
+            canvas_ref: NodeRef::default(),
+            world: None,
+            player: None,
+            remote_avatars: Vec::new(),
+            update: false,
+            pan: (0.0, 0.0),
+            pan_anchor: None,
+            start_press: None,
+            arrow_target: None,
+            _resize_observer: None,
+            images: HashMap::new(),
+        };
+
+        this.refresh(ctx);
+        this
+    }
+
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            self.resize_canvas();
+
+            if let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() {
+                let link = ctx.link().clone();
+                let closure = Closure::<dyn FnMut()>::new(move || {
+                    link.send_message(Msg::Resized);
+                });
+                let observer = ResizeObserver::new(closure.as_ref().unchecked_ref()).unwrap();
+                observer.observe(&sizer);
+
+                if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
+                    o.disconnect();
+                    drop(_closure);
+                }
+            }
+        }
+
+        if let Err(error) = self.redraw() {
+            tracing::error!(%error, "Failed to redraw map");
+        }
+    }
+
+    fn destroy(&mut self, _: &Context<Self>) {
+        if let Some((observer, _closure)) = self._resize_observer.take() {
+            observer.disconnect();
+        }
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        let changed = match self.try_update(ctx, msg) {
+            Ok(changed) => changed,
+            Err(error) => {
+                tracing::error!(%error, "Map error");
+                false
+            }
+        };
+
+        if self.update {
+            self.send_updates(ctx);
+            self.update = false;
+        }
+
+        changed
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        html! {
+            <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                <canvas id="map" ref={self.canvas_ref.clone()}
+                    onmousedown={ctx.link().callback(Msg::MouseDown)}
+                    onmousemove={ctx.link().callback(Msg::MouseMove)}
+                    onmouseup={ctx.link().callback(Msg::MouseUp)}
+                    onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
+                    onwheel={ctx.link().callback(Msg::Wheel)}
+                ></canvas>
+            </div>
+        }
+    }
 }
 
 impl Map {
@@ -202,14 +305,16 @@ impl Map {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Initialize(result) => {
-                self.initialize = result?;
+                let initialize = result?;
+                let initialize = initialize.decode()?;
 
-                if let Ok(initialize) = self.initialize.decode() {
-                    self.world = Some(initialize.world);
-                    self.player = Some(initialize.player);
-                    self.avatars = initialize.avatars;
-                    self.load_images(ctx, &initialize.images);
-                }
+                tracing::info!(?initialize, "initialize");
+
+                self.world = Some(initialize.world);
+                self.player = Some(initialize.player);
+                self.remote_avatars = initialize.remote_avatars;
+
+                self.load_initialize_images(ctx);
 
                 if let Err(error) = self.redraw() {
                     tracing::error!(%error, "Failed to redraw map");
@@ -220,6 +325,60 @@ impl Map {
             Msg::AvatarsUpdated(result) => {
                 result?;
                 self.update = false;
+                Ok(false)
+            }
+            Msg::RemoteAvatarUpdate(update) => {
+                let update = update?;
+                let update = update.decode()?;
+
+                tracing::info!(?update, "remote avatar update");
+
+                match update {
+                    api::RemoteAvatarUpdateBody::RemoteLost => {
+                        self.remote_avatars.clear();
+                    }
+                    api::RemoteAvatarUpdateBody::Join { peer_id } => {
+                        self.remote_avatars.push(RemoteAvatar {
+                            id: peer_id,
+                            position: Vec3::ZERO,
+                            front: Vec3::FORWARD,
+                            image: None,
+                        });
+                    }
+                    api::RemoteAvatarUpdateBody::Leave { peer_id } => {
+                        self.remote_avatars.retain(|a| a.id != peer_id);
+                    }
+                    api::RemoteAvatarUpdateBody::Move {
+                        peer_id,
+                        position,
+                        front,
+                    } => {
+                        if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
+                            a.position = position;
+                            a.front = front;
+                        }
+                    }
+                    api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image } => {
+                        let old = if let Some(a) =
+                            self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
+                        {
+                            mem::replace(&mut a.image, image)
+                        } else {
+                            None
+                        };
+
+                        if let Some(id) = old {
+                            self.images.remove(&id);
+                        }
+
+                        if let Some(id) = image {
+                            let image = Self::load_image(ctx, id);
+                            self.images.insert(id, image);
+                        }
+                    }
+                }
+
+                self.redraw()?;
                 Ok(false)
             }
             Msg::StateChanged(state) => {
@@ -439,24 +598,29 @@ impl Map {
         self.redraw()?;
         Ok(())
     }
-}
 
-impl Map {
     /// Resize the canvas according to its parent sizer element.
-    fn load_images(&mut self, ctx: &Context<Self>, images: &[api::Image]) {
+    fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        for image in images {
-            let id = image.id;
-            let link = ctx.link().clone();
-            let img = HtmlImageElement::new().unwrap();
-            let closure = Closure::<dyn FnMut()>::new(move || {
-                link.send_message(Msg::ImageLoaded(id));
-            });
-            img.set_onload(Some(closure.as_ref().unchecked_ref()));
-            img.set_src(&format!("/api/image/{id}"));
-            self.images.insert(id, (img, Some(closure)));
+        let ids = self.player.iter().flat_map(|a| a.image);
+        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
+
+        for id in ids {
+            let image = Self::load_image(ctx, id);
+            self.images.insert(id, image);
         }
+    }
+
+    fn load_image(ctx: &Context<Map>, id: Id) -> (HtmlImageElement, Option<Closure<dyn FnMut()>>) {
+        let link = ctx.link().clone();
+        let img = HtmlImageElement::new().unwrap();
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            link.send_message(Msg::ImageLoaded(id));
+        });
+        img.set_onload(Some(closure.as_ref().unchecked_ref()));
+        img.set_src(&format!("/api/image/{id}"));
+        (img, Some(closure))
     }
 
     fn resize_canvas(&self) {
@@ -477,6 +641,13 @@ impl Map {
     }
 
     fn redraw(&self) -> Result<(), Error> {
+        struct RenderAvatar {
+            position: Vec3,
+            front: Vec3,
+            image: Option<Id>,
+            player: bool,
+        }
+
         let Some(w) = &self.world else {
             return Ok(());
         };
@@ -499,10 +670,24 @@ impl Map {
 
         draw_grid(&cx, &t, &w.extent, w.zoom);
 
-        let avatars = self.player.iter().map(|a| (a, true));
-        let avatars = avatars.chain(self.avatars.iter().map(|a| (a, false)));
+        let player_avatar = |a: &Avatar| RenderAvatar {
+            position: a.position,
+            front: a.front,
+            image: a.image,
+            player: true,
+        };
 
-        for ((a, player), color) in avatars.zip(COLORS.iter().cycle()) {
+        let remote_avatar = |a: &RemoteAvatar| RenderAvatar {
+            position: a.position,
+            front: a.front,
+            image: a.image,
+            player: false,
+        };
+
+        let avatars = self.player.iter().map(player_avatar);
+        let avatars = avatars.chain(self.remote_avatars.iter().map(remote_avatar));
+
+        for (a, color) in avatars.zip(COLORS.iter().cycle()) {
             let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
 
             // Draw avatar token: circular image if available, otherwise a filled circle.
@@ -550,7 +735,9 @@ impl Map {
                 cx.fill();
             }
 
-            let front = if player && let Some((mx, my)) = self.arrow_target {
+            let front = if a.player
+                && let Some((mx, my)) = self.arrow_target
+            {
                 let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
                 let angle_rad = (my - y).atan2(mx - x);
                 let dir_x = angle_rad.cos() as f32;
@@ -570,101 +757,5 @@ impl Map {
         }
 
         Ok(())
-    }
-}
-
-impl Component for Map {
-    type Message = Msg;
-    type Properties = Props;
-
-    fn create(ctx: &Context<Self>) -> Self {
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let mut this = Self {
-            _initialize: ws::Request::new(),
-            _update_avatars: ws::Request::new(),
-            _state_change,
-            state,
-            initialize: Packet::empty(),
-            canvas_sizer: NodeRef::default(),
-            canvas_ref: NodeRef::default(),
-            world: None,
-            player: None,
-            avatars: Vec::new(),
-            update: false,
-            pan: (0.0, 0.0),
-            pan_anchor: None,
-            start_press: None,
-            arrow_target: None,
-            _resize_observer: None,
-            images: HashMap::new(),
-        };
-
-        this.refresh(ctx);
-        this
-    }
-
-    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
-        if first_render {
-            self.resize_canvas();
-
-            if let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() {
-                let link = ctx.link().clone();
-                let closure = Closure::<dyn FnMut()>::new(move || {
-                    link.send_message(Msg::Resized);
-                });
-                let observer = ResizeObserver::new(closure.as_ref().unchecked_ref()).unwrap();
-                observer.observe(&sizer);
-
-                if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
-                    o.disconnect();
-                    drop(_closure);
-                }
-            }
-        }
-
-        if let Err(error) = self.redraw() {
-            tracing::error!(%error, "Failed to redraw map");
-        }
-    }
-
-    fn destroy(&mut self, _: &Context<Self>) {
-        if let Some((observer, _closure)) = self._resize_observer.take() {
-            observer.disconnect();
-        }
-    }
-
-    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        let changed = match self.try_update(ctx, msg) {
-            Ok(changed) => changed,
-            Err(error) => {
-                tracing::error!(%error, "Map error");
-                false
-            }
-        };
-
-        if self.update {
-            self.send_updates(ctx);
-            self.update = false;
-        }
-
-        changed
-    }
-
-    fn view(&self, ctx: &Context<Self>) -> Html {
-        html! {
-            <div class="map-sizer" ref={self.canvas_sizer.clone()}>
-                <canvas id="map" ref={self.canvas_ref.clone()}
-                    onmousedown={ctx.link().callback(Msg::MouseDown)}
-                    onmousemove={ctx.link().callback(Msg::MouseMove)}
-                    onmouseup={ctx.link().callback(Msg::MouseUp)}
-                    onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
-                    onwheel={ctx.link().callback(Msg::Wheel)}
-                ></canvas>
-            </div>
-        }
     }
 }

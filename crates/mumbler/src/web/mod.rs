@@ -49,8 +49,8 @@ impl From<anyhow::Error> for WebError {
 use std::future::Future;
 use std::net::SocketAddr;
 
-use anyhow::{Result, bail};
-use api::{Id, Vec3};
+use anyhow::Result;
+use api::Id;
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
@@ -60,10 +60,16 @@ use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
-pub(crate) fn default_bind(_bundle: bool) -> &'static str {
+pub(crate) fn default_bind(bundle: bool, bind: &str) -> &str {
     #[cfg(feature = "bundle")]
-    if _bundle {
-        return "127.0.0.1:8080";
+    if bundle {
+        return bind;
+    }
+
+    #[cfg(not(feature = "bundle"))]
+    {
+        _ = bundle;
+        _ = bind;
     }
 
     "127.0.0.1:44614"
@@ -82,7 +88,9 @@ pub(crate) fn setup(
         #[cfg(feature = "bundle")]
         true => self::bundle::router,
         #[cfg(not(feature = "bundle"))]
-        true => bail!("cannot setup, bundle feature not enabled and `--dev` is not specified"),
+        true => {
+            anyhow::bail!("cannot setup, bundle feature not enabled and `--dev` is not specified")
+        }
         _ => self::nonbundle::router,
     };
 
@@ -112,6 +120,14 @@ async fn image(
 ) -> Result<impl IntoResponse, WebError> {
     const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;
 
+    {
+        let images = backend.images_read().await;
+
+        if let Some(data) = images.get(&id) {
+            return Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data.to_vec()));
+        }
+    }
+
     let data = backend.db().get_image_data(id).await?;
 
     let Some(data) = data else {
@@ -121,18 +137,33 @@ async fn image(
     Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data))
 }
 
-async fn initialize(backend: &Backend) -> Result<api::InitializeEvent> {
-    let image = backend.db().get_config::<Id>("avatar/image").await?;
+async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
+    let player;
+    let mut remote_avatars = Vec::new();
 
-    let mut ev = api::InitializeEvent {
-        player: api::Avatar {
-            id: Id::new(0),
-            position: Vec3::ZERO,
-            front: Vec3::FORWARD,
-            image,
-        },
+    {
+        let state = b.state().await;
+
+        player = api::Avatar {
+            position: state.player.position,
+            front: state.player.front,
+            image: state.player.image,
+        };
+
+        for (id, peer) in state.peers.iter() {
+            remote_avatars.push(api::RemoteAvatar {
+                id: Id::new(id.get()),
+                position: peer.position,
+                front: peer.front,
+                image: peer.image,
+            });
+        }
+    }
+
+    let ev = api::InitializeEvent {
+        player,
         name: Some("Gilbert".to_owned()),
-        avatars: Vec::new(),
+        remote_avatars,
         world: api::World {
             zoom: 10.0,
             extent: api::Extent2 {
@@ -147,12 +178,7 @@ async fn initialize(backend: &Backend) -> Result<api::InitializeEvent> {
             },
             token_radius: 0.5,
         },
-        images: Vec::new(),
     };
-
-    if let Some(id) = image {
-        ev.images.extend(backend.db().get_image(id).await?);
-    }
 
     Ok(ev)
 }
@@ -181,6 +207,7 @@ async fn select_image(
     request: api::SelectImageRequest,
 ) -> Result<api::SelectImageResponse> {
     backend.db().set_config("avatar/image", request.id).await?;
+    backend.set_image(Some(request.id)).await;
     Ok(api::SelectImageResponse { id: request.id })
 }
 

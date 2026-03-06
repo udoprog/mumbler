@@ -1,31 +1,7 @@
-use core::fmt;
-
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::Vec3;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct PeerId {
-    raw: u64,
-}
-
-impl PeerId {
-    /// Generate a random peer id.
-    pub fn random() -> Self {
-        Self {
-            raw: rand::random(),
-        }
-    }
-}
-
-impl fmt::Debug for PeerId {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.raw.fmt(f)
-    }
-}
+use ::api::{Id, Vec3};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -70,14 +46,14 @@ pub struct PongBody {
 #[musli(crate = musli_core)]
 pub struct JoinBody {
     /// The peer that joined the room.
-    pub id: PeerId,
+    pub id: Id,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct LeaveBody {
     /// The peer that left the room.
-    pub id: PeerId,
+    pub id: Id,
 }
 
 /// A request to move.
@@ -95,11 +71,27 @@ pub struct MoveToBody {
 #[musli(crate = musli_core)]
 pub struct MovedToBody {
     /// The peer that moved.
-    pub id: PeerId,
+    pub id: Id,
     /// The position of the peer.
     pub position: Vec3,
     /// The front of the peer.
     pub front: Vec3,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateImageBody {
+    /// The new image for the peer.
+    pub image: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdatedImageBody {
+    /// The peer that updated their image.
+    pub id: Id,
+    /// The new image for the peer.
+    pub image: Option<Vec<u8>>,
 }
 
 api::define! {
@@ -143,5 +135,17 @@ api::define! {
 
     impl Broadcast for Moved {
         impl Event for MovedToBody;
+    }
+
+    pub type UpdateImage;
+
+    impl Broadcast for UpdateImage {
+        impl Event for UpdateImageBody;
+    }
+
+    pub type UpdatedImage;
+
+    impl Broadcast for UpdatedImage {
+        impl Event for UpdatedImageBody;
     }
 }
