@@ -1,7 +1,7 @@
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{Id, Vec3};
+use ::api::{Color, Id, Vec3};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -94,6 +94,22 @@ pub struct UpdatedImageBody {
     pub image: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateColorBody {
+    /// The new color for the peer.
+    pub color: Color,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdatedColorBody {
+    /// The peer that updated their color.
+    pub id: Id,
+    /// The new color for the peer.
+    pub color: Color,
+}
+
 api::define! {
     pub type Connect;
 
@@ -147,5 +163,17 @@ api::define! {
 
     impl Broadcast for UpdatedImage {
         impl Event for UpdatedImageBody;
+    }
+
+    pub type UpdateColor;
+
+    impl Broadcast for UpdateColor {
+        impl Event for UpdateColorBody;
+    }
+
+    pub type UpdatedColor;
+
+    impl Broadcast for UpdatedColor {
+        impl Event for UpdatedColorBody;
     }
 }

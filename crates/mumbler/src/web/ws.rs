@@ -82,6 +82,14 @@ impl ws::Handler for Handler {
                 let response = super::delete_image(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::SelectColor => {
+                let request = incoming
+                    .read::<api::SelectColorRequest>()
+                    .context("missing request")?;
+
+                let response = super::select_color(&self.backend, request).await?;
+                outgoing.write(response);
+            }
             api::Request::Unknown(id) => {
                 anyhow::bail!("unknown request type: {id}");
             }
@@ -133,6 +141,9 @@ pub(super) async fn entry(
                             },
                             BackendEvent::ImageUpdated { peer_id, image } => {
                                 api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image }
+                            },
+                            BackendEvent::ColorUpdated { peer_id, color } => {
+                                api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color }
                             }
                         };
 

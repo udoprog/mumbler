@@ -70,7 +70,7 @@ pub fn main() -> Result<()> {
     let c = Database::open(&paths, opts.memory)?;
 
     runtime.block_on(async move {
-        let b = Backend::new(c, paths).await;
+        let b = Backend::new(c, paths).await?;
 
         let mut client = pin!(client::run(b.clone()));
         let mut reconnect_timeout = pin!(time::sleep(Duration::from_secs(0)));

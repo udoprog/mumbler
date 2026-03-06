@@ -18,8 +18,6 @@ use crate::ws;
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f64 = 5.0;
 
-static COLORS: &[&str] = &["red", "green", "blue", "orange"];
-
 /// Draws a 30° directional arc just outside the token circle to indicate facing.
 /// `angle` is the canvas-space angle (radians) of the facing direction.
 /// The arc is centred on that angle and spans ±15°.
@@ -343,6 +341,7 @@ impl Map {
                             position: Vec3::ZERO,
                             front: Vec3::FORWARD,
                             image: None,
+                            color: api::Color::neutral_gray(),
                         });
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
@@ -374,6 +373,11 @@ impl Map {
                         if let Some(id) = image {
                             let image = Self::load_image(ctx, id);
                             self.images.insert(id, image);
+                        }
+                    }
+                    api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color } => {
+                        if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
+                            a.color = color;
                         }
                     }
                 }
@@ -645,6 +649,7 @@ impl Map {
             position: Vec3,
             front: Vec3,
             image: Option<Id>,
+            color: api::Color,
             player: bool,
         }
 
@@ -674,6 +679,7 @@ impl Map {
             position: a.position,
             front: a.front,
             image: a.image,
+            color: a.color,
             player: true,
         };
 
@@ -681,13 +687,14 @@ impl Map {
             position: a.position,
             front: a.front,
             image: a.image,
+            color: a.color,
             player: false,
         };
 
         let avatars = self.player.iter().map(player_avatar);
         let avatars = avatars.chain(self.remote_avatars.iter().map(remote_avatar));
 
-        for (a, color) in avatars.zip(COLORS.iter().cycle()) {
+        for a in avatars {
             let (x, y) = t.world_to_canvas(a.position.x, a.position.z);
 
             // Draw avatar token: circular image if available, otherwise a filled circle.
@@ -729,7 +736,7 @@ impl Map {
             };
 
             if !image_drawn {
-                cx.set_fill_style_str(color);
+                cx.set_fill_style_str(&a.color.to_css_string());
                 cx.begin_path();
                 cx.arc(x, y, token_radius, 0.0, TAU)?;
                 cx.fill();
@@ -751,7 +758,7 @@ impl Map {
             if front.x.hypot(front.z) > 0.01 {
                 let angle = (front.z as f64).atan2(front.x as f64);
                 let arc_radius = token_radius * 1.4;
-                cx.set_stroke_style_str(color);
+                cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
             }
         }

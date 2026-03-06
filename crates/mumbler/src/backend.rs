@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use api::{Id, Vec3};
+use anyhow::Result;
+use api::{Color, Id, Vec3};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -9,8 +10,9 @@ use super::{Database, Paths};
 
 const TRANSLATION_CHANGED: u8 = 0b0000_0001;
 const IMAGE_CHANGED: u8 = 0b0000_0010;
+const COLOR_CHANGED: u8 = 0b0000_0100;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
     RemoteLost,
     Join {
@@ -28,14 +30,19 @@ pub(crate) enum BackendEvent {
         peer_id: Id,
         image: Option<Id>,
     },
+    ColorUpdated {
+        peer_id: Id,
+        color: Color,
+    },
 }
 
 /// State for the backend.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct Player {
     pub(crate) position: Vec3,
     pub(crate) front: Vec3,
     pub(crate) image: Option<Id>,
+    pub(crate) color: Color,
     changed: u8,
 }
 
@@ -51,6 +58,12 @@ impl Player {
     pub(crate) fn is_image(&self) -> bool {
         self.changed & IMAGE_CHANGED != 0
     }
+
+    /// Check if the player's color has changed.
+    #[inline]
+    pub(crate) fn is_color(&self) -> bool {
+        self.changed & COLOR_CHANGED != 0
+    }
 }
 
 /// Information about a remote peer.
@@ -58,6 +71,7 @@ pub(crate) struct PeerInfo {
     pub(crate) position: Vec3,
     pub(crate) front: Vec3,
     pub(crate) image: Option<Id>,
+    pub(crate) color: Color,
 }
 
 impl Default for PeerInfo {
@@ -66,6 +80,7 @@ impl Default for PeerInfo {
             position: Vec3::ZERO,
             front: Vec3::FORWARD,
             image: None,
+            color: Color::neutral_gray(),
         }
     }
 }
@@ -118,15 +133,17 @@ pub struct Backend {
 
 impl Backend {
     /// Construct a new backend.
-    pub async fn new(database: Database, paths: Paths) -> Self {
+    pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        let image = database
-            .get_config::<Id>("avatar/image")
-            .await
-            .unwrap_or(None);
+        let image = database.get_config::<Id>("avatar/image").await?;
 
-        Self {
+        let color = database
+            .get_config::<Color>("avatar/color")
+            .await?
+            .unwrap_or_else(Color::neutral_gray);
+
+        Ok(Self {
             inner: Arc::new(Inner {
                 database,
                 paths,
@@ -135,6 +152,7 @@ impl Backend {
                         position: Vec3::ZERO,
                         front: Vec3::FORWARD,
                         image,
+                        color,
                         changed: 0,
                     },
                     peers: HashMap::new(),
@@ -145,7 +163,7 @@ impl Backend {
                 notify: Notify::new(),
                 broadcast,
             }),
-        }
+        })
     }
 
     /// Set up an event subscriber.
@@ -190,10 +208,18 @@ impl Backend {
         self.inner.notify.notify_one();
     }
 
+    /// Update the player's color.
+    pub(crate) async fn set_color(&self, color: Color) {
+        let mut state = self.inner.state.lock().await;
+        state.player.color = color;
+        state.player.changed |= COLOR_CHANGED;
+        self.inner.notify.notify_one();
+    }
+
     /// Get the current state, resetting any changed flags.
     pub(crate) async fn take_player(&self) -> Player {
         let mut state = self.inner.state.lock().await;
-        let out = state.player;
+        let out = state.player.clone();
         state.player.changed = 0;
         out
     }

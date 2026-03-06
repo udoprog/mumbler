@@ -8,7 +8,9 @@ use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::BackendEvent;
-use crate::remote::api::{Event, JoinBody, LeaveBody, MovedToBody, PongBody, UpdatedImageBody};
+use crate::remote::api::{
+    Event, JoinBody, LeaveBody, MovedToBody, PongBody, UpdatedColorBody, UpdatedImageBody,
+};
 use crate::remote::{Client, Peer};
 
 async fn handle_peer(
@@ -103,6 +105,23 @@ async fn handle_peer(
                     image,
                 });
             }
+            Event::UpdatedColor => {
+                let event = body.decode::<UpdatedColorBody>()?;
+                tracing::info!(?event.id, color = ?event.color, "updated color");
+
+                {
+                    let mut remote = b.state().await;
+
+                    if let Some(peer) = remote.peers.get_mut(&event.id) {
+                        peer.color = event.color.clone();
+                    }
+                }
+
+                b.broadcast(BackendEvent::ColorUpdated {
+                    peer_id: event.id,
+                    color: event.color,
+                });
+            }
             event => {
                 tracing::info!(?event);
             }
@@ -119,7 +138,7 @@ pub async fn run(b: Backend) -> Result<()> {
     {
         let mut remote = b.state().await;
         remote.peers.clear();
-        player = remote.player;
+        player = remote.player.clone();
     }
 
     b.broadcast(BackendEvent::RemoteLost);
@@ -148,6 +167,7 @@ pub async fn run(b: Backend) -> Result<()> {
     };
 
     peer.update_image(image)?;
+    peer.update_color(player.color.clone())?;
 
     loop {
         tokio::select! {
@@ -172,6 +192,10 @@ pub async fn run(b: Backend) -> Result<()> {
                     };
 
                     peer.update_image(image)?;
+                }
+
+                if state.is_color() {
+                    peer.update_color(state.color)?;
                 }
 
                 wait.set(b.wait());

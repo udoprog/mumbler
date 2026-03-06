@@ -148,6 +148,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
             position: state.player.position,
             front: state.player.front,
             image: state.player.image,
+            color: state.player.color.clone(),
         };
 
         for (id, peer) in state.peers.iter() {
@@ -156,6 +157,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
                 position: peer.position,
                 front: peer.front,
                 image: peer.image,
+                color: peer.color.clone(),
             });
         }
     }
@@ -199,7 +201,15 @@ async fn upload_image(
 async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
     let selected = backend.db().get_config::<Id>("avatar/image").await?;
     let images = backend.db().list_images().await?;
-    Ok(api::ListSettingsResponse { selected, images })
+    let color = {
+        let state = backend.state().await;
+        state.player.color
+    };
+    Ok(api::ListSettingsResponse {
+        selected,
+        images,
+        color,
+    })
 }
 
 async fn select_image(
@@ -217,4 +227,14 @@ async fn delete_image(
 ) -> Result<api::DeleteImageResponse> {
     backend.db().delete_image(request.id).await?;
     Ok(api::DeleteImageResponse)
+}
+
+async fn select_color(
+    backend: &Backend,
+    request: api::SelectColorRequest,
+) -> Result<api::SelectColorResponse> {
+    let color = request.color;
+    backend.db().set_config("avatar/color", color).await?;
+    backend.set_color(color).await;
+    Ok(api::SelectColorResponse { color })
 }

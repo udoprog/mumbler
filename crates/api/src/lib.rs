@@ -6,6 +6,65 @@ use core::fmt;
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
+/// Represents an RGBA color with 8-bit components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl Color {
+    /// Create a new color from RGBA components.
+    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+
+    /// A nice neutral gray color (default).
+    pub const fn neutral_gray() -> Self {
+        Self::new(107, 114, 128, 255)
+    }
+
+    /// Convert to a CSS color string.
+    pub fn to_css_string(&self) -> String {
+        if self.a == 255 {
+            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!(
+                "rgba({}, {}, {}, {})",
+                self.r,
+                self.g,
+                self.b,
+                self.a as f32 / 255.0
+            )
+        }
+    }
+
+    /// Parse a color from a CSS hex string (e.g., "#6B7280" or "#6B7280FF").
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let hex = hex.strip_prefix('#')?;
+
+        match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(hex.get(0..2)?, 16).ok()?;
+                let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
+                let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
+                Some(Self::new(r, g, b, 255))
+            }
+            8 => {
+                let r = u8::from_str_radix(hex.get(0..2)?, 16).ok()?;
+                let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
+                let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
+                let a = u8::from_str_radix(hex.get(6..8)?, 16).ok()?;
+                Some(Self::new(r, g, b, a))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeRequest;
@@ -120,6 +179,8 @@ pub struct RemoteAvatar {
     pub front: Vec3,
     /// Indicates if the remote avatar has an image.
     pub image: Option<Id>,
+    /// The custom color for the avatar.
+    pub color: Color,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -131,6 +192,8 @@ pub struct Avatar {
     pub front: Vec3,
     /// The unique identifier of the avatar image, if any.
     pub image: Option<Id>,
+    /// The custom color for the avatar.
+    pub color: Color,
 }
 
 /// Event emitted when the API is initialized.
@@ -167,6 +230,8 @@ pub struct Image {
 pub struct ListSettingsResponse {
     /// The unique identifier of the currently selected avatar image.
     pub selected: Option<Id>,
+    /// The selected color for the avatar.
+    pub color: Color,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
 }
@@ -196,6 +261,20 @@ pub struct DeleteImageRequest {
 #[musli(crate = musli_core)]
 pub struct DeleteImageResponse;
 
+/// Request to select a custom color for the player's avatar.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct SelectColorRequest {
+    pub color: Color,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct SelectColorResponse {
+    /// The selected color.
+    pub color: Color,
+}
+
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum RemoteAvatarUpdateBody {
@@ -214,6 +293,10 @@ pub enum RemoteAvatarUpdateBody {
     ImageUpdated {
         peer_id: Id,
         image: Option<Id>,
+    },
+    ColorUpdated {
+        peer_id: Id,
+        color: Color,
     },
 }
 
@@ -258,6 +341,13 @@ api::define! {
     impl Endpoint for DeleteImage {
         impl Request for DeleteImageRequest;
         type Response<'de> = DeleteImageResponse;
+    }
+
+    pub type SelectColor;
+
+    impl Endpoint for SelectColor {
+        impl Request for SelectColorRequest;
+        type Response<'de> = SelectColorResponse;
     }
 
     pub type RemoteAvatarUpdate;

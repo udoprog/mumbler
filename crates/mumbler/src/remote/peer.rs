@@ -5,7 +5,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::{Id, Vec3};
+use api::{Color, Id, Vec3};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -13,7 +13,9 @@ use musli::storage;
 use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
-use crate::remote::api::{MoveToBody, MovedToBody, UpdateImageBody, UpdatedImageBody};
+use crate::remote::api::{
+    MoveToBody, MovedToBody, UpdateColorBody, UpdateImageBody, UpdatedColorBody, UpdatedImageBody,
+};
 
 use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
 use super::{Buf, Client, Scratch};
@@ -166,6 +168,20 @@ impl Peer {
     /// Update the peer's image.
     pub fn updated_image(&mut self, peer_id: Id, image: Option<Vec<u8>>) -> Result<()> {
         self.scratch.send(UpdatedImageBody { id: peer_id, image })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Update the peer's color.
+    pub fn update_color(&mut self, color: Color) -> Result<()> {
+        self.scratch.send(UpdateColorBody { color })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Update the peer's color.
+    pub fn updated_color(&mut self, peer_id: Id, color: Color) -> Result<()> {
+        self.scratch.send(UpdatedColorBody { id: peer_id, color })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

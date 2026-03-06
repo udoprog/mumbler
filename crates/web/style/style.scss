@@ -44,6 +44,10 @@ body {
     color: var(--success-color);
 }
 
+.hidden {
+    display: none;
+}
+
 .btn {
     cursor: pointer;
     font-size: 14px;
@@ -72,6 +76,11 @@ body {
         height: 24px;
         padding: 0;
     }
+}
+
+.btn-group {
+    display: flex;
+    gap: 0.5em;
 }
 
 .hidden {
@@ -175,4 +184,18 @@ canvas#map {
 
 .avatar.clickable:not(.selected) {
     cursor: pointer;
+}
+
+.color-picker {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+
+    input[type="color"] {
+        width: 60px;
+        height: 40px;
+        border: none;
+        border-radius: $border-radius;
+        cursor: pointer;
+    }
 }

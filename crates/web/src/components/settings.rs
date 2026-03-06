@@ -2,7 +2,7 @@ use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{File, HtmlInputElement};
+use web_sys::{File, HtmlInputElement, Url};
 use yew::prelude::*;
 
 use crate::error::Error;
@@ -11,6 +11,7 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     AvatarImageSelected(Event),
     AvatarImageUpload(MouseEvent),
+    AvatarImageClear(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     AvatarUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ListImages(Result<Packet<api::ListSettings>, ws::Error>),
@@ -18,6 +19,9 @@ pub(crate) enum Msg {
     SelectImageResult(Result<Packet<api::SelectImage>, ws::Error>),
     DeleteImage(api::Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
+    ColorChanged(Event),
+    SelectColor(api::Color),
+    SelectColorResult(Result<Packet<api::SelectColor>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -28,14 +32,17 @@ pub(crate) struct Props {
 pub(crate) struct Settings {
     state: ws::State,
     selected: Option<api::Id>,
+    color: api::Color,
     images: Vec<api::Image>,
     file: Option<File>,
+    preview_url: Option<String>,
     _state_change: ws::StateListener,
     _file_reader: Option<FileReader>,
     _upload_avatar: ws::Request,
     _list_images: ws::Request,
     _select_image: ws::Request,
     _delete_image: ws::Request,
+    _select_color: ws::Request,
 }
 
 impl Component for Settings {
@@ -51,14 +58,17 @@ impl Component for Settings {
         let mut this = Self {
             state,
             selected: None,
+            color: api::Color::neutral_gray(),
             images: Vec::new(),
             file: None,
+            preview_url: None,
             _state_change,
             _file_reader: None,
             _upload_avatar: ws::Request::new(),
             _list_images: ws::Request::new(),
             _select_image: ws::Request::new(),
             _delete_image: ws::Request::new(),
+            _select_color: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -92,19 +102,39 @@ impl Component for Settings {
             }
         });
 
-        let class = classes!("btn", self.file.is_none().then_some("disabled"));
+        let choose_classes = classes!("btn", self.file.is_some().then_some("hidden"));
 
-        let upload = self
+        let ok = self
             .file
             .is_some()
             .then(|| ctx.link().callback(Msg::AvatarImageUpload));
+
+        let ok_classes = classes!("btn", ok.is_none().then_some("hidden"));
+
+        let cancel = self
+            .file
+            .is_some()
+            .then(|| ctx.link().callback(Msg::AvatarImageClear));
+
+        let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
 
         html! {
             <div class="settings rows">
                 <h2>{"Select Avatar:"}</h2>
 
+                if let Some(url) = &self.preview_url {
+                    <section class="image-entry">
+                        <img src={url.clone()} alt="Preview" class="avatar" />
+                    </section>
+                }
+
                 <section>
-                    <label for="avatar-file" class="btn">{"Choose Image"}</label>
+                    <div class="btn-group">
+                        <label for="avatar-file" class={choose_classes}>{"Upload image"}</label>
+                        <button onclick={ok} class={ok_classes}>{"Ok"}</button>
+                        <button onclick={cancel} class={cancel_classes}>{"Cancel"}</button>
+                    </div>
+
                     <input
                         id="avatar-file"
                         class="hidden"
@@ -115,13 +145,21 @@ impl Component for Settings {
                         />
                 </section>
 
-                <section>
-                    <button {class} onclick={upload}>{"Upload"}</button>
-                </section>
-
                 <div class="gallery">
                     {for images}
                 </div>
+
+                <h2>{"Avatar Color:"}</h2>
+
+                <section class="color-picker">
+                    <label for="avatar-color">{"Select Color:"}</label>
+                    <input
+                        id="avatar-color"
+                        type="color"
+                        value={self.color.to_css_string()}
+                        onchange={ctx.link().callback(Msg::ColorChanged)}
+                        />
+                </section>
             </div>
         }
     }
@@ -150,6 +188,11 @@ impl Settings {
                 Ok(true)
             }
             Msg::AvatarImageSelected(e) => {
+                // Clean up old preview URL if any
+                if let Some(url) = self.preview_url.take() {
+                    let _ = Url::revoke_object_url(&url);
+                }
+
                 let input = e
                     .target()
                     .ok_or("no target")?
@@ -157,13 +200,25 @@ impl Settings {
                     .map_err(|_| "target is not an input element")?;
 
                 let files = input.files().ok_or("no file list")?;
-                self.file = Some(files.get(0).ok_or("no file selected")?);
+                let file = files.get(0).ok_or("no file selected")?;
+
+                // Create preview URL
+                if let Ok(url) = Url::create_object_url_with_blob(&file) {
+                    self.preview_url = Some(url);
+                }
+
+                self.file = Some(file);
                 Ok(true)
             }
             Msg::AvatarImageUpload(_e) => {
                 let Some(file) = self.file.take() else {
                     return Err("no file selected".into());
                 };
+
+                // Clean up preview URL when uploading
+                if let Some(url) = self.preview_url.take() {
+                    let _ = Url::revoke_object_url(&url);
+                }
 
                 let content_type = file.type_();
                 let gloo_file = gloo::file::File::from(file);
@@ -172,6 +227,15 @@ impl Settings {
                 self._file_reader = Some(read_as_bytes(&gloo_file, move |res| {
                     link.send_message(Msg::AvatarImageData(content_type.clone(), res));
                 }));
+
+                Ok(true)
+            }
+            Msg::AvatarImageClear(_e) => {
+                self.file = None;
+
+                if let Some(url) = self.preview_url.take() {
+                    let _ = Url::revoke_object_url(&url);
+                }
 
                 Ok(true)
             }
@@ -200,6 +264,7 @@ impl Settings {
                 let result = result?;
                 let response = result.decode()?;
                 self.selected = response.selected;
+                self.color = response.color;
                 self.images = response.images;
                 Ok(true)
             }
@@ -234,6 +299,35 @@ impl Settings {
                 result?;
                 self.refresh(ctx);
                 Ok(false)
+            }
+            Msg::ColorChanged(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                let hex_string = input.value();
+                if let Some(color) = api::Color::from_hex(&hex_string) {
+                    ctx.link().send_message(Msg::SelectColor(color));
+                }
+                Ok(false)
+            }
+            Msg::SelectColor(color) => {
+                self._select_color = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::SelectColorRequest { color })
+                    .on_packet(ctx.link().callback(Msg::SelectColorResult))
+                    .send();
+                Ok(false)
+            }
+            Msg::SelectColorResult(result) => {
+                let result = result?;
+                let response = result.decode()?;
+                self.color = response.color;
+                Ok(true)
             }
         }
     }
