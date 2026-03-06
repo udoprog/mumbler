@@ -6,7 +6,7 @@ use std::io;
 use anyhow::{Context as _, Result};
 use musli_core::Encode;
 use musli_core::mode::Binary;
-use musli_web::api::{Endpoint, Request};
+use musli_web::api::{Broadcast, Event};
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 const CAP: usize = 4096;
@@ -25,18 +25,18 @@ impl Scratch {
         }
     }
 
-    /// Write a request.
+    /// Write an event to the peer.
     #[inline]
-    pub fn request<R>(&mut self, request: R) -> Result<()>
+    pub fn send<E>(&mut self, event: E) -> Result<()>
     where
-        R: Request,
+        E: Event,
     {
-        self.write(&api::server::Header {
-            request: <R::Endpoint as Endpoint>::ID.get(),
+        self.write(&super::api::Header {
+            request: <E::Broadcast as Broadcast>::ID.get(),
             error: 0,
         })?;
 
-        self.write(&request)?;
+        self.write(&event)?;
         Ok(())
     }
 
@@ -159,6 +159,12 @@ impl Buf {
         self.write > self.read
     }
 
+    /// Get the allocated capacity of the buffer.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     /// Advance the read position by `n` bytes.
     #[inline]
     pub fn advance(&mut self, n: usize) {
@@ -210,7 +216,7 @@ impl Client {
 
     /// Read data from server into buffer.
     #[inline]
-    pub fn try_read(&mut self, buf: &mut Buf) -> io::Result<()> {
+    pub fn try_read(&self, buf: &mut Buf) -> io::Result<()> {
         loop {
             match self.stream.try_read(buf.write_buf()) {
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
@@ -235,7 +241,7 @@ impl Client {
 
     /// Write data from the buffer.
     #[inline]
-    pub fn try_write(&mut self, buf: &mut Buf) -> io::Result<()> {
+    pub fn try_write(&self, buf: &mut Buf) -> io::Result<()> {
         while buf.has_remaining() {
             match self.stream.try_write(buf.read_buf()) {
                 Ok(n) => {

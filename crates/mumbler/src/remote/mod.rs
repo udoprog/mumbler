@@ -1,12 +1,11 @@
 #![allow(clippy::new_without_default)]
 
-mod server;
-pub use server::run;
+pub mod server;
 
 mod client;
 pub use client::{Buf, Client, Scratch};
 
 mod peer;
-pub use self::peer::{Peer, Ready};
+pub use self::peer::Peer;
 
-mod protocol;
+pub mod api;

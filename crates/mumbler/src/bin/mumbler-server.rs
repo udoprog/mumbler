@@ -6,7 +6,7 @@ use tokio::task::LocalSet;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
-const DEFUALT_FILTER: &str = "server=info";
+const DEFUALT_FILTER: &str = "mumbler=info";
 
 #[derive(Parser)]
 struct Opts {
@@ -40,7 +40,10 @@ fn main() -> Result<()> {
 
     runtime.block_on(async move {
         let local = LocalSet::new();
-        local.run_until(server::run(&opts.bind)).await
+        local
+            .run_until(mumbler::remote::server::run(&opts.bind))
+            .await
     })?;
+
     Ok(())
 }

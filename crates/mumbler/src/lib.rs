@@ -9,6 +9,8 @@ pub use self::backend::Backend;
 mod paths;
 pub use self::paths::Paths;
 
+pub mod remote;
+
 use core::pin::pin;
 use std::net::SocketAddr;
 use std::sync::Arc;

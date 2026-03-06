@@ -4,3 +4,6 @@ resolver = "3"
 members = [
     "crates/*",
 ]
+
+[workspace.dependencies]
+musli-web = { version = "0.2.0", default-features = false }

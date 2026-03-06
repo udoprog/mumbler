@@ -6,6 +6,7 @@ publish = false
 [features]
 default = []
 bundle = []
+remote = ["dep:slab", "dep:parking_lot", "dep:musli-core"]
 
 [dependencies]
 api = { path = "../api" }
@@ -22,9 +23,21 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 directories-next = "2.0.0"
 clap = { version = "4.5.60", features = ["derive"] }
 tokio-stream = "0.1.18"
-musli-web = { version = "0.1.7", features = ["axum08"] }
+musli-web = { workspace = true, features = ["axum08"] }
 musli = { version = "0.0.149", features = ["storage"] }
 relative-path = "2.0.1"
 tower-http = { version = "0.6.8", features = ["cors"] }
 rand = "0.10.0"
 image = "0.25.9"
+
+musli-core = { version = "0.1.4", default-features = false, optional = true }
+slab = { version = "0.4.12", optional = true }
+parking_lot = { version = "0.12.5", optional = true }
+
+[[example]]
+name = "mumbler-client"
+required-features = ["remote"]
+
+[[bin]]
+name = "mumbler-server"
+required-features = ["remote"]
