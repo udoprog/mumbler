@@ -1,6 +1,8 @@
 mod id;
 pub use id::Id;
 
+pub mod server;
+
 use musli_core::{Decode, Encode};
 use musli_web::api;
 

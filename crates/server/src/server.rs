@@ -1,9 +1,7 @@
-use core::net::SocketAddr;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use std::collections::{BTreeSet, HashMap};
-use std::io;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::task::{Wake, Waker};
@@ -12,65 +10,7 @@ use anyhow::{Context as _, Result};
 use slab::Slab;
 use tokio::net::TcpListener;
 
-use crate::{Buf, Client};
-
-struct Peer {
-    addr: SocketAddr,
-    client: Client,
-    read: Buf,
-    write: Buf,
-}
-
-impl Peer {
-    fn new(addr: SocketAddr, client: Client) -> Self {
-        Self {
-            addr,
-            client,
-            read: Buf::new(),
-            write: Buf::new(),
-        }
-    }
-
-    fn handle(&mut self, ready: Ready) -> Result<()> {
-        match ready {
-            Ready::Read => {
-                self.client.try_read(&mut self.read)?;
-                Ok(())
-            }
-            Ready::Write => {
-                self.client.try_write(&mut self.write)?;
-                Ok(())
-            }
-            Ready::Error(error) => Err(error).context("peer error"),
-        }
-    }
-}
-
-impl Peer {
-    fn poll(&self, cx: &mut Context<'_>) -> Poll<Ready> {
-        if self.write.remaining() > 0
-            && let Poll::Ready(result) = self.client.poll_write_ready(cx)
-        {
-            cx.waker().wake_by_ref();
-
-            match result {
-                Ok(()) => return Poll::Ready(Ready::Write),
-                Err(e) => return Poll::Ready(Ready::Error(e)),
-            }
-        }
-
-        if let Poll::Ready(result) = self.client.poll_read_ready(cx) {
-            cx.waker().wake_by_ref();
-
-            match result {
-                Ok(()) => return Poll::Ready(Ready::Read),
-                Err(e) => return Poll::Ready(Ready::Error(e)),
-            }
-        }
-
-        Poll::Pending
-    }
-}
+use crate::{Client, Peer, Ready};
 
 pub async fn run(bind: &str) -> Result<()> {
     let listener = TcpListener::bind(bind).await?;
@@ -78,7 +18,7 @@ pub async fn run(bind: &str) -> Result<()> {
     tracing::info!(addr = ?listener.local_addr()?, "server listening");
 
     let mut peers = Slab::new();
-    let mut state = PeersState::new();
+    let mut state = State::new();
 
     loop {
         tokio::select! {
@@ -86,7 +26,7 @@ pub async fn run(bind: &str) -> Result<()> {
                 let (stream, addr) = result.context("accepting connection")?;
                 let client = Client::from_stream(stream);
                 let peer = Peer::new(addr, client);
-                tracing::info!(?peer.addr, "connected");
+                tracing::info!(addr = ?peer.addr(), "connected");
                 let index = peers.insert(peer);
                 state.register(index);
             }
@@ -96,20 +36,13 @@ pub async fn run(bind: &str) -> Result<()> {
                 };
 
                 if let Err(error) = peer.handle(ready) {
-                    tracing::error!(?peer.addr, ?error, "peer errored, disconnecting");
+                    tracing::error!(addr = ?peer.addr(), ?error, "peer errored, disconnecting");
                     peers.remove(index);
                     state.deregister(index);
                 }
             }
         }
     }
-}
-
-#[derive(Debug)]
-enum Ready {
-    Read,
-    Write,
-    Error(io::Error),
 }
 
 #[derive(Clone)]
@@ -131,29 +64,34 @@ impl Wake for IndexWaker {
     }
 }
 
-struct PeersState {
-    unregistered: BTreeSet<usize>,
+struct State {
+    /// Indices of peers that needs to be polled.
+    ///
+    /// Peers are added here initially when they connect, or when their buffers
+    /// are written to.
+    poll: BTreeSet<usize>,
+    /// Channel that child tasks used to indicate that they need to wake up.
     receiver: Receiver<usize>,
     sender: Sender<usize>,
     wakers: HashMap<usize, Arc<IndexWaker>>,
-    last_parent: Option<Waker>,
+    context: Option<Waker>,
 }
 
-impl PeersState {
+impl State {
     fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
 
         Self {
-            unregistered: BTreeSet::new(),
+            poll: BTreeSet::new(),
             receiver,
             sender,
             wakers: HashMap::new(),
-            last_parent: None,
+            context: None,
         }
     }
 
     fn register(&mut self, index: usize) {
-        self.unregistered.insert(index);
+        self.poll.insert(index);
     }
 
     fn deregister(&mut self, index: usize) {
@@ -175,17 +113,14 @@ impl PeersState {
     }
 
     fn refresh_parent(&mut self, slab: &Slab<Peer>, parent: &Waker) {
-        let changed = self
-            .last_parent
-            .as_ref()
-            .map_or(true, |w| !w.will_wake(parent));
+        let changed = self.context.as_ref().map_or(true, |w| !w.will_wake(parent));
 
         if changed {
-            self.last_parent = Some(parent.clone());
+            self.context = Some(parent.clone());
             self.wakers.clear();
 
             for (index, _) in slab.iter() {
-                self.unregistered.insert(index);
+                self.poll.insert(index);
             }
         }
     }
@@ -193,11 +128,11 @@ impl PeersState {
 
 struct Peers<'a> {
     slab: &'a mut Slab<Peer>,
-    state: &'a mut PeersState,
+    state: &'a mut State,
 }
 
 impl<'a> Peers<'a> {
-    fn new(slab: &'a mut Slab<Peer>, state: &'a mut PeersState) -> Self {
+    fn new(slab: &'a mut Slab<Peer>, state: &'a mut State) -> Self {
         Self { slab, state }
     }
 }
@@ -210,7 +145,7 @@ impl Future for Peers<'_> {
 
         state.refresh_parent(slab, cx.waker());
 
-        while let Some(index) = state.unregistered.pop_first() {
+        while let Some(index) = state.poll.pop_first() {
             let Some(peer) = slab.get(index) else {
                 continue;
             };

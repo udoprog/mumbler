@@ -2375,8 +2375,12 @@ name = "server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "api",
  "axum",
  "clap",
+ "musli",
+ "musli-core",
+ "musli-web",
  "slab",
  "tokio",
  "tracing",
