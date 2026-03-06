@@ -14,7 +14,8 @@ use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
 use crate::remote::api::{
-    MoveToBody, MovedToBody, UpdateColorBody, UpdateImageBody, UpdatedColorBody, UpdatedImageBody,
+    UpdateColorBody, UpdateImageBody, UpdateTransform, UpdatedColorBody, UpdatedImageBody,
+    UpdatedTransform,
 };
 
 use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
@@ -152,8 +153,15 @@ impl Peer {
     }
 
     /// Move the peer to the given position and front.
-    pub fn move_to(&mut self, transform: Transform) -> Result<()> {
-        self.scratch.send(MoveToBody { transform })?;
+    pub fn update_transform(&mut self, transform: Transform) -> Result<()> {
+        self.scratch.send(UpdateTransform { transform })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having moved to the given position and front.
+    pub fn updated_transform(&mut self, id: Id, transform: Transform) -> Result<()> {
+        self.scratch.send(UpdatedTransform { id, transform })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -185,14 +193,6 @@ impl Peer {
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
-
-    /// Mark the given peer as having moved to the given position and front.
-    pub fn moved_to(&mut self, id: Id, transform: Transform) -> Result<()> {
-        self.scratch.send(MovedToBody { id, transform })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
     /// Poll the peer for readiness.
     pub async fn ready(&mut self) -> io::Result<()> {
         let ready = ReadyFuture { peer: self };

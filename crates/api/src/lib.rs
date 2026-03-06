@@ -7,7 +7,7 @@ use musli_core::{Decode, Encode};
 use musli_web::api;
 
 /// Represents an RGBA color with 8-bit components.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Color {
     pub r: u8,
@@ -62,6 +62,17 @@ impl Color {
             }
             _ => None,
         }
+    }
+}
+
+impl fmt::Debug for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Color")
+            .field(&format_args!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                self.r, self.g, self.b, self.a
+            ))
+            .finish()
     }
 }
 

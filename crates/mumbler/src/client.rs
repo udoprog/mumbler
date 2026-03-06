@@ -9,7 +9,7 @@ use tokio::time::{self, Instant, Sleep};
 use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::remote::api::{
-    Event, JoinBody, LeaveBody, MovedToBody, PongBody, UpdatedColorBody, UpdatedImageBody,
+    Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedTransform,
 };
 use crate::remote::{Client, Peer};
 
@@ -56,7 +56,7 @@ async fn handle_peer(
                 b.broadcast(BackendEvent::Leave { peer_id: event.id });
             }
             Event::Moved => {
-                let event = body.decode::<MovedToBody>()?;
+                let event = body.decode::<UpdatedTransform>()?;
                 tracing::info!(?event.id, ?event.transform, "moved");
 
                 {
@@ -153,7 +153,7 @@ pub async fn run(b: Backend) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.wait());
 
-    peer.move_to(player.transform)?;
+    peer.update_transform(player.transform)?;
 
     let image = 'image: {
         let Some(image) = player.image else {
@@ -176,7 +176,7 @@ pub async fn run(b: Backend) -> Result<()> {
                 let state = b.take_player().await;
 
                 if state.is_transform() {
-                    peer.move_to(state.transform)?;
+                    peer.update_transform(state.transform)?;
                 }
 
                 if state.is_image() {

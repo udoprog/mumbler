@@ -1,4 +1,3 @@
-use core::error::Error as _;
 use core::pin::pin;
 
 use std::net::SocketAddr;
@@ -11,6 +10,7 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use musli_web::axum08;
 use musli_web::ws;
+use tokio::time::{self, Duration, Instant};
 use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
@@ -18,11 +18,15 @@ use crate::backend::BackendEvent;
 
 struct Handler {
     backend: Backend,
+    update_transform: Option<api::Transform>,
 }
 
 impl Handler {
     fn new(backend: Backend) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            update_transform: None,
+        }
     }
 }
 
@@ -36,8 +40,6 @@ impl ws::Handler for Handler {
         incoming: &mut ws::Incoming<'_>,
         outgoing: &mut ws::Outgoing<'_>,
     ) -> Self::Response {
-        tracing::info!(?id);
-
         match id {
             api::Request::Initialize => {
                 outgoing.write(super::initialize(&self.backend).await?);
@@ -48,6 +50,7 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
 
                 self.backend.set_transform(request.avatar.transform).await;
+                self.update_transform = Some(request.avatar.transform);
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -109,12 +112,33 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("connected");
 
-            let mut server = pin!(axum08::server(socket, Handler::new(backend)));
+            let mut server = axum08::server(socket, Handler::new(backend.clone()));
+            let mut debounce_timer = pin!(time::sleep(Duration::from_secs(0)));
+            let mut update_transform = None;
 
             loop {
+                if let Some(update) = server.handler_mut().update_transform.take() {
+                    update_transform = Some(update);
+
+                    debounce_timer
+                        .as_mut()
+                        .reset(Instant::now() + Duration::from_secs(1));
+                }
+
                 let (result, done) = tokio::select! {
-                    result = server.as_mut().run() => {
-                        (result, true)
+                    result = server.run() => {
+                        (result.context("error in server"), true)
+                    }
+                    () = debounce_timer.as_mut(), if update_transform.is_some() => {
+                        tracing::info!("saving transform");
+
+                        let result = if let Some(transform) = update_transform.take() {
+                            backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")
+                        } else {
+                            Ok(())
+                        };
+
+                        (result, false)
                     }
                     event = events.recv() => {
                         let Ok(event) = event else {
@@ -145,7 +169,7 @@ pub(super) async fn entry(
                             }
                         };
 
-                        (server.as_mut().broadcast(event), false)
+                        (server.broadcast(event).context("send broadcast"), false)
                     }
                 };
 

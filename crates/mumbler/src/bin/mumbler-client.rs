@@ -5,7 +5,9 @@ use core::pin::pin;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use mumbler::remote::api::{Event, JoinBody, LeaveBody, MovedToBody, PongBody, UpdatedImageBody};
+use mumbler::remote::api::{
+    Event, JoinBody, LeaveBody, PongBody, UpdatedImageBody, UpdatedTransform,
+};
 use mumbler::remote::{Client, Peer};
 use tokio::time::{self, Duration, Instant};
 use tracing::Level;
@@ -74,7 +76,7 @@ async fn main() -> Result<()> {
                             tracing::info!(?event, "leave");
                         }
                         Event::Moved => {
-                            let event = body.decode::<MovedToBody>()?;
+                            let event = body.decode::<UpdatedTransform>()?;
                             tracing::info!(?event, "moved");
                         }
                         Event::UpdatedImage => {

@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::{MoveToBody, UpdateImageBody};
+use crate::remote::api::{UpdateColorBody, UpdateImageBody, UpdateTransform};
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
@@ -32,6 +32,8 @@ struct PeerState {
     timeout: Pin<Box<Sleep>>,
     /// The current transform (position and orientation) of the peer.
     transform: Transform,
+    /// The color of the peer.
+    color: api::Color,
     /// The current image of the peer.
     image: Option<Vec<u8>>,
     /// The room the peer is in.
@@ -45,6 +47,7 @@ impl PeerState {
             peer,
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
             transform: Transform::origin(),
+            color: api::Color::neutral_gray(),
             image: None,
             room: None,
         }
@@ -220,17 +223,8 @@ impl State {
         this: &mut PeerState,
         peers: &mut HashMap<Id, PeerState>,
     ) -> Result<()> {
-        let mut connected = Vec::new();
-        let mut moves = Vec::new();
-        let mut images = Vec::new();
-
         while let Some((message, body)) = this.peer.handle::<Event>()? {
             match message {
-                Event::Connect => {
-                    let connect = body.decode::<ConnectBody>()?;
-                    tracing::info!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
-                    connected.push(connect.room);
-                }
                 Event::Ping => {
                     let ping = body.decode::<PingBody>()?;
                     this.timeout
@@ -238,114 +232,113 @@ impl State {
                         .reset(time::Instant::now() + Duration::from_secs(5));
                     this.peer.pong(ping.payload)?;
                 }
+                Event::Connect => {
+                    let connect = body.decode::<ConnectBody>()?;
+                    tracing::info!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
+
+                    if let Some(old_room) = this.room.replace(connect.room.clone()) {
+                        self.leave_room(&old_room, this.id, peers);
+                    }
+
+                    // We have just connected, so send all information about other peers to
+                    // the new peer.
+                    self.join_room(&connect.room, this, peers);
+                }
                 Event::Move => {
-                    let event = body.decode::<MoveToBody>()?;
+                    let event = body.decode::<UpdateTransform>()?;
                     tracing::info!(?event.transform, "move");
 
                     this.transform = event.transform;
-                    moves.push(event.transform);
+
+                    let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                        continue;
+                    };
+
+                    tracing::info! {
+                        room.name = ?BStr::new(&room.name),
+                        members = ?room.members,
+                        transform = ?this.transform,
+                        "broadcasting transform"
+                    };
+
+                    for id in room.members.iter() {
+                        if *id == this.id {
+                            continue;
+                        }
+
+                        if let Some(peer) = peers.get_mut(id) {
+                            if let Err(e) = peer.peer.updated_transform(this.id, this.transform) {
+                                tracing::error!(?id, ?e, "failed to send move");
+                            } else {
+                                self.poll.insert(*id);
+                            }
+                        }
+                    }
                 }
                 Event::UpdateImage => {
                     let event = body.decode::<UpdateImageBody>()?;
                     tracing::info!(image = ?event.image.as_ref().map(|i| i.len()), "update image");
 
                     this.image = event.image.clone();
-                    images.push(event.image)
+
+                    let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                        continue;
+                    };
+
+                    tracing::info! {
+                        room.name = ?BStr::new(&room.name),
+                        members = ?room.members,
+                        image = ?this.image.as_ref().map(|i| i.len()),
+                        "broadcasting image update"
+                    };
+
+                    for id in room.members.iter() {
+                        if *id == this.id {
+                            continue;
+                        }
+
+                        if let Some(peer) = peers.get_mut(id) {
+                            if let Err(e) = peer.peer.updated_image(this.id, this.image.clone()) {
+                                tracing::error!(?id, ?e, "failed to send image update");
+                            } else {
+                                self.poll.insert(*id);
+                            }
+                        }
+                    }
+                }
+                Event::UpdateColor => {
+                    let event = body.decode::<UpdateColorBody>()?;
+                    tracing::info!(color = ?event.color, "update color");
+
+                    this.color = event.color;
+
+                    let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                        continue;
+                    };
+
+                    tracing::info! {
+                        room.name = ?BStr::new(&room.name),
+                        members = ?room.members,
+                        color = ?this.color,
+                        "broadcasting color update"
+                    };
+
+                    for id in room.members.iter() {
+                        if *id == this.id {
+                            continue;
+                        }
+
+                        if let Some(peer) = peers.get_mut(id) {
+                            if let Err(e) = peer.peer.updated_color(this.id, this.color) {
+                                tracing::error!(?id, ?e, "failed to send color update");
+                            } else {
+                                self.poll.insert(*id);
+                            }
+                        }
+                    }
                 }
                 event => {
                     return Err(anyhow::anyhow!("unsupported event: {event:?}"));
-                }
-            }
-        }
-
-        // We have just connected, so send all information about other peers to
-        // the new peer.
-        for name in connected {
-            if let Some(room_name) = this.room.replace(name.clone()) {
-                self.leave_room(&room_name, this.id, peers);
-            }
-
-            self.join_room(&name, this.id, peers);
-
-            let Some(room) = self.rooms.get(&name) else {
-                continue;
-            };
-
-            tracing::info!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
-
-            for id in room.members.iter() {
-                let Some(other) = peers.get(id) else {
-                    continue;
-                };
-
-                tracing::info!(?id, transform = ?other.transform, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
-
-                if let Err(e) = this.peer.join(other.id) {
-                    tracing::error!(?id, ?e, "failed to send join");
-                }
-
-                if let Err(e) = this.peer.moved_to(other.id, other.transform) {
-                    tracing::error!(?id, ?e, "failed to send move");
-                }
-
-                if let Err(e) = this.peer.updated_image(other.id, other.image.clone()) {
-                    tracing::error!(?id, ?e, "failed to send image update");
-                }
-
-                self.poll.insert(this.id);
-            }
-        }
-
-        for transform in moves {
-            let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
-                continue;
-            };
-
-            tracing::info! {
-                room.name = ?BStr::new(&room.name),
-                members = ?room.members,
-                ?transform,
-                "broadcasting move"
-            };
-
-            for id in room.members.iter() {
-                if *id == this.id {
-                    continue;
-                }
-
-                if let Some(peer) = peers.get_mut(id) {
-                    if let Err(e) = peer.peer.moved_to(this.id, transform) {
-                        tracing::error!(?id, ?e, "failed to send move");
-                    } else {
-                        self.poll.insert(*id);
-                    }
-                }
-            }
-        }
-
-        for image in images {
-            let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
-                continue;
-            };
-
-            tracing::info! {
-                room.name = ?BStr::new(&room.name),
-                members = ?room.members,
-                image = ?image.as_ref().map(|i| i.len()),
-                "broadcasting image update"
-            };
-
-            for id in room.members.iter() {
-                if *id == this.id {
-                    continue;
-                }
-
-                if let Some(peer) = peers.get_mut(id) {
-                    if let Err(e) = peer.peer.updated_image(this.id, image.clone()) {
-                        tracing::error!(?id, ?e, "failed to send image update");
-                    } else {
-                        self.poll.insert(*id);
-                    }
                 }
             }
         }
@@ -393,7 +386,12 @@ impl State {
         }
     }
 
-    fn join_room(&mut self, room: &[u8], joining_id: Id, peers: &mut HashMap<Id, PeerState>) {
+    fn join_room(
+        &mut self,
+        room: &[u8],
+        joining: &mut PeerState,
+        peers: &mut HashMap<Id, PeerState>,
+    ) {
         let room = self
             .rooms
             .entry(Box::<[u8]>::from(room))
@@ -407,15 +405,43 @@ impl State {
                 continue;
             };
 
-            if let Err(e) = peer.peer.join(joining_id) {
+            if let Err(e) = peer.peer.join(joining.id) {
                 tracing::error!(?id, ?e, "failed to send join");
             } else {
-                self.poll.insert(joining_id);
+                self.poll.insert(joining.id);
             }
         }
 
-        if !room.members.contains(&joining_id) {
-            room.members.push(joining_id);
+        if !room.members.contains(&joining.id) {
+            room.members.push(joining.id);
+        }
+
+        tracing::info!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
+
+        for id in room.members.iter() {
+            let Some(other) = peers.get(id) else {
+                continue;
+            };
+
+            tracing::info!(?id, transform = ?other.transform, image = ?other.image.as_ref().map(|i| i.len()), "sending peer info");
+
+            if let Err(e) = joining.peer.join(other.id) {
+                tracing::error!(?id, ?e, "failed to send join");
+            }
+
+            if let Err(e) = joining.peer.updated_transform(other.id, other.transform) {
+                tracing::error!(?id, ?e, "failed to send move");
+            }
+
+            if let Err(e) = joining.peer.updated_color(other.id, other.color) {
+                tracing::error!(?id, ?e, "failed to send color update");
+            }
+
+            if let Err(e) = joining.peer.updated_image(other.id, other.image.clone()) {
+                tracing::error!(?id, ?e, "failed to send image update");
+            }
+
+            self.poll.insert(joining.id);
         }
     }
 }

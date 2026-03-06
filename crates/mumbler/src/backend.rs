@@ -126,13 +126,18 @@ impl Backend {
             .await?
             .unwrap_or_else(Color::neutral_gray);
 
+        let transform = database
+            .get_config::<Transform>("avatar/transform")
+            .await?
+            .unwrap_or_else(Transform::origin);
+
         Ok(Self {
             inner: Arc::new(Inner {
                 database,
                 paths,
                 state: Mutex::new(State {
                     player: Player {
-                        transform: Transform::origin(),
+                        transform,
                         image,
                         color,
                         changed: 0,

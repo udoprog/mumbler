@@ -59,7 +59,7 @@ pub struct LeaveBody {
 /// A request to move.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct MoveToBody {
+pub struct UpdateTransform {
     /// The transform (position and orientation) of the peer.
     pub transform: Transform,
 }
@@ -67,7 +67,7 @@ pub struct MoveToBody {
 /// Information that a peer moved.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct MovedToBody {
+pub struct UpdatedTransform {
     /// The peer that moved.
     pub id: Id,
     /// The transform (position and orientation) of the peer.
@@ -140,13 +140,13 @@ api::define! {
     pub type Move;
 
     impl Broadcast for Move {
-        impl Event for MoveToBody;
+        impl Event for UpdateTransform;
     }
 
     pub type Moved;
 
     impl Broadcast for Moved {
-        impl Event for MovedToBody;
+        impl Event for UpdatedTransform;
     }
 
     pub type UpdateImage;
