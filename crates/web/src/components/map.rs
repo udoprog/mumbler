@@ -17,10 +17,11 @@ use crate::error::Error;
 use crate::ws;
 
 const ZOOM_FACTOR: f64 = 1.2;
-const ARROW_THRESHOLD: f64 = 5.0;
+const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
 const HALF_SPAN: f64 = FRAC_PI_6;
+const HELP: &str = "LMB to move / Shift + LBM to look / MMB to pan / Scroll to zoom";
 
 /// Draws a 30° directional arc just outside the token circle to indicate
 /// facing. `angle` is the canvas-space angle (radians) of the facing direction.
@@ -109,16 +110,16 @@ struct ViewTransform {
 }
 
 impl ViewTransform {
-    fn new(canvas: &HtmlCanvasElement, extent: &Extent2, pan: api::Pan, zoom: f64) -> Self {
+    fn new(canvas: &HtmlCanvasElement, w: &World) -> Self {
         let canvas_min = canvas.width().min(canvas.height()) as f64;
-        let world_w = (extent.x.end - extent.x.start) as f64;
-        let world_h = (extent.y.end - extent.y.start) as f64;
-        let scale = (canvas_min / world_w.max(world_h)) * zoom;
+        let world_w = (w.extent.x.end - w.extent.x.start) as f64;
+        let world_h = (w.extent.y.end - w.extent.y.start) as f64;
+        let scale = (canvas_min / world_w.max(world_h)) * w.zoom as f64;
 
-        let world_mid_x = ((extent.x.start + extent.x.end) / 2.0) as f64;
-        let world_mid_y = ((extent.y.start + extent.y.end) / 2.0) as f64;
-        let center_x = canvas.width() as f64 / 2.0 + pan.x - world_mid_x * scale;
-        let center_y = canvas.height() as f64 / 2.0 + pan.y - world_mid_y * scale;
+        let world_mid_x = ((w.extent.x.start + w.extent.x.end) / 2.0) as f64;
+        let world_mid_y = ((w.extent.y.start + w.extent.y.end) / 2.0) as f64;
+        let center_x = canvas.width() as f64 / 2.0 + w.pan.x - world_mid_x * scale;
+        let center_y = canvas.height() as f64 / 2.0 + w.pan.y - world_mid_y * scale;
 
         Self {
             scale,
@@ -133,9 +134,9 @@ impl ViewTransform {
         (x, y)
     }
 
-    fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> (f64, f64) {
-        let world_x = (canvas_x - self.center_x) / self.scale;
-        let world_z = (self.center_y - canvas_y) / self.scale;
+    fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> (f32, f32) {
+        let world_x = ((canvas_x - self.center_x) / self.scale) as f32;
+        let world_z = ((self.center_y - canvas_y) / self.scale) as f32;
         (world_x, world_z)
     }
 }
@@ -162,9 +163,9 @@ pub(crate) struct Map {
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
-    start_press: Option<(f64, f64)>,
+    start_press: Option<(f32, f32, bool)>,
     /// Canvas-space mouse position once the drag exceeds the arrow threshold.
-    arrow_target: Option<(f64, f64)>,
+    arrow_target: Option<(f32, f32)>,
     /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
     /// Loaded avatar images, keyed by image id.
@@ -303,10 +304,14 @@ impl Component for Map {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let p = self.player.transform.position;
+        let f = self.player.transform.front;
+
+        let pos = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
+        let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
 
         html! {
             <div class="rows">
-                <div class="pre">{format!("x: {:.02}, y: {:.02}, z: {:.02}", p.x, p.y, p.z)}</div>
+                <div class="pre">{HELP}</div>
 
                 <div class="map-sizer" ref={self.canvas_sizer.clone()}>
                     <canvas id="map" ref={self.canvas_ref.clone()}
@@ -317,6 +322,8 @@ impl Component for Map {
                         onwheel={ctx.link().callback(Msg::Wheel)}
                     ></canvas>
                 </div>
+
+                <div class="pre">{pos}{" / "}{front}</div>
             </div>
         }
     }
@@ -466,30 +473,41 @@ impl Map {
     }
 
     fn interpolate_movement(&mut self) {
-        let Some(target) = self.move_target else {
-            return;
+        let p = self.player.transform.position;
+
+        'done: {
+            let Some(target) = self.move_target else {
+                break 'done;
+            };
+
+            let dx = target.x - p.x;
+            let dz = target.z - p.z;
+            let distance = (dx * dx + dz * dz).sqrt();
+
+            if distance < 0.01 {
+                self.player.transform.position = target;
+                self.move_target = None;
+                self._animation_interval = None;
+                self.update = true;
+                break 'done;
+            }
+
+            let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
+            let move_distance = step.min(distance);
+            let ratio = move_distance / distance;
+
+            self.player.transform.position.x += dx * ratio;
+            self.player.transform.position.z += dz * ratio;
+            self.update = true;
         };
 
-        let current = self.player.transform.position;
-        let dx = target.x - current.x;
-        let dz = target.z - current.z;
-        let distance = (dx * dx + dz * dz).sqrt();
+        'done: {
+            let Some(target) = self.player.look_at else {
+                break 'done;
+            };
 
-        if distance < 0.01 {
-            self.player.transform.position = target;
-            self.move_target = None;
-            self._animation_interval = None;
-            self.update = true;
-            return;
-        }
-
-        let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
-        let move_distance = step.min(distance);
-        let ratio = move_distance / distance;
-
-        self.player.transform.position.x += dx * ratio;
-        self.player.transform.position.z += dz * ratio;
-        self.update = true;
+            self.look_at(p.x, p.z, target.x, target.z);
+        };
     }
 
     fn send_updates(&mut self, ctx: &Context<Self>) {
@@ -525,19 +543,27 @@ impl Map {
                         break 'out false;
                     };
 
-                    let pos = (e.offset_x() as f64, e.offset_y() as f64);
-                    self.start_press = Some(pos);
                     self.arrow_target = None;
 
-                    let t = ViewTransform::new(
-                        &canvas,
-                        &self.world.extent,
-                        self.world.pan,
-                        self.world.zoom as f64,
-                    );
+                    let t = ViewTransform::new(&canvas, &self.world);
 
-                    let (world_x, world_z) = t.canvas_to_world(pos.0, pos.1);
-                    self.move_target = Some(Vec3::new(world_x as f32, 0.0, world_z as f32));
+                    let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
+                    let (ex, ey) = t.canvas_to_world(ex, ey);
+
+                    if e.shift_key() {
+                        let (px, py) = (
+                            self.player.transform.position.x,
+                            self.player.transform.position.z,
+                        );
+                        self.start_press = Some((px, py, true));
+
+                        self.look_at(px, py, ex, ey);
+                        self.player.look_at = Some(Vec3::new(ex, 0.0, ey));
+                        self.update = true;
+                    } else {
+                        self.start_press = Some((ex, ey, false));
+                        self.move_target = Some(Vec3::new(ex, 0.0, ey));
+                    }
 
                     true
                 }
@@ -558,6 +584,12 @@ impl Map {
     }
 
     fn on_mouse_move(&mut self, e: MouseEvent) -> Result<(), Error> {
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
+
+        let v = ViewTransform::new(&canvas, &self.world);
+
         let mut needs_redraw = false;
 
         if let Some((ax, ay)) = self.pan_anchor {
@@ -569,21 +601,23 @@ impl Map {
             needs_redraw = true;
         }
 
-        if let Some((px, py)) = self.start_press {
+        if let Some((px, py, shift_key)) = self.start_press {
             let mx = e.offset_x() as f64;
             let my = e.offset_y() as f64;
+
+            let (mx, my) = v.canvas_to_world(mx, my);
+
             let dist = (mx - px).hypot(my - py);
 
             if dist >= ARROW_THRESHOLD {
-                self.arrow_target = Some((mx, my));
-                needs_redraw = true;
+                if shift_key {
+                    self.player.look_at = Some(Vec3::new(mx, 0.0, my));
+                } else {
+                    self.player.look_at = None;
+                }
 
-                // Update front direction in real-time as the user drags
-                let angle_rad = (my - py).atan2(mx - px);
-                let dir_x = angle_rad.cos() as f32;
-                let dir_z = angle_rad.sin() as f32;
-                self.player.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
-                self.update = true;
+                self.look_at(px, py, mx, my);
+                needs_redraw = true;
             }
         }
 
@@ -594,24 +628,21 @@ impl Map {
         Ok(())
     }
 
+    fn look_at(&mut self, px: f32, py: f32, mx: f32, my: f32) {
+        self.arrow_target = Some((mx, my));
+        let angle_rad = (my - py).atan2(mx - px);
+        let dir_x = angle_rad.cos();
+        let dir_z = angle_rad.sin();
+        self.player.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
+        self.update = true;
+    }
+
     fn on_mouse_up(&mut self, e: MouseEvent) -> Result<(), Error> {
-        let needs_redraw = 'out: {
+        let needs_redraw = {
             match e.button() {
                 0 => {
-                    let Some((cx, cy)) = self.start_press.take() else {
-                        break 'out false;
-                    };
-
-                    let Some((mx, my)) = self.arrow_target.take() else {
-                        break 'out false;
-                    };
-
-                    let angle_rad = (my - cy).atan2(mx - cx);
-                    let dir_x = angle_rad.cos() as f32;
-                    let dir_z = angle_rad.sin() as f32;
-
-                    self.player.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
-                    self.update = true;
+                    self.start_press = None;
+                    self.arrow_target = None;
                     true
                 }
                 1 => {
@@ -660,23 +691,13 @@ impl Map {
         let mx = e.offset_x() as f64;
         let my = e.offset_y() as f64;
 
-        let t_before = ViewTransform::new(
-            &canvas,
-            &self.world.extent,
-            self.world.pan,
-            self.world.zoom as f64,
-        );
+        let t_before = ViewTransform::new(&canvas, &self.world);
         let (wx, wz) = t_before.canvas_to_world(mx, my);
 
         self.world.zoom = (self.world.zoom * delta).clamp(0.1, 20.0);
 
-        let t_after = ViewTransform::new(
-            &canvas,
-            &self.world.extent,
-            self.world.pan,
-            self.world.zoom as f64,
-        );
-        let (cx2, cy2) = t_after.world_to_canvas(wx as f32, wz as f32);
+        let t_after = ViewTransform::new(&canvas, &self.world);
+        let (cx2, cy2) = t_after.world_to_canvas(wx, wz);
         self.world.pan.x += mx - cx2;
         self.world.pan.y += my - cy2;
 
@@ -747,12 +768,8 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let t = ViewTransform::new(
-            &canvas,
-            &self.world.extent,
-            self.world.pan,
-            self.world.zoom as f64,
-        );
+        let t = ViewTransform::new(&canvas, &self.world);
+
         let token_radius = self.world.token_radius as f64 * t.scale;
 
         draw_grid(&cx, &t, &self.world.extent, self.world.zoom);
@@ -825,22 +842,49 @@ impl Map {
             let front = if a.player
                 && let Some((mx, my)) = self.arrow_target
             {
-                let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
+                let (x, y) = (a.transform.position.x, a.transform.position.z);
                 let angle_rad = (my - y).atan2(mx - x);
                 let dir_x = angle_rad.cos() as f32;
                 let dir_z = angle_rad.sin() as f32;
-                Vec3::new(dir_x, 0.0, -dir_z)
+                Vec3::new(dir_x, 0.0, dir_z)
             } else {
                 a.transform.front
             };
 
             // Only draw the facing arc when the avatar has a non-zero facing direction.
-            if front.x.hypot(-front.z) > 0.01 {
+            if front.x.hypot(front.z) > 0.01 {
                 let angle = (-front.z as f64).atan2(front.x as f64);
                 let arc_radius = token_radius * 1.5;
                 cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
             }
+        }
+
+        // Draw eye icon at look_at position
+        if let Some(target) = self.player.look_at {
+            let zoom = self.world.zoom as f64;
+
+            let eye_width = 46.0 * zoom;
+            let eye_height = 20.0 * zoom;
+            let radius = 5.0 * zoom;
+
+            let color = self.player.color.to_css_string();
+
+            let (ex, ey) = t.world_to_canvas(target.x, target.z);
+
+            cx.save();
+            cx.set_stroke_style_str(&color);
+            cx.set_line_width(2.0 * zoom);
+            cx.begin_path();
+            cx.ellipse(ex, ey, eye_width / 2.0, eye_height / 2.0, 0.0, 0.0, TAU)?;
+            cx.stroke();
+
+            cx.set_fill_style_str(&color);
+            cx.begin_path();
+            cx.arc(ex, ey, radius, 0.0, TAU)?;
+            cx.fill();
+
+            cx.restore();
         }
 
         Ok(())

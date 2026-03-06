@@ -60,6 +60,7 @@ struct Inner {
     delete_image: SendStatement,
     get_config: SendStatement,
     set_config: SendStatement,
+    delete_config: SendStatement,
 }
 
 /// A database connection.
@@ -147,6 +148,7 @@ impl Database {
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
             }
         };
 
@@ -257,6 +259,20 @@ impl Database {
         let task = task::spawn_blocking(move || {
             let value = musli::storage::to_vec(&value)?;
             inner.set_config.execute((key, value))?;
+            Ok(())
+        });
+
+        task.await?
+    }
+
+    /// Remove the specified configuration.
+    pub async fn delete_config(&self, key: &str) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let key = Box::<str>::from(key);
+
+        let task = task::spawn_blocking(move || {
+            inner.delete_config.execute((key,))?;
             Ok(())
         });
 

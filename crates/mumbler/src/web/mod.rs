@@ -146,6 +146,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
 
         player = api::Avatar {
             transform: state.player.transform,
+            look_at: state.player.look_at,
             image: state.player.image,
             color: state.player.color.clone(),
         };

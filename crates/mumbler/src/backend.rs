@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Color, Id, Transform};
+use api::{Color, Id, Transform, Vec3};
 use parking_lot::Mutex as BlockingMutex;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -27,6 +27,7 @@ pub(crate) enum BackendEvent {
 #[derive(Debug, Clone)]
 pub(crate) struct Player {
     pub(crate) transform: Transform,
+    pub(crate) look_at: Option<Vec3>,
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
     changed: u8,
@@ -134,6 +135,8 @@ impl Backend {
             .await?
             .unwrap_or_else(Transform::origin);
 
+        let look_at = database.get_config::<Vec3>("avatar/look-at").await?;
+
         Ok(Self {
             inner: Arc::new(Inner {
                 database,
@@ -141,6 +144,7 @@ impl Backend {
                 state: Mutex::new(State {
                     player: Player {
                         transform,
+                        look_at,
                         image,
                         color,
                         changed: 0,
@@ -184,9 +188,10 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_transform(&self, transform: Transform) {
+    pub(crate) async fn set_transform(&self, transform: Transform, look_at: Option<Vec3>) {
         let mut state = self.inner.state.lock().await;
         state.player.transform = transform;
+        state.player.look_at = look_at;
         state.player.changed |= TRANSFORM_CHANGED;
         self.inner.client_notify.notify_one();
     }

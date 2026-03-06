@@ -301,6 +301,8 @@ pub struct RemoteAvatar {
 pub struct Avatar {
     /// The transform (position and orientation) of the avatar.
     pub transform: Transform,
+    /// The point in world coordinates that the avatar is looking at, if any.
+    pub look_at: Option<Vec3>,
     /// The unique identifier of the avatar image, if any.
     pub image: Option<Id>,
     /// The custom color for the avatar.
@@ -313,6 +315,7 @@ impl Avatar {
     pub const fn zero() -> Self {
         Self {
             transform: Transform::origin(),
+            look_at: None,
             image: None,
             color: Color::neutral(),
         }

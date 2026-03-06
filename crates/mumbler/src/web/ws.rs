@@ -18,7 +18,7 @@ use crate::backend::BackendEvent;
 
 struct Handler {
     backend: Backend,
-    update_transform: Option<api::Transform>,
+    update_transform: Option<(api::Transform, Option<api::Vec3>)>,
 }
 
 impl Handler {
@@ -49,10 +49,12 @@ impl ws::Handler for Handler {
                     .read::<api::UpdatePlayerRequest>()
                     .context("missing request")?;
 
-                self.backend.set_transform(request.avatar.transform).await;
+                self.backend
+                    .set_transform(request.avatar.transform, request.avatar.look_at)
+                    .await;
                 self.backend
                     .set_transform_mumblelink(request.avatar.transform);
-                self.update_transform = Some(request.avatar.transform);
+                self.update_transform = Some((request.avatar.transform, request.avatar.look_at));
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -142,8 +144,18 @@ pub(super) async fn entry(
                     () = debounce_timer.as_mut(), if update_transform.is_some() => {
                         tracing::debug!("saving transform");
 
-                        let result = if let Some(transform) = update_transform.take() {
-                            backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")
+                        let result = if let Some((transform, look_at)) = update_transform.take() {
+                            (async || {
+                                backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")?;
+
+                                if let Some(value) = look_at {
+                                    backend.db().set_config("avatar/look-at", value).await.context("saving avatar transform")?;
+                                } else {
+                                    backend.db().delete_config("avatar/look-at").await.context("deleting avatar look-at")?;
+                                }
+
+                                Ok(())
+                            })().await
                         } else {
                             Ok(())
                         };
