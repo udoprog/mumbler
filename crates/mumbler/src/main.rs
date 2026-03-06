@@ -30,6 +30,8 @@ struct Opts {
     dev: bool,
     #[arg(long, default_value = "127.0.0.1:8080")]
     bind: String,
+    #[arg(long, default_value = "127.0.0.1:44114")]
+    connect: String,
 }
 
 pub fn main() -> Result<()> {
@@ -75,7 +77,7 @@ pub fn main() -> Result<()> {
         let mut mumblelink = pin!(mumblelink::run(b.clone()));
         let mut mumblelink_reconnect = pin!(time::sleep(Duration::from_secs(0)));
         let mut mumblelink_setup = true;
-        let mut client = pin!(client::run(b.clone()));
+        let mut client = pin!(client::run(b.clone(), &opts.connect));
         let mut client_reconnect = pin!(time::sleep(Duration::from_secs(0)));
         let mut client_setup = true;
         let mut mumbler = pin!(mumbler::run(b.clone(), !opts.dev, &opts.bind));
@@ -92,7 +94,7 @@ pub fn main() -> Result<()> {
                     tracing::info!("shutting down client, trying to reconnect in 5s");
                 },
                 _ = client_reconnect.as_mut(), if !client_setup => {
-                    client.set(client::run(b.clone()));
+                    client.set(client::run(b.clone(), &opts.connect));
                     client_reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(0));
                     client_setup = true;
                 }

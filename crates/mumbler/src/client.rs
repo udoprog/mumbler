@@ -2,7 +2,7 @@ use core::mem;
 use core::pin::{Pin, pin};
 use core::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use api::Transform;
 use tokio::time::{self, Instant, Sleep};
 
@@ -129,7 +129,17 @@ async fn handle_peer(
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn run(b: Backend) -> Result<()> {
+pub async fn run(b: Backend, connect: &str) -> Result<()> {
+    let port;
+
+    let host = if let Some((host, port_s)) = connect.rsplit_once(':') {
+        port = port_s.parse::<u16>().context("invalid port number")?;
+        host
+    } else {
+        port = 44114u16;
+        connect
+    };
+
     let player;
 
     {
@@ -139,8 +149,10 @@ pub async fn run(b: Backend) -> Result<()> {
     }
 
     b.broadcast(BackendEvent::RemoteLost);
+    
+    tracing::info!(?host, ?port, "connecting to mumbler-server");
 
-    let client = Client::connect("localhost:44114").await?;
+    let client = Client::connect((host, port)).await?;
     let addr = client.addr()?;
 
     tracing::info!(?addr, "connected");

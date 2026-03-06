@@ -125,13 +125,13 @@ impl ViewTransform {
 
     fn world_to_canvas(&self, world_x: f32, world_z: f32) -> (f64, f64) {
         let x = self.center_x + world_x as f64 * self.scale;
-        let y = self.center_y + world_z as f64 * self.scale;
+        let y = self.center_y - world_z as f64 * self.scale;
         (x, y)
     }
 
     fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> (f64, f64) {
         let world_x = (canvas_x - self.center_x) / self.scale;
-        let world_z = (canvas_y - self.center_y) / self.scale;
+        let world_z = (self.center_y - canvas_y) / self.scale;
         (world_x, world_z)
     }
 }
@@ -508,7 +508,7 @@ impl Map {
                     let angle_rad = (my - py).atan2(mx - px);
                     let dir_x = angle_rad.cos() as f32;
                     let dir_z = angle_rad.sin() as f32;
-                    a.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
+                    a.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
                     self.update = true;
                 }
             }
@@ -541,7 +541,7 @@ impl Map {
                     let dir_x = angle_rad.cos() as f32;
                     let dir_z = angle_rad.sin() as f32;
 
-                    a.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
+                    a.transform.front = api::Vec3::new(dir_x, 0.0, -dir_z);
                     self.update = true;
                     true
                 }
@@ -752,14 +752,14 @@ impl Map {
                 let angle_rad = (my - y).atan2(mx - x);
                 let dir_x = angle_rad.cos() as f32;
                 let dir_z = angle_rad.sin() as f32;
-                Vec3::new(dir_x, 0.0, dir_z)
+                Vec3::new(dir_x, 0.0, -dir_z)
             } else {
                 a.transform.front
             };
 
             // Only draw the facing arc when the avatar has a non-zero facing direction.
-            if front.x.hypot(front.z) > 0.01 {
-                let angle = (front.z as f64).atan2(front.x as f64);
+            if front.x.hypot(-front.z) > 0.01 {
+                let angle = (-front.z as f64).atan2(front.x as f64);
                 let arc_radius = token_radius * 1.4;
                 cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
