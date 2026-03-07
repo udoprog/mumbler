@@ -838,10 +838,12 @@ impl Map {
             player: false,
         };
 
-        let avatars = self.remote_avatars.iter().map(remote_avatar);
-        let avatars = avatars.chain([player_avatar(&self.player)]);
+        let avatars = || {
+            let avatars = self.remote_avatars.iter().map(remote_avatar);
+            avatars.chain([player_avatar(&self.player)])
+        };
 
-        for a in avatars {
+        for a in avatars() {
             let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
 
             // Draw avatar token: circular image if available, otherwise a filled circle.
@@ -904,14 +906,16 @@ impl Map {
                 cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
             }
+        }
 
+        for a in avatars() {
             // Draw eye icon at look_at position
             if let Some(target) = a.look_at {
                 let zoom = self.world.zoom as f64;
 
-                let eye_width = 46.0 * zoom;
-                let eye_height = 20.0 * zoom;
-                let radius = 5.0 * zoom;
+                let eye_width = 24.0 * zoom;
+                let eye_height = 12.0 * zoom;
+                let radius = 6.0 * zoom;
 
                 let color = a.color.to_css_string();
 

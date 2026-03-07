@@ -12,10 +12,16 @@ use tokio::time;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
-const DEFUALT_FILTER: &str = "mumbler=info";
+const DEFUALT_FILTER: &str = "info";
 
 #[derive(Parser)]
 struct Opts {
+    /// Enable debug logging.
+    #[arg(long)]
+    debug: bool,
+    /// Specify custom logging directives.
+    #[arg(long)]
+    log: Vec<String>,
     /// Use an in-memory database.
     #[arg(long)]
     memory: bool,
@@ -37,15 +43,24 @@ struct Opts {
 pub fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    let builder = EnvFilter::builder().with_default_directive(LevelFilter::INFO.into());
-    let env_filter;
+    let default_level = if opts.debug {
+        LevelFilter::DEBUG
+    } else {
+        LevelFilter::INFO
+    };
+
+    let builder = EnvFilter::builder().with_default_directive(default_level.into());
+
+    let mut env_filter = builder
+        .parse(DEFUALT_FILTER)
+        .context("parsing default log filter")?;
 
     if let Ok(log) = env::var("MUMBLER_LOG") {
-        env_filter = builder.parse(log).context("parsing MUMBLER_LOG")?;
-    } else {
-        env_filter = builder
-            .parse(DEFUALT_FILTER)
-            .context("parsing default log filter")?;
+        env_filter = env_filter.add_directive(log.parse().context("parsing MUMBLER_LOG")?);
+    }
+
+    for log in opts.log {
+        env_filter = env_filter.add_directive(log.parse().context("parsing --log directive")?);
     }
 
     tracing_subscriber::fmt()

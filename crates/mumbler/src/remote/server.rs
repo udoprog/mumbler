@@ -80,7 +80,7 @@ pub async fn run(bind: &str) -> Result<()> {
                 let (stream, addr) = result.context("accepting connection")?;
                 let client = Client::from_stream(stream);
                 let peer = Peer::new(addr, client);
-                tracing::info!(addr = ?peer.addr(), "connected");
+                tracing::info!(addr = ?peer.addr(), "Connected");
 
                 let peer_state = PeerState::new(peer);
                 let id = peer_state.id;
@@ -89,18 +89,18 @@ pub async fn run(bind: &str) -> Result<()> {
             }
             (id, result) = Peers::new(&mut peers, &mut wakers, &mut state) => {
                 let Some(mut peer) = peers.remove(&id) else {
-                    tracing::warn!(?id, "peer not found removed");
+                    tracing::warn!(?id, "Peer not found, removed");
                     continue;
                 };
 
                 let remove = 'out: {
                     if let Err(error) = result {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "peer errored, disconnecting");
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored, disconnecting");
                         break 'out true;
                     }
 
                     if let Err(error) = state.handle(&mut peer, &mut peers).await {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "peer errored, disconnecting");
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored, disconnecting");
                         break 'out true;
                     }
 

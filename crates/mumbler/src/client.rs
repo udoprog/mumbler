@@ -173,7 +173,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
     let client = Client::connect((host, port)).await?;
     let addr = client.addr()?;
 
-    tracing::info!(?addr, "connected");
+    tracing::info!(?addr, "Connected");
 
     let mut peer = Peer::new(addr, client);
     peer.connect(b"default")?;

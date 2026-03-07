@@ -157,7 +157,7 @@ pub(super) async fn entry(
         let mut events = backend.subscribe();
 
         let future = async move {
-            tracing::info!("connected");
+            tracing::info!("Connected");
 
             let mut server = axum08::server(socket, Handler::new(backend.clone()));
             let mut debounce_timer = pin!(time::sleep(Duration::from_secs(0)));
@@ -183,10 +183,10 @@ pub(super) async fn entry(
 
                 let (result, done) = tokio::select! {
                     result = server.run() => {
-                        (result.context("error in server"), true)
+                        (result.context("Error in server"), true)
                     }
-                    () = debounce_timer.as_mut() => {
-                        tracing::debug!("saving transform");
+                    () = debounce_timer.as_mut(), if update_transform.is_some() || update_look_at.is_some() => {
+                        tracing::debug!("Saving transform");
 
                         let mut result = async || {
                             if let Some(transform) = update_transform.take() {
