@@ -520,9 +520,7 @@ pub struct SetRemoteServerRequest {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct SetRemoteServerResponse {
-    pub server: String,
-}
+pub struct SetRemoteServerResponse;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]

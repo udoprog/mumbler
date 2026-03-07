@@ -31,7 +31,6 @@ pub(crate) fn log_component() -> Html {
     html! {
         <div id="content" class="log">
             <div class="log-header">
-                <h2>{"Log"}</h2>
                 <div class="log-actions">
                     <button class="btn sm secondary" onclick={on_clear}>{"Clear"}</button>
                 </div>

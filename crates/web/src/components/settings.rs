@@ -184,23 +184,7 @@ impl Component for Settings {
                             />
                     </section>
 
-                    <h2>{"Remote Server"}</h2>
-
-                    <div class="hint">
-                        {"If a remote server is configured and enabled, it can be used to synchronize state between many Mumbler Clients."}
-                    </div>
-
-                    <section>
-                        <input
-                            id="remote-server"
-                            type="text"
-                            placeholder="host[:port]"
-                            value={self.remote_server.clone()}
-                            onchange={ctx.link().callback(Msg::ServerChanged)}
-                            />
-                    </section>
-
-                    <h2>{"Select Avatar"}</h2>
+                    <h2>{"Image"}</h2>
 
                     if let Some(url) = &self.preview_url {
                         <section class="image-entry">
@@ -229,7 +213,7 @@ impl Component for Settings {
                         {for images}
                     </div>
 
-                    <h2>{"Avatar Color"}</h2>
+                    <h2>{"Color"}</h2>
 
                     <section class="color-picker">
                         <label for="avatar-color">{"Select Color:"}</label>
@@ -238,6 +222,22 @@ impl Component for Settings {
                             type="color"
                             value={self.color.to_css_string()}
                             onchange={ctx.link().callback(Msg::ColorChanged)}
+                            />
+                    </section>
+
+                    <h2>{"Remote Server"}</h2>
+
+                    <div class="hint">
+                        {"If a remote server is configured and enabled, it can be used to synchronize state between many Mumbler Clients."}
+                    </div>
+
+                    <section>
+                        <input
+                            id="remote-server"
+                            type="text"
+                            placeholder="host[:port]"
+                            value={self.remote_server.clone()}
+                            onchange={ctx.link().callback(Msg::ServerChanged)}
                             />
                     </section>
                 </div>

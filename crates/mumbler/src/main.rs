@@ -31,10 +31,10 @@ struct Opts {
     /// Work as development server.
     #[arg(long)]
     dev: bool,
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    #[arg(long, default_value = "127.0.0.1:41114")]
     bind: String,
-    #[arg(long, default_value = "127.0.0.1:44114")]
-    connect: String,
+    #[arg(long)]
+    connect: Option<String>,
 }
 
 pub fn main() -> Result<()> {
@@ -87,7 +87,7 @@ pub fn main() -> Result<()> {
         let b = Backend::new(c, paths).await?;
 
         tokio::try_join!(
-            client::managed(b.clone(), &opts.connect),
+            client::managed(b.clone(), opts.connect.as_deref()),
             mumblelink::managed(b.clone()),
             mumbler::run(b, !opts.dev, &opts.bind),
         )?;

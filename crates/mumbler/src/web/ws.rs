@@ -295,7 +295,7 @@ pub(super) async fn entry(
                 }
 
                 if done {
-                    tracing::warn!("Websocket server future completed, shutting down connection");
+                    tracing::info!("Disconnected");
                     break;
                 }
             }

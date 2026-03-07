@@ -343,11 +343,14 @@ async fn set_remote_server(
     backend: &Backend,
     request: api::SetRemoteServerRequest,
 ) -> Result<api::SetRemoteServerResponse> {
-    let server = request.server;
+    let server = request.server.trim();
+    let server = (!server.is_empty()).then_some(server).map(str::to_owned);
+
     backend
         .db()
-        .set_config("remote/server", server.clone())
+        .set_optional_config("remote/server", server)
         .await?;
+
     backend.restart_client();
-    Ok(api::SetRemoteServerResponse { server })
+    Ok(api::SetRemoteServerResponse)
 }

@@ -1,6 +1,6 @@
-use core::mem;
 use core::pin::{Pin, pin};
 use core::time::Duration;
+use core::{future, mem};
 
 use anyhow::{Context as _, Result, bail};
 use api::Transform;
@@ -164,7 +164,13 @@ async fn handle_peer(
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
+pub(crate) async fn run(b: Backend, connect: Option<String>) -> Result<()> {
+    let Some(connect) = connect else {
+        tracing::info!("remote client disabled");
+        future::pending::<()>().await;
+        return Ok(());
+    };
+
     let port;
 
     let host = if let Some((host, port_s)) = connect.rsplit_once(':') {
@@ -185,7 +191,7 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
 
     b.broadcast(BackendEvent::RemoteLost);
 
-    tracing::info!(?host, ?port, "connecting to mumbler-server");
+    tracing::info!(?host, ?port, "Connecting to mumbler-server");
 
     let client = Client::connect((host, port)).await?;
     let addr = client.addr()?;
@@ -274,13 +280,15 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
 /// signalled by [`Backend::restart_client`].  The inner [`run`] loop is
 /// restarted on error after a 5-second back-off, unless the connection is
 /// disabled.
-pub async fn managed(b: Backend, default_connect: &str) -> Result<()> {
-    let settings = async || -> Result<(String, bool)> {
+pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
+    let settings = async || -> Result<(Option<String>, bool)> {
         let connect = b
             .db()
             .get_config::<String>("remote/server")
             .await?
-            .unwrap_or_else(|| default_connect.to_string());
+            .as_deref()
+            .or(default_connect)
+            .map(str::to_owned);
 
         let enabled = b
             .db()
@@ -301,12 +309,12 @@ pub async fn managed(b: Backend, default_connect: &str) -> Result<()> {
         tokio::select! {
             result = conn_future.as_mut(), if active => {
                 if let Err(error) = result {
-                    tracing::error!(%error, "client errored");
+                    tracing::error!(%error, "Client errored");
                 }
 
                 active = false;
                 reconnect.as_mut().reset(Instant::now() + Duration::from_secs(5));
-                tracing::info!("client disconnected, reconnecting in 5s");
+                tracing::info!("Client disconnected, reconnecting in 5s");
             }
             _ = reconnect.as_mut(), if !active && enabled => {
                 conn_future.set(run(b.clone(), connect.clone()));
@@ -316,7 +324,7 @@ pub async fn managed(b: Backend, default_connect: &str) -> Result<()> {
             () = b.client_restart_wait() => {
                 (connect, enabled) = settings().await?;
 
-                tracing::info!(%connect, %enabled, "Remote client config updated");
+                tracing::info!(?connect, %enabled, "Remote client config updated");
 
                 if enabled {
                     conn_future.set(run(b.clone(), connect.clone()));

@@ -1,13 +1,14 @@
 use core::mem;
 
 use api::{Avatar, RemoteAvatar, Vec3, World};
+use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, ResizeObserver,
-    WheelEvent,
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, KeyboardEvent, MouseEvent,
+    ResizeObserver, WheelEvent,
 };
 use yew::prelude::*;
 
@@ -22,7 +23,7 @@ const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
-const HELP: &str = "LMB to move / Shift + LBM to look / MMB to pan / Scroll to zoom";
+const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / Scroll to zoom";
 
 pub(crate) struct Map {
     _initialize: ws::Request,
@@ -63,9 +64,18 @@ pub(crate) struct Map {
     move_target: Option<Vec3>,
     /// Animation interval for smooth movement.
     _animation_interval: Option<Interval>,
+    /// Current world-space mouse position while cursor is over the canvas.
+    mouse_world_pos: Option<(f32, f32)>,
+    /// Keeps the document keydown listener alive.
+    _keydown_listener: EventListener,
+    /// Keeps the document keyup listener alive.
+    _keyup_listener: EventListener,
 }
 
 pub(crate) enum Msg {
+    LogUpdate(log::Log),
+    KeyDown(KeyboardEvent),
+    KeyUp(KeyboardEvent),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     TransformUpdated(Result<Packet<api::UpdateTransform>, ws::Error>),
     LookAtUpdated(Result<Packet<api::UpdateLookAt>, ws::Error>),
@@ -80,7 +90,6 @@ pub(crate) enum Msg {
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
-    LogUpdate(log::Log),
 }
 
 impl From<ImageMessage> for Msg {
@@ -115,6 +124,25 @@ impl Component for Map {
             .ws
             .on_broadcast::<api::RemoteAvatarUpdate>(ctx.link().callback(Msg::RemoteAvatarUpdate));
 
+        let document = web_sys::window()
+            .expect("window")
+            .document()
+            .expect("document");
+
+        let link = ctx.link().clone();
+        let _keydown_listener = EventListener::new(&document, "keydown", move |e| {
+            if let Some(e) = e.dyn_ref::<KeyboardEvent>() {
+                link.send_message(Msg::KeyDown(e.clone()));
+            }
+        });
+
+        let link = ctx.link().clone();
+        let _keyup_listener = EventListener::new(&document, "keyup", move |e| {
+            if let Some(e) = e.dyn_ref::<KeyboardEvent>() {
+                link.send_message(Msg::KeyUp(e.clone()));
+            }
+        });
+
         let mut this = Self {
             _initialize: ws::Request::new(),
             _update_transform: ws::Request::new(),
@@ -140,6 +168,9 @@ impl Component for Map {
             images: Images::new(),
             move_target: None,
             _animation_interval: None,
+            mouse_world_pos: None,
+            _keydown_listener,
+            _keyup_listener,
         };
 
         this.refresh(ctx);
@@ -245,6 +276,10 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::LogUpdate(log) => {
+                self.log = log;
+                Ok(false)
+            }
             Msg::InitializeMap(result) => {
                 let initialize = result?;
                 let initialize = initialize.decode()?;
@@ -376,11 +411,54 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::LogUpdate(log) => {
-                self.log = log;
+            Msg::KeyDown(e) => {
+                self.on_key_down(e)?;
+                Ok(false)
+            }
+            Msg::KeyUp(e) => {
+                self.on_key_up(e)?;
                 Ok(false)
             }
         }
+    }
+
+    fn on_key_up(&mut self, e: KeyboardEvent) -> Result<(), Error> {
+        if e.key() != "Shift" {
+            return Ok(());
+        }
+
+        let Some((_, _, true)) = self.start_press else {
+            return Ok(());
+        };
+
+        self.start_press = None;
+        self.arrow_target = None;
+        self.player.look_at = None;
+        self.update_look_at = true;
+        self.redraw()?;
+        Ok(())
+    }
+
+    fn on_key_down(&mut self, e: KeyboardEvent) -> Result<(), Error> {
+        if e.key() != "Shift" || self.start_press.is_some() {
+            return Ok(());
+        }
+
+        let Some((mx, my)) = self.mouse_world_pos else {
+            return Ok(());
+        };
+
+        let (px, py) = (
+            self.player.transform.position.x,
+            self.player.transform.position.z,
+        );
+
+        self.start_press = Some((px, py, true));
+        self.look_at(px, py, mx, my);
+        self.player.look_at = Some(Vec3::new(mx, 0.0, my));
+        self.update_look_at = true;
+        self.redraw()?;
+        Ok(())
     }
 
     fn interpolate_movement(&mut self) {
@@ -409,6 +487,13 @@ impl Map {
 
             self.player.transform.position.x += dx * ratio;
             self.player.transform.position.z += dz * ratio;
+
+            // Face the movement direction unless a look_at target is active.
+            if self.player.look_at.is_none() {
+                let angle_rad = dz.atan2(dx);
+                self.player.transform.front = api::Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+            }
+
             self.update_transform = true;
         };
 
@@ -524,23 +609,21 @@ impl Map {
             needs_redraw = true;
         }
 
+        let (mx, my) = v.canvas_to_world(e.offset_x() as f64, e.offset_y() as f64);
+        self.mouse_world_pos = Some((mx, my));
+
         if let Some((px, py, shift_key)) = self.start_press {
-            let mx = e.offset_x() as f64;
-            let my = e.offset_y() as f64;
-
-            let (mx, my) = v.canvas_to_world(mx, my);
-
-            let dist = (mx - px).hypot(my - py);
-
-            if dist >= ARROW_THRESHOLD {
-                if shift_key {
+            if shift_key {
+                let dist = (mx - px).hypot(my - py);
+                if dist >= ARROW_THRESHOLD {
                     self.player.look_at = Some(Vec3::new(mx, 0.0, my));
-                } else {
-                    self.player.look_at = None;
+                    self.update_look_at = true;
+                    self.look_at(px, py, mx, my);
+                    needs_redraw = true;
                 }
-
-                self.update_look_at = true;
-                self.look_at(px, py, mx, my);
+            } else {
+                // LMB drag: continuously update move target to cursor position.
+                self.move_target = Some(Vec3::new(mx, 0.0, my));
                 needs_redraw = true;
             }
         }
@@ -590,6 +673,7 @@ impl Map {
         self.pan_anchor = None;
         self.start_press = None;
         self.arrow_target = None;
+        self.mouse_world_pos = None;
 
         if needs_redraw {
             self.redraw()?;
