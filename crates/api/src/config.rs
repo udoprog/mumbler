@@ -38,7 +38,7 @@ macro_rules! keys {
 }
 
 keys! {
-    AVATAR_IMAGE = 0,
+    AVATAR_IMAGE_ID = 0,
     AVATAR_COLOR = 1,
     AVATAR_TRANSFORM = 2,
     AVATAR_LOOK_AT = 3,
@@ -49,6 +49,7 @@ keys! {
     WORLD_SCALE = 8,
     WORLD_ZOOM = 9,
     WORLD_PAN = 10,
+    AVATAR_IMAGE_BYTES = 0x1000,
 }
 
 #[cfg(feature = "sqll")]

@@ -1,19 +1,16 @@
-use core::mem;
 use core::pin::{Pin, pin};
 use core::time::Duration;
+use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Id, Key, Transform, Value};
+use api::{Id, Key, Value};
 use async_fuse::Fuse;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::backend::RemoteAvatarEvent;
-use crate::remote::api::{
-    Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedLookAt,
-    UpdatedNameBody, UpdatedTransform,
-};
+use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
 use crate::remote::{Client, Peer};
 
 const COMPONENT: &str = "remote-client";
@@ -37,18 +34,29 @@ async fn handle_peer(
                 }
             }
             Event::Join => {
-                let event = body.decode::<JoinBody>()?;
+                let mut event = body.decode::<JoinBody>()?;
                 tracing::debug!(?event.id, "join");
+
+                if let Some(image) = event
+                    .values
+                    .remove(&Key::AVATAR_IMAGE_BYTES)
+                    .and_then(|v| v.into_bytes())
+                {
+                    let mut images = b.images().await;
+                    let image = images.store(image);
+                    event
+                        .values
+                        .insert(Key::AVATAR_IMAGE_ID, Value::from(image));
+                }
 
                 {
                     let mut remote = b.client_state().await;
-                    let peer = remote.peers.entry(event.id).or_default();
-
-                    peer.transform = Transform::origin();
+                    remote.peers.entry(event.id).or_default().values = event.values.clone();
                 }
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
                     peer_id: event.id,
+                    values: event.values,
                 }));
             }
             Event::Leave => {
@@ -64,103 +72,45 @@ async fn handle_peer(
                     peer_id: event.id,
                 }));
             }
-            Event::Moved => {
-                let event = body.decode::<UpdatedTransform>()?;
-                tracing::debug!(?event.id, ?event.transform, "moved");
+            Event::Updated => {
+                let event = body.decode::<UpdatedPeer>()?;
+                tracing::debug!(?event.id, ?event.key, ?event.value, "updated");
 
-                {
-                    let mut remote = b.client_state().await;
+                let mut remote = b.client_state().await;
 
-                    if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.transform = event.transform;
-                    }
-                }
+                let Some(peer) = remote.peers.get_mut(&event.id) else {
+                    continue;
+                };
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: event.id,
-                    key: Key::AVATAR_TRANSFORM,
-                    value: Value::from(event.transform),
-                }));
-            }
-            Event::LookedAt => {
-                let event = body.decode::<UpdatedLookAt>()?;
-                tracing::debug!(?event.id, ?event.look_at, "looked at");
+                let (key, value) = match event.key {
+                    Key::AVATAR_IMAGE_BYTES => {
+                        let Some(bytes) = event.value.into_bytes() else {
+                            continue;
+                        };
 
-                {
-                    let mut remote = b.client_state().await;
+                        let mut images = b.images().await;
 
-                    if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.look_at = event.look_at;
-                    }
-                }
+                        let image = images.store(bytes);
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: event.id,
-                    key: Key::AVATAR_LOOK_AT,
-                    value: Value::from(event.look_at),
-                }));
-            }
-            Event::UpdatedImage => {
-                let event = body.decode::<UpdatedImageBody>()?;
-                tracing::debug!(?event.id, image = ?event.image.as_ref().map(|i| i.len()), "updated image");
-
-                let image = {
-                    let mut remote = b.client_state().await;
-                    let mut images = b.images().await;
-
-                    if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        let image = event.image.map(|data| images.store(data));
-
-                        if let Some(old) = mem::replace(&mut peer.image, image) {
-                            images.remove(old);
+                        if let Some(old) =
+                            peer.values.insert(Key::AVATAR_IMAGE_ID, Value::from(image))
+                            && let Some(id) = old.as_id()
+                        {
+                            images.remove(id);
                         }
 
-                        image
-                    } else {
-                        None
+                        (Key::AVATAR_IMAGE_ID, Value::from(image))
+                    }
+                    key => {
+                        peer.values.insert(key, event.value.clone());
+                        (key, event.value)
                     }
                 };
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
                     peer_id: event.id,
-                    key: Key::AVATAR_IMAGE,
-                    value: Value::from(image),
-                }));
-            }
-            Event::UpdatedColor => {
-                let event = body.decode::<UpdatedColorBody>()?;
-                tracing::debug!(?event.id, color = ?event.color, "updated color");
-
-                {
-                    let mut remote = b.client_state().await;
-
-                    if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.color = event.color;
-                    }
-                }
-
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: event.id,
-                    key: Key::AVATAR_COLOR,
-                    value: Value::from(event.color),
-                }));
-            }
-            Event::UpdatedName => {
-                let event = body.decode::<UpdatedNameBody>()?;
-                tracing::debug!(?event.id, name = ?event.name, "updated name");
-
-                {
-                    let mut remote = b.client_state().await;
-
-                    if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.name = event.name.clone();
-                    }
-                }
-
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: event.id,
-                    key: Key::AVATAR_NAME,
-                    value: Value::from(event.name),
+                    key,
+                    value,
                 }));
             }
             event => {
@@ -199,16 +149,10 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
 
     tracing::info!(?addr, "Connected");
 
-    let mut peer = Peer::new(addr, client);
-    peer.connect(b"default")?;
-
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
-
-    peer.update_transform(player.transform)?;
-    peer.update_look_at(player.look_at)?;
 
     let image = 'image: {
         let Some(image) = player.image else {
@@ -218,9 +162,16 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
         b.db().get_image_data(image).await?
     };
 
-    peer.update_image(image)?;
-    peer.update_color(player.color)?;
-    peer.update_name(player.name.clone())?;
+    let mut values = HashMap::new();
+
+    values.insert(Key::AVATAR_TRANSFORM, Value::from(player.transform));
+    values.insert(Key::AVATAR_LOOK_AT, Value::from(player.look_at));
+    values.insert(Key::AVATAR_IMAGE_BYTES, Value::from(image));
+    values.insert(Key::AVATAR_COLOR, Value::from(player.color));
+    values.insert(Key::AVATAR_NAME, Value::from(player.name.clone()));
+
+    let mut peer = Peer::new(addr, client);
+    peer.connect(b"default", values)?;
 
     loop {
         tokio::select! {
@@ -232,11 +183,11 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
                 let state = b.take_client_player().await;
 
                 if state.is_transform() {
-                    peer.update_transform(state.transform)?;
+                    peer.update_peer(Key::AVATAR_TRANSFORM, &Value::from(state.transform))?;
                 }
 
                 if state.is_look_at() {
-                    peer.update_look_at(state.look_at)?;
+                    peer.update_peer(Key::AVATAR_LOOK_AT, &Value::from(state.look_at))?;
                 }
 
                 if state.is_image() {
@@ -248,15 +199,15 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
                         b.db().get_image_data(image).await?
                     };
 
-                    peer.update_image(image)?;
+                    peer.update_peer(Key::AVATAR_IMAGE_BYTES, &Value::from(image))?;
                 }
 
                 if state.is_color() {
-                    peer.update_color(state.color)?;
+                    peer.update_peer(Key::AVATAR_COLOR, &Value::from(state.color))?;
                 }
 
                 if state.is_name() {
-                    peer.update_name(state.name.clone())?;
+                    peer.update_peer(Key::AVATAR_NAME, &Value::from(state.name.clone()))?;
                 }
 
                 wait.set(b.client_wait());

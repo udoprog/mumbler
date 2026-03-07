@@ -524,7 +524,7 @@ impl Settings {
             look_at: None,
             image: self.selected,
             color: self.color,
-            name: self.name.clone(),
+            name: self.name.as_deref(),
             player: true,
         };
 

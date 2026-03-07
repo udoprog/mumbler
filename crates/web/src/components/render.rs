@@ -8,34 +8,34 @@ use crate::error::Error;
 const HALF_SPAN: f64 = FRAC_PI_6;
 
 /// Information about an avatar to render.
-pub(crate) struct RenderAvatar {
+pub(crate) struct RenderAvatar<'a> {
     pub(crate) transform: api::Transform,
     pub(crate) look_at: Option<Vec3>,
     pub(crate) image: Option<Id>,
     pub(crate) color: api::Color,
-    pub(crate) name: Option<String>,
+    pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
 }
 
-impl RenderAvatar {
-    pub(crate) fn from_player(a: &Avatar) -> Self {
+impl<'a> RenderAvatar<'a> {
+    pub(crate) fn from_player(a: &'a Avatar) -> Self {
         Self {
             transform: a.transform,
             look_at: a.look_at,
             image: a.image,
             color: a.color,
-            name: a.name.clone(),
+            name: a.name.as_deref(),
             player: true,
         }
     }
 
-    pub(crate) fn from_remote(a: &RemoteAvatar) -> Self {
+    pub(crate) fn from_remote(a: &'a RemoteAvatar) -> Self {
         Self {
-            transform: a.transform,
-            look_at: a.look_at,
-            image: a.image,
-            color: a.color,
-            name: a.name.clone(),
+            transform: a.transform(),
+            look_at: a.look_at(),
+            image: a.image(),
+            color: a.color(),
+            name: a.name(),
             player: false,
         }
     }

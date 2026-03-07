@@ -8,6 +8,7 @@ mod value;
 pub use self::value::Value;
 
 use core::fmt;
+use std::collections::HashMap;
 
 use musli_core::{Decode, Encode};
 use musli_web::api;
@@ -304,16 +305,43 @@ impl Transform {
 pub struct RemoteAvatar {
     /// The identifier of the remote avatar.
     pub id: Id,
-    /// The transform (position and orientation) of the avatar.
-    pub transform: Transform,
-    /// Indicates if the remote avatar has an image.
-    pub image: Option<Id>,
-    /// The custom color for the avatar.
-    pub color: Color,
-    /// The point in world coordinates that the avatar is looking at.
-    pub look_at: Option<Vec3>,
-    /// The display name of this avatar.
-    pub name: Option<String>,
+    /// The key-value pairs representing the state of the remote avatar.
+    pub values: HashMap<Key, Value>,
+}
+
+impl RemoteAvatar {
+    #[inline]
+    pub fn transform(&self) -> Transform {
+        let Some(value) = self.values.get(&Key::AVATAR_TRANSFORM) else {
+            return Transform::origin();
+        };
+
+        value.as_transform().unwrap_or_else(Transform::origin)
+    }
+
+    #[inline]
+    pub fn look_at(&self) -> Option<Vec3> {
+        self.values.get(&Key::AVATAR_LOOK_AT)?.as_vec3()
+    }
+
+    #[inline]
+    pub fn image(&self) -> Option<Id> {
+        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
+    }
+
+    #[inline]
+    pub fn color(&self) -> Color {
+        let Some(value) = self.values.get(&Key::AVATAR_COLOR) else {
+            return Color::neutral();
+        };
+
+        value.as_color().unwrap_or_else(Color::neutral)
+    }
+
+    #[inline]
+    pub fn name(&self) -> Option<&str> {
+        self.values.get(&Key::AVATAR_NAME)?.as_string()
+    }
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -543,6 +571,7 @@ pub enum RemoteAvatarUpdateBody {
     RemoteLost,
     Join {
         peer_id: Id,
+        values: HashMap<Key, Value>,
     },
     Leave {
         peer_id: Id,

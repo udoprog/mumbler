@@ -1,5 +1,3 @@
-use core::mem;
-
 use api::{Avatar, Key, RemoteAvatar, Vec3, World};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
@@ -316,15 +314,18 @@ impl Map {
                     api::RemoteAvatarUpdateBody::RemoteLost => {
                         self.remote_avatars.clear();
                     }
-                    api::RemoteAvatarUpdateBody::Join { peer_id } => {
-                        self.remote_avatars.push(RemoteAvatar {
+                    api::RemoteAvatarUpdateBody::Join { peer_id, values } => {
+                        let a = RemoteAvatar {
                             id: peer_id,
-                            transform: api::Transform::origin(),
-                            image: None,
-                            color: api::Color::neutral(),
-                            look_at: None,
-                            name: None,
-                        });
+                            values: values.clone(),
+                        };
+
+                        if let Some(id) = values.get(&Key::AVATAR_IMAGE_ID).and_then(|v| v.as_id())
+                        {
+                            self.images.load(ctx, id);
+                        }
+
+                        self.remote_avatars.push(a);
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
                         self.remote_avatars.retain(|a| a.id != peer_id);
@@ -333,66 +334,26 @@ impl Map {
                         peer_id,
                         key,
                         value,
-                    } => match key {
-                        Key::AVATAR_TRANSFORM => {
-                            if let Some(transform) = value.as_transform() {
-                                if let Some(a) =
-                                    self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
-                                {
-                                    a.transform = transform;
+                    } => {
+                        if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
+                            if key == Key::AVATAR_IMAGE_ID {
+                                let old = a
+                                    .values
+                                    .insert(Key::AVATAR_IMAGE_ID, value.clone())
+                                    .unwrap_or_default();
+
+                                if let Some(old) = old.as_id() {
+                                    self.images.remove(old);
                                 }
-                            }
-                        }
-                        Key::AVATAR_LOOK_AT => {
-                            let look_at = value.as_vec3();
 
-                            if let Some(a) =
-                                self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
-                            {
-                                a.look_at = look_at;
-                            }
-                        }
-                        Key::AVATAR_IMAGE => {
-                            let image = value.as_id();
-
-                            let old = if let Some(a) =
-                                self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
-                            {
-                                mem::replace(&mut a.image, image)
+                                if let Some(new) = value.as_id() {
+                                    self.images.load(ctx, new);
+                                }
                             } else {
-                                None
-                            };
-
-                            if let Some(id) = old {
-                                self.images.remove(id);
-                            }
-
-                            if let Some(id) = image {
-                                self.images.load(ctx, id);
+                                a.values.insert(key, value.clone());
                             }
                         }
-                        Key::AVATAR_COLOR => {
-                            if let Some(color) = value.as_color() {
-                                if let Some(a) =
-                                    self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
-                                {
-                                    a.color = color;
-                                }
-                            }
-                        }
-                        Key::AVATAR_NAME => {
-                            let name = value.into_string();
-
-                            if let Some(a) =
-                                self.remote_avatars.iter_mut().find(|a| a.id == peer_id)
-                            {
-                                a.name = name;
-                            }
-                        }
-                        key => {
-                            tracing::warn!(?key, "unsupported avatar key");
-                        }
-                    },
+                    }
                 }
 
                 self.redraw()?;
@@ -746,7 +707,7 @@ impl Map {
         self.images.clear();
 
         let ids = self.player.image.into_iter();
-        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
+        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image()));
 
         for id in ids {
             self.images.load(ctx, id);

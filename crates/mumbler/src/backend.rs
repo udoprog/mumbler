@@ -19,9 +19,18 @@ const NAME_CHANGED: u8 = 0b0001_0000;
 #[derive(Debug, Clone)]
 pub(crate) enum RemoteAvatarEvent {
     RemoteLost,
-    Join { peer_id: Id },
-    Leave { peer_id: Id },
-    Update { peer_id: Id, key: Key, value: Value },
+    Join {
+        peer_id: Id,
+        values: HashMap<Key, Value>,
+    },
+    Leave {
+        peer_id: Id,
+    },
+    Update {
+        peer_id: Id,
+        key: Key,
+        value: Value,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -78,24 +87,9 @@ impl Player {
 }
 
 /// Information about a remote peer.
+#[derive(Default)]
 pub(crate) struct PeerInfo {
-    pub(crate) transform: Transform,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: Color,
-    pub(crate) look_at: Option<Vec3>,
-    pub(crate) name: Option<String>,
-}
-
-impl Default for PeerInfo {
-    fn default() -> Self {
-        Self {
-            transform: Transform::origin(),
-            image: None,
-            color: Color::neutral(),
-            look_at: None,
-            name: None,
-        }
-    }
+    pub(crate) values: HashMap<Key, Value>,
 }
 
 /// Information about remote peers.
@@ -158,7 +152,7 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        let image = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE).await?;
+        let image = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE_ID).await?;
 
         let color = database
             .get::<Color>(Id::GLOBAL, Key::AVATAR_COLOR)

@@ -9,6 +9,7 @@ use crate::{Color, Id, Transform, Vec3};
 pub struct Value {
     kind: ValueKind,
 }
+
 impl Value {
     #[inline]
     pub fn as_id(&self) -> Option<Id> {
@@ -30,6 +31,22 @@ impl Value {
     pub fn into_string(self) -> Option<String> {
         match self.kind {
             ValueKind::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match &self.kind {
+            ValueKind::Bytes(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn into_bytes(self) -> Option<Vec<u8>> {
+        match self.kind {
+            ValueKind::Bytes(b) => Some(b),
             _ => None,
         }
     }
@@ -59,6 +76,15 @@ impl Value {
     }
 }
 
+impl Default for Value {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            kind: ValueKind::None,
+        }
+    }
+}
+
 impl fmt::Debug for Value {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,6 +97,7 @@ impl fmt::Debug for Value {
 enum ValueKind {
     Id(Id),
     String(String),
+    Bytes(Vec<u8>),
     Transform(Transform),
     Color(Color),
     Vec3(Vec3),
@@ -92,6 +119,15 @@ impl From<String> for Value {
     fn from(value: String) -> Self {
         Self {
             kind: ValueKind::String(value),
+        }
+    }
+}
+
+impl From<Vec<u8>> for Value {
+    #[inline]
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            kind: ValueKind::Bytes(value),
         }
     }
 }

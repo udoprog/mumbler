@@ -1,11 +1,12 @@
 use core::net::SocketAddr;
 use core::task::{Context, Poll};
 
+use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::{Color, Id, Transform};
+use api::{Id, Key, Value};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -13,12 +14,9 @@ use musli::storage;
 use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
-use crate::remote::api::{
-    UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateNameBody, UpdateTransform,
-    UpdatedColorBody, UpdatedImageBody, UpdatedLookAt, UpdatedNameBody, UpdatedTransform,
-};
+use crate::remote::api::{JoinBodyRef, UpdatePeerRef, UpdatedPeerRef};
 
-use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
+use super::api::{ConnectBody, Header, LeaveBody, PingBody, PongBody};
 use super::{Buf, Client, Scratch};
 
 const MAX_MESSAGE: usize = 1024 * 1024;
@@ -121,10 +119,11 @@ impl Peer {
     }
 
     /// Connects the peer by sending a connect request.
-    pub fn connect(&mut self, room: &[u8]) -> Result<()> {
+    pub fn connect(&mut self, room: &[u8], values: HashMap<Key, Value>) -> Result<()> {
         self.scratch.send(ConnectBody {
             version: 1,
             room: Box::from(room),
+            values,
         })?;
 
         self.write.write_message(&mut self.scratch);
@@ -146,8 +145,8 @@ impl Peer {
     }
 
     /// Mark the given peer as having joined the room.
-    pub fn join(&mut self, id: Id) -> Result<()> {
-        self.scratch.send(JoinBody { id })?;
+    pub fn join(&mut self, id: Id, values: &HashMap<Key, Value>) -> Result<()> {
+        self.scratch.send(JoinBodyRef { id, values })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -159,72 +158,16 @@ impl Peer {
         Ok(())
     }
 
-    /// Move the peer to the given position and front.
-    pub fn update_transform(&mut self, transform: Transform) -> Result<()> {
-        self.scratch.send(UpdateTransform { transform })?;
+    /// Update the peer with the given key and value.
+    pub fn update_peer(&mut self, key: Key, value: &Value) -> Result<()> {
+        self.scratch.send(UpdatePeerRef { key, value })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
-    /// Mark the given peer as having moved to the given position and front.
-    pub fn updated_transform(&mut self, id: Id, transform: Transform) -> Result<()> {
-        self.scratch.send(UpdatedTransform { id, transform })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Set the peer's look at point.
-    pub fn update_look_at(&mut self, look_at: Option<api::Vec3>) -> Result<()> {
-        self.scratch.send(UpdateLookAt { look_at })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Mark the given peer as having updated their look at point.
-    pub fn updated_look_at(&mut self, id: Id, look_at: Option<api::Vec3>) -> Result<()> {
-        self.scratch.send(UpdatedLookAt { id, look_at })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Mark the given peer as having updated their image.
-    pub fn update_image(&mut self, image: Option<Vec<u8>>) -> Result<()> {
-        self.scratch.send(UpdateImageBody { image })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Mark the given peer as having updated their image.
-    pub fn updated_image(&mut self, peer_id: Id, image: Option<Vec<u8>>) -> Result<()> {
-        self.scratch.send(UpdatedImageBody { id: peer_id, image })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Update the peer's color.
-    pub fn update_color(&mut self, color: Color) -> Result<()> {
-        self.scratch.send(UpdateColorBody { color })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Mark the given peer as having updated their color.
-    pub fn updated_color(&mut self, peer_id: Id, color: Color) -> Result<()> {
-        self.scratch.send(UpdatedColorBody { id: peer_id, color })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Update the peer's display name.
-    pub fn update_name(&mut self, name: Option<String>) -> Result<()> {
-        self.scratch.send(UpdateNameBody { name })?;
-        self.write.write_message(&mut self.scratch);
-        Ok(())
-    }
-
-    /// Mark the given peer as having updated their display name.
-    pub fn updated_name(&mut self, peer_id: Id, name: Option<String>) -> Result<()> {
-        self.scratch.send(UpdatedNameBody { id: peer_id, name })?;
+    /// Mark the given peer as having updated the given key and value.
+    pub fn updated_peer(&mut self, id: Id, key: Key, value: &Value) -> Result<()> {
+        self.scratch.send(UpdatedPeerRef { id, key, value })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

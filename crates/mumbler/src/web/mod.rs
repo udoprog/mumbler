@@ -154,12 +154,8 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
         for (id, peer) in state.peers.iter() {
             remote_avatars.push(api::RemoteAvatar {
-                id: Id::new(id.get()),
-                transform: peer.transform,
-                image: peer.image,
-                color: peer.color,
-                look_at: peer.look_at,
-                name: peer.name.clone(),
+                id: *id,
+                values: peer.values.clone(),
             });
         }
     }
@@ -226,7 +222,7 @@ async fn select_image(
 ) -> Result<api::SelectImageResponse> {
     backend
         .db()
-        .set(Id::GLOBAL, Key::AVATAR_IMAGE, request.id)
+        .set(Id::GLOBAL, Key::AVATAR_IMAGE_ID, request.id)
         .await?;
     backend.set_client_image(Some(request.id)).await;
     Ok(api::SelectImageResponse { id: request.id })

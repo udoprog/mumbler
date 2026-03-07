@@ -2,12 +2,11 @@
 //! the commands that it receives.
 
 use core::pin::pin;
+use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use mumbler::remote::api::{
-    Event, JoinBody, LeaveBody, PongBody, UpdatedImageBody, UpdatedTransform,
-};
+use mumbler::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
 use mumbler::remote::{Client, Peer};
 use tokio::time::{self, Duration, Instant};
 use tracing::Level;
@@ -45,8 +44,10 @@ async fn main() -> Result<()> {
 
     tracing::info!(?addr, "Connected");
 
+    let values = HashMap::new();
+
     let mut peer = Peer::new(addr, client);
-    peer.connect(opts.room.as_bytes())?;
+    peer.connect(opts.room.as_bytes(), values)?;
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
@@ -75,13 +76,9 @@ async fn main() -> Result<()> {
                             let event = body.decode::<LeaveBody>()?;
                             tracing::debug!(?event, "leave");
                         }
-                        Event::Moved => {
-                            let event = body.decode::<UpdatedTransform>()?;
-                            tracing::debug!(?event, "moved");
-                        }
-                        Event::UpdatedImage => {
-                            let event = body.decode::<UpdatedImageBody>()?;
-                            tracing::debug!(?event, "updated image");
+                        Event::Updated => {
+                            let event = body.decode::<UpdatedPeer>()?;
+                            tracing::debug!(?event.id, ?event.key, ?event.value, "updated");
                         }
                         event => {
                             tracing::debug!(?event);

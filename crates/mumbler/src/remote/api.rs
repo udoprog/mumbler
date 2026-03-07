@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{Color, Id, Transform, Vec3};
+use ::api::{Id, Key, Value};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -19,6 +21,8 @@ pub struct ConnectBody {
     pub version: u32,
     /// The context to connect to.
     pub room: Box<[u8]>,
+    /// The key-value pairs to immediately set for the peer.
+    pub values: HashMap<Key, Value>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -47,6 +51,17 @@ pub struct PongBody {
 pub struct JoinBody {
     /// The peer that joined the room.
     pub id: Id,
+    /// The key-value pairs that were immediately set for the peer.
+    pub values: HashMap<Key, Value>,
+}
+
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct JoinBodyRef<'a> {
+    /// The peer that joined the room.
+    pub id: Id,
+    /// The key-value pairs that were immediately set for the peer.
+    pub values: &'a HashMap<Key, Value>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -56,90 +71,52 @@ pub struct LeaveBody {
     pub id: Id,
 }
 
-/// A request to move.
+/// A request to update.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateTransform {
-    /// The transform (position and orientation) of the peer.
-    pub transform: Transform,
+pub struct UpdatePeer {
+    /// The key to update.
+    pub key: Key,
+    /// The value to update.
+    pub value: Value,
 }
 
-/// Information that a peer moved.
+/// A request to update.
+///
+/// Can only be used to encode.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct UpdatePeerRef<'a> {
+    /// The key to update.
+    pub key: Key,
+    /// The value to update.
+    pub value: &'a Value,
+}
+
+/// Information that a peer has updated.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdatedTransform {
-    /// The peer that moved.
+pub struct UpdatedPeer {
+    /// The peer that updated.
     pub id: Id,
-    /// The transform (position and orientation) of the peer.
-    pub transform: Transform,
+    /// The key that was updated.
+    pub key: Key,
+    /// The value that was updated.
+    pub value: Value,
 }
 
-/// Information that a peer looked at something.
-#[derive(Debug, Encode, Decode)]
+/// Information that a peer has updated.
+///
+/// Can only be used to encode.
+#[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
-pub struct UpdateLookAt {
-    /// The position the peer is looking at.
-    pub look_at: Option<Vec3>,
-}
-
-/// Information that a peer looked at something.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdatedLookAt {
-    /// The peer that looked at something.
+pub struct UpdatedPeerRef<'a> {
+    /// The peer that updated.
     pub id: Id,
-    /// The position the peer is looking at.
-    pub look_at: Option<Vec3>,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateImageBody {
-    /// The new image for the peer.
-    pub image: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdatedImageBody {
-    /// The peer that updated their image.
-    pub id: Id,
-    /// The new image for the peer.
-    pub image: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateColorBody {
-    /// The new color for the peer.
-    pub color: Color,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdatedColorBody {
-    /// The peer that updated their color.
-    pub id: Id,
-    /// The new color for the peer.
-    pub color: Color,
-}
-
-/// A request to update the display name.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateNameBody {
-    /// The new display name for the peer.
-    pub name: Option<String>,
-}
-
-/// Information that a peer updated their display name.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdatedNameBody {
-    /// The peer that updated their name.
-    pub id: Id,
-    /// The new display name for the peer.
-    pub name: Option<String>,
+    /// The key that was updated.
+    pub key: Key,
+    /// The value that was updated.
+    pub value: &'a Value,
 }
 
 api::define! {
@@ -165,6 +142,7 @@ api::define! {
 
     impl Broadcast for Join {
         impl Event for JoinBody;
+        impl Event for JoinBodyRef<'_>;
     }
 
     pub type Leave;
@@ -173,63 +151,17 @@ api::define! {
         impl Event for LeaveBody;
     }
 
-    pub type Move;
+    pub type Update;
 
-    impl Broadcast for Move {
-        impl Event for UpdateTransform;
+    impl Broadcast for Update {
+        impl Event for UpdatePeer;
+        impl Event for UpdatePeerRef<'_>;
     }
 
-    pub type Moved;
+    pub type Updated;
 
-    impl Broadcast for Moved {
-        impl Event for UpdatedTransform;
-    }
-
-    pub type LookAt;
-
-    impl Broadcast for LookAt {
-        impl Event for UpdateLookAt;
-    }
-
-    pub type LookedAt;
-
-    impl Broadcast for LookedAt {
-        impl Event for UpdatedLookAt;
-    }
-
-    pub type UpdateImage;
-
-    impl Broadcast for UpdateImage {
-        impl Event for UpdateImageBody;
-    }
-
-    pub type UpdatedImage;
-
-    impl Broadcast for UpdatedImage {
-        impl Event for UpdatedImageBody;
-    }
-
-    pub type UpdateColor;
-
-    impl Broadcast for UpdateColor {
-        impl Event for UpdateColorBody;
-    }
-
-    pub type UpdatedColor;
-
-    impl Broadcast for UpdatedColor {
-        impl Event for UpdatedColorBody;
-    }
-
-    pub type UpdateName;
-
-    impl Broadcast for UpdateName {
-        impl Event for UpdateNameBody;
-    }
-
-    pub type UpdatedName;
-
-    impl Broadcast for UpdatedName {
-        impl Event for UpdatedNameBody;
+    impl Broadcast for Updated {
+        impl Event for UpdatedPeer;
+        impl Event for UpdatedPeerRef<'_>;
     }
 }
