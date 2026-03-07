@@ -6,6 +6,7 @@ use web_sys::{File, HtmlInputElement, Url};
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::log;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -22,6 +23,7 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     SelectColor(api::Color),
     SelectColorResult(Result<Packet<api::SelectColor>, ws::Error>),
+    ContextUpdate(log::Log),
 }
 
 #[derive(Properties, PartialEq)]
@@ -37,6 +39,8 @@ pub(crate) struct Settings {
     file: Option<File>,
     preview_url: Option<String>,
     error: Option<String>,
+    log: log::Log,
+    _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
     _file_reader: Option<FileReader>,
     upload_image: ws::Request,
@@ -52,6 +56,11 @@ impl Component for Settings {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
+        let (log, _log_handle) = ctx
+            .link()
+            .context::<log::Log>(ctx.link().callback(Msg::ContextUpdate))
+            .expect("ErrorLog context not found");
+
         let (state, _state_change) = ctx
             .props()
             .ws
@@ -65,6 +74,8 @@ impl Component for Settings {
             file: None,
             preview_url: None,
             error: None,
+            log,
+            _log_handle,
             _state_change,
             _file_reader: None,
             upload_image: ws::Request::new(),
@@ -84,7 +95,7 @@ impl Component for Settings {
             Ok(changed) => changed,
             Err(error) => {
                 self.error = Some(error.to_string());
-                tracing::error!(%error, "Failed to update settings");
+                self.log.error("settings::update", &error);
                 true
             }
         }
@@ -346,6 +357,10 @@ impl Settings {
                 let response = result.decode()?;
                 self.color = response.color;
                 Ok(true)
+            }
+            Msg::ContextUpdate(log) => {
+                self.log = log;
+                Ok(false)
             }
         }
     }

@@ -3152,6 +3152,7 @@ dependencies = [
  "api",
  "gloo",
  "musli-web",
+ "slab",
  "tracing",
  "tracing-wasm",
  "url",

@@ -3,27 +3,19 @@
 mod components;
 mod error;
 mod images;
+mod log;
 
+use components::Route;
 use musli_web::web03::prelude::*;
 use tracing::Level;
 use tracing_wasm::WASMLayerConfigBuilder;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Routable)]
-enum Route {
-    #[at("/")]
-    Map,
-    #[at("/settings")]
-    Settings,
-    #[not_found]
-    #[at("/404")]
-    NotFound,
-}
-
 struct App {
     ws: ws::Service,
     state: ws::State,
+    log: log::Log,
     _state_listener: ws::StateListener,
 }
 
@@ -63,6 +55,7 @@ impl Component for App {
         Self {
             ws,
             state,
+            log: log::Log::new(),
             _state_listener,
         }
     }
@@ -85,17 +78,20 @@ impl Component for App {
         let state = self.state;
 
         html! {
-            <BrowserRouter>
-                <Switch<Route> render={move |route| switch(route, &ws, state)} />
-            </BrowserRouter>
+            <ContextProvider<log::Log> context={self.log.clone()}>
+                <BrowserRouter>
+                    <Switch<Route> render={move |route| switch(route, &ws, state)} />
+                </BrowserRouter>
+            </ContextProvider<log::Log>>
         }
     }
 }
 
 fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     let component = match route {
-        Route::Map => html!(<components::Map {ws} />),
-        Route::Settings => html!(<components::Settings {ws} />),
+        Route::Map => html!(<components::Map ws={ws.clone()} />),
+        Route::Settings => html!(<components::Settings ws={ws.clone()} />),
+        Route::Log => html!(<components::Log />),
         Route::NotFound => {
             html! {
                 <div id="content" class="container">{"There is nothing here"}</div>
@@ -123,10 +119,7 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     html! {
         <div class="container">
             <div class="status">
-                <section class="navigation">
-                    <Link<Route> to={Route::Map} classes={classes!((route == Route::Map).then_some("active"))}>{"Map"}</Link<Route>>
-                    <Link<Route> to={Route::Settings} classes={classes!((route == Route::Settings).then_some("active"))}>{"Settings"}</Link<Route>>
-                </section>
+                <components::Navigation route={route} />
                 <components::MumbleStatus ws={ws.clone()} />
                 <section class="connection">
                     {connected}

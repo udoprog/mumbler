@@ -1,0 +1,71 @@
+.log {
+    &-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1em;
+
+        h2 {
+            margin: 0;
+            color: var(--heading-color);
+        }
+    }
+
+    &-actions {
+        display: flex;
+        gap: 0.5em;
+    }
+
+    &-empty {
+        text-align: center;
+        color: var(--text-color-muted);
+        font-style: italic;
+        padding: 2em;
+    }
+
+    &-entries {
+        display: flex;
+        flex-direction: column;
+    }
+
+    &-entry {
+        border-radius: $border-radius;
+        padding: 0.75em;
+        border-left: 3px solid;
+
+        &.severity-info {
+            background-color: var(--info-background-color);
+            border-left-color: var(--info-color);
+        }
+
+        &.severity-error {
+            background-color: var(--danger-background-color);
+            border-left-color: var(--danger-color);
+        }
+
+        &-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5em;
+            font-size: 0.85em;
+        }
+
+        &-component {
+            font-weight: bold;
+            color: var(--link-color);
+        }
+
+        &-time {
+            color: var(--text-color-muted);
+            font-family: "Courier New", Courier, monospace;
+        }
+
+        &-message {
+            color: var(--text-color);
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.9em;
+            word-break: break-word;
+        }
+    }
+}

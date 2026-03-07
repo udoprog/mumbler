@@ -6,6 +6,8 @@ $margin: 10px;
 $border-radius: 4px;
 $border-radius2: 8px;
 
+@import "_log";
+
 :root {
     --background-color: #121212;
     --surface-color: #1e1e1e;
@@ -26,6 +28,8 @@ $border-radius2: 8px;
     --danger-background-color: #2e1e1e;
     --success-color: #4caf50;
     --warning-color: #ffcc00;
+    --info-color: #3b82f6;
+    --info-background-color: #1e2a3b;
 }
 
 body {
@@ -214,11 +218,34 @@ canvas#map {
         text-decoration: none;
         font-weight: bold;
         transition: color 0.15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4em;
 
         &.active,
         &:hover {
             color: var(--link-hover);
         }
+    }
+
+}
+
+.badge {
+    color: white;
+    font-size: 0.75em;
+    font-weight: bold;
+    padding: 0.2em 0.5em;
+    border-radius: 10px;
+    min-width: 1.5em;
+    text-align: center;
+    display: inline-block;
+
+    &.error {
+        background-color: var(--danger-color);
+    }
+
+    &.info {
+        background-color: var(--info-color);
     }
 }
 

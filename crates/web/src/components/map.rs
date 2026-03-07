@@ -14,6 +14,7 @@ use yew::prelude::*;
 
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
+use crate::log;
 use crate::ws;
 
 const ZOOM_FACTOR: f64 = 1.2;
@@ -148,6 +149,8 @@ pub(crate) struct Map {
     _state_change: ws::StateListener,
     _remote_avatar_listener: ws::Listener,
     state: ws::State,
+    log: log::Log,
+    _log_handle: ContextHandle<log::Log>,
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
     /// World configuration.
@@ -191,6 +194,7 @@ pub(crate) enum Msg {
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
+    LogUpdate(log::Log),
 }
 
 impl From<ImageMessage> for Msg {
@@ -210,6 +214,11 @@ impl Component for Map {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
+        let (log, _log_handle) = ctx
+            .link()
+            .context::<log::Log>(ctx.link().callback(Msg::LogUpdate))
+            .expect("ErrorLog context not found");
+
         let (state, _state_change) = ctx
             .props()
             .ws
@@ -227,6 +236,8 @@ impl Component for Map {
             _remote_avatar_listener: remote_avatar_listener,
             _state_change,
             state,
+            log,
+            _log_handle,
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             world: api::World::zero(),
@@ -252,12 +263,12 @@ impl Component for Map {
             self.resize_canvas();
 
             if let Err(error) = self.setup_resizer(ctx) {
-                tracing::error!(%error, "Failed to setup resize observer");
+                self.log.error("map::setup_resizer", error);
             }
         }
 
         if let Err(error) = self.redraw() {
-            tracing::error!(%error, "Failed to redraw map");
+            self.log.error("map::redraw", error);
         }
     }
 
@@ -271,7 +282,7 @@ impl Component for Map {
         let changed = match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                tracing::error!(%error, "Map error");
+                self.log.error("map::update", &error);
                 false
             }
         };
@@ -352,11 +363,7 @@ impl Map {
                 self.remote_avatars = initialize.remote_avatars;
 
                 self.load_initialize_images(ctx);
-
-                if let Err(error) = self.redraw() {
-                    tracing::error!(%error, "Failed to redraw map");
-                }
-
+                self.redraw()?;
                 Ok(true)
             }
             Msg::AvatarsUpdated(result) => {
@@ -460,6 +467,10 @@ impl Map {
             Msg::AnimationFrame => {
                 self.interpolate_movement();
                 self.redraw()?;
+                Ok(false)
+            }
+            Msg::LogUpdate(log) => {
+                self.log = log;
                 Ok(false)
             }
         }
