@@ -187,15 +187,10 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
         connect.as_str()
     };
 
-    let player;
-
-    {
-        let mut remote = b.client_state().await;
-        remote.peers.clear();
-        player = remote.player.clone();
-    }
-
-    b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::RemoteLost));
+    let player = {
+        let remote = b.client_state().await;
+        remote.player.clone()
+    };
 
     tracing::info!(?host, ?port, "Connecting to mumbler-server");
 
@@ -310,7 +305,14 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
     let (mut connect, mut enabled) = settings().await?;
 
-    let build = |connect: Option<&str>, enabled: bool| {
+    let build = async |connect: Option<&str>, enabled: bool| {
+        {
+            let mut remote = b.client_state().await;
+            remote.peers.clear();
+
+            b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::RemoteLost));
+        }
+
         if enabled {
             if let Some(connect) = &connect {
                 tracing::info!("Restarting");
@@ -328,7 +330,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
         }
     };
 
-    let mut future = pin!(build(connect.as_deref(), enabled));
+    let mut future = pin!(build(connect.as_deref(), enabled).await);
     let mut reconnect = pin!(Fuse::empty());
 
     loop {
@@ -346,15 +348,13 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
                 tracing::info!("Reconnecting in 5s");
             }
             _ = reconnect.as_mut() => {
-                if let Some(connect) = &connect {
-                    b.notify_info(COMPONENT, "Reconnecting to server");
-                    future.set(Fuse::new(run(b.clone(), connect.clone())));
-                }
+                b.notify_info(COMPONENT, "Reconnecting to server");
+                future.set(build(connect.as_deref(), enabled).await);
             }
             () = b.client_restart_wait() => {
                 (connect, enabled) = settings().await?;
                 reconnect.set(Fuse::empty());
-                future.set(build(connect.as_deref(), enabled));
+                future.set(build(connect.as_deref(), enabled).await);
             }
         }
     }
