@@ -16,13 +16,17 @@ pub(crate) use self::navigation::{Navigation, Route};
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
-pub struct IconProps {
-    pub name: String,
+pub(crate) struct IconProps {
+    pub(crate) name: String,
+    #[prop_or_default]
+    pub(crate) title: Option<String>,
 }
 
 #[function_component(Icon)]
-fn icon(props: &IconProps) -> Html {
+pub(crate) fn icon(props: &IconProps) -> Html {
+    let title = props.title.clone();
+
     html! {
-        <span class={classes!("icon", props.name.clone())} />
+        <span class={classes!("icon", props.name.clone())} {title} />
     }
 }

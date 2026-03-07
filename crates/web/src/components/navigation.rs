@@ -22,7 +22,7 @@ pub struct NavigationProps {
 }
 
 #[function_component(Navigation)]
-pub fn navigation(props: &NavigationProps) -> Html {
+pub(crate) fn navigation(props: &NavigationProps) -> Html {
     let log_context = use_context::<log::Log>().expect("ErrorLog context not found");
     let error_count = use_state(|| log_context.entries().len());
 

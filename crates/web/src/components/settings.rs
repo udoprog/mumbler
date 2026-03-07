@@ -38,7 +38,6 @@ pub(crate) struct Settings {
     images: Vec<api::Image>,
     file: Option<File>,
     preview_url: Option<String>,
-    error: Option<String>,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
@@ -73,7 +72,6 @@ impl Component for Settings {
             images: Vec::new(),
             file: None,
             preview_url: None,
-            error: None,
             log,
             _log_handle,
             _state_change,
@@ -94,7 +92,6 @@ impl Component for Settings {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.error = Some(error.to_string());
                 self.log.error("settings::update", &error);
                 true
             }
@@ -137,16 +134,8 @@ impl Component for Settings {
 
         let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
 
-        let error = self.error.as_ref().map(|e| {
-            html! {
-                <div class="banner error">{e}</div>
-            }
-        });
-
         html! {
             <div class="settings rows">
-                {error}
-
                 <h2>{"Select Avatar:"}</h2>
 
                 if let Some(url) = &self.preview_url {

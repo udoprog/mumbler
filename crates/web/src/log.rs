@@ -15,7 +15,7 @@ pub enum Severity {
 }
 
 impl Severity {
-    pub fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Severity::Info => "info",
             Severity::Error => "error",
@@ -32,7 +32,7 @@ pub struct ErrorEntry {
 }
 
 impl ErrorEntry {
-    pub fn formatted_time(&self) -> String {
+    pub(crate) fn formatted_time(&self) -> String {
         let date = Date::new(&self.timestamp.into());
         let hours = date.get_hours();
         let minutes = date.get_minutes();
@@ -74,7 +74,7 @@ impl Drop for ListenerHandle {
 }
 
 impl Log {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(ErrorLogInner {
                 entries: VecDeque::new(),
@@ -84,7 +84,7 @@ impl Log {
         }
     }
 
-    pub fn add_listener(&self, callback: Callback<usize>) -> ListenerHandle {
+    pub(crate) fn add_listener(&self, callback: Callback<usize>) -> ListenerHandle {
         let mut inner = self.inner.borrow_mut();
         let id = inner.listeners.insert(callback);
 
@@ -103,7 +103,7 @@ impl Log {
         }
     }
 
-    pub fn log(&self, component: impl fmt::Display, error: impl fmt::Display, severity: Severity) {
+    fn log(&self, component: impl fmt::Display, error: impl fmt::Display, severity: Severity) {
         let timestamp = Self::now();
         let entry = ErrorEntry {
             timestamp,
@@ -125,19 +125,19 @@ impl Log {
     }
 
     #[allow(unused)]
-    pub fn log_info(&self, component: impl fmt::Display, message: impl fmt::Display) {
+    pub(crate) fn log_info(&self, component: impl fmt::Display, message: impl fmt::Display) {
         self.log(component, message, Severity::Info);
     }
 
-    pub fn error(&self, component: impl fmt::Display, error: impl fmt::Display) {
+    pub(crate) fn error(&self, component: impl fmt::Display, error: impl fmt::Display) {
         self.log(component, error, Severity::Error);
     }
 
-    pub fn entries(&self) -> Vec<ErrorEntry> {
+    pub(crate) fn entries(&self) -> Vec<ErrorEntry> {
         self.inner.borrow().entries.iter().cloned().collect()
     }
 
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         let mut inner = self.inner.borrow_mut();
         inner.entries.clear();
         drop(inner);

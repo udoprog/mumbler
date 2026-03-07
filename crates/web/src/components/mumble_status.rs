@@ -88,7 +88,7 @@ impl Component for MumbleStatus {
         };
 
         html! {
-            <section class="mumble">
+            <section class="mumble control-group">
                 <Icon name="mumble" />
                 <button
                     class="btn square sm secondary"

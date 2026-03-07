@@ -5,7 +5,7 @@ mod error;
 mod images;
 mod log;
 
-use components::Route;
+use components::{Icon, Route};
 use musli_web::web03::prelude::*;
 use tracing::Level;
 use tracing_wasm::WASMLayerConfigBuilder;
@@ -101,18 +101,18 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
 
     let connected;
     let indicator;
-    let indicator_class;
+    let title;
 
     match state {
         ws::State::Open => {
-            connected = "Connected";
-            indicator = "✔";
-            indicator_class = "success";
+            connected = "signal";
+            indicator = None;
+            title = "Connected";
         }
         _ => {
-            connected = "Disconnected";
-            indicator = "⚠";
-            indicator_class = "warning";
+            connected = "signal-slash";
+            indicator = Some(("⚠", "warning"));
+            title = "Not connected";
         }
     }
 
@@ -121,9 +121,12 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
             <div class="status">
                 <components::Navigation route={route} />
                 <components::MumbleStatus ws={ws.clone()} />
-                <section class="connection">
-                    {connected}
-                    <span class={classes!("connection-indicator", indicator_class)}>{indicator}</span>
+                <section class="connection control-group" {title}>
+                    <Icon name={connected} />
+
+                    if let Some((indicator, indicator_class)) = indicator {
+                        <span class={classes!("connection-indicator", indicator_class)}>{indicator}</span>
+                    }
                 </section>
             </div>
 

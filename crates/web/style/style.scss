@@ -11,6 +11,7 @@ $border-radius2: 8px;
 :root {
     --background-color: #121212;
     --surface-color: #1e1e1e;
+    --control-color: #2a2a2a;
     --text-color: #d9d9d9;
     --text-color-inverted: #121212;
     --text-color-muted: #888;
@@ -20,10 +21,10 @@ $border-radius2: 8px;
     --border-color: #333;
     --btn-color: #4caf50;
     --btn-color-disabled: #888;
-    --btn-secondary-bg: #333;
-    --btn-secondary-bg-hover: #444;
-    --btn-secondary-bg-disabled: #2a2a2a;
-    --btn-secondary-border: #555;
+    --secondary-bg: #333;
+    --secondary-bg-hover: #444;
+    --secondary-bg-disabled: #2a2a2a;
+    --secondary-border: #555;
     --danger-color: #e05252;
     --danger-background-color: #2e1e1e;
     --success-color: #4caf50;
@@ -42,6 +43,17 @@ body {
     font-family: "Courier New", Courier, monospace;
     background-color: var(--surface-color);
     overflow-x: auto;
+}
+
+.control-group {
+    background-color: var(--control-color);
+    border: 1px solid var(--border-color);
+    border-radius: $border-radius;
+    padding: 0.4em 0.6em;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    height: 24px;
 }
 
 .rows {
@@ -91,21 +103,6 @@ body {
     &.danger {
         background-color: var(--danger-color);
         color: var(--text-color-inverted);
-    }
-
-    &.secondary {
-        background-color: var(--btn-secondary-bg);
-        color: var(--text-color);
-        border: 1px solid var(--btn-secondary-border);
-
-        &:hover:not(:disabled) {
-            background-color: var(--btn-secondary-bg-hover);
-            border-color: var(--link-color);
-        }
-
-        &:disabled {
-            background-color: var(--btn-secondary-bg-disabled);
-        }
     }
 
     &.sm {
@@ -179,9 +176,6 @@ canvas#map {
     }
 
     .mumble {
-        display: flex;
-        align-items: center;
-        gap: 0.5em;
         margin-left: auto;
 
         .mumble-status {
