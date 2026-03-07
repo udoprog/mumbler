@@ -2,6 +2,8 @@ use yew::prelude::*;
 
 use crate::log;
 
+use super::Icon;
+
 #[function_component(Log)]
 pub(crate) fn log_component() -> Html {
     let log_context = use_context::<log::Log>().expect("ErrorLog context not found");
@@ -42,10 +44,20 @@ pub(crate) fn log_component() -> Html {
                 <div class="log-entries">
                     {for entries.iter().rev().map(|entry| {
                         let severity_class = format!("log-entry severity-{}", entry.severity.as_str());
+
+                        let icon = match entry.component.as_str() {
+                            "remote-client" => Some(html!(<Icon name="remote" title="Remote Client" />)),
+                            "mumble-link" => Some(html!(<Icon name="mumble" title="Mumble Link" />)),
+                            _ => None,
+                        };
+
                         html! {
                             <div class={severity_class}>
-                                <div class="log-entry-header">
-                                    <span class="log-component">{&entry.component}</span>
+                                <div class="log-header">
+                                    <span class="log-component">
+                                        {icon}
+                                        <span>{&entry.component}</span>
+                                    </span>
                                     <span class="log-time">{entry.formatted_time()}</span>
                                 </div>
                                 <div class="log-message">{&entry.error}</div>

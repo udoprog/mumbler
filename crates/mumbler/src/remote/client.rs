@@ -3,7 +3,7 @@ use core::task::{Context, Poll};
 
 use std::io;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use musli_core::Encode;
 use musli_core::mode::Binary;
 use musli_web::api::{Broadcast, Event};
@@ -202,9 +202,7 @@ impl Client {
     where
         A: ToSocketAddrs,
     {
-        let stream = TcpStream::connect(addr)
-            .await
-            .context("connecting to server")?;
+        let stream = TcpStream::connect(addr).await?;
 
         Ok(Self::from_stream(stream))
     }

@@ -1,11 +1,14 @@
 use core::mem;
 use core::pin::pin;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use mumblelink::{Link, Position};
 use tokio::time::{self, Duration};
 
 use crate::Backend;
+
+/// Component name for notifications.
+const COMPONENT: &str = "mumble-link";
 
 /// Number of mumble updates per second.
 const UPDATES_PER_SECOND: u64 = 20;
@@ -15,7 +18,7 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
     let mut enabled = b.mumblelink_state().await.enabled;
 
     let mut link = if enabled {
-        Link::new()?
+        Link::new().context("Creating link")?
     } else {
         Link::disabled()
     };
@@ -61,12 +64,16 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
                     if enabled {
                         update_interval.reset();
                         update_all_interval.reset();
+                        b.notify_info(COMPONENT, "Mumblelink enabled");
+                    } else {
+                        b.notify_info(COMPONENT, "Mumblelink disabled");
                     }
                 }
 
                 if mem::take(&mut state.restart) {
+                    b.notify_info(COMPONENT, "Mumblelink restarted");
                     tracing::info!("restarting link");
-                    link.reconnect()?;
+                    link.reconnect().context("Reconnecting link")?;
                     setup_link(&mut link, pos);
                 }
 
@@ -91,6 +98,7 @@ pub async fn managed(b: Backend) -> Result<()> {
             result = future.as_mut(), if active => {
                 if let Err(error) = result {
                     tracing::error!(%error, "mumblelink errored");
+                    b.notify_error(COMPONENT, format_args!("{error:#}"));
                 }
 
                 tracing::info!("mumblelink stopped, restarting in 5s");
@@ -98,6 +106,7 @@ pub async fn managed(b: Backend) -> Result<()> {
                 active = false;
             }
             _ = reconnect.as_mut(), if !active => {
+                b.notify_info(COMPONENT, "Reconnecting");
                 future.set(run(b.clone()));
                 active = true;
             }

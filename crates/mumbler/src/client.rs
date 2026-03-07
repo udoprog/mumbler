@@ -2,17 +2,20 @@ use core::pin::{Pin, pin};
 use core::time::Duration;
 use core::{future, mem};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use api::Transform;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::BackendEvent;
+use crate::backend::RemoteAvatarEvent;
 use crate::remote::api::{
     Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedLookAt,
     UpdatedNameBody, UpdatedTransform,
 };
 use crate::remote::{Client, Peer};
+
+const COMPONENT: &str = "remote-client";
 
 async fn handle_peer(
     peer: &mut Peer,
@@ -43,7 +46,9 @@ async fn handle_peer(
                     peer.transform = Transform::origin();
                 }
 
-                b.broadcast(BackendEvent::Join { peer_id: event.id });
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
+                    peer_id: event.id,
+                }));
             }
             Event::Leave => {
                 let event = body.decode::<LeaveBody>()?;
@@ -54,7 +59,9 @@ async fn handle_peer(
                     remote.peers.remove(&event.id);
                 }
 
-                b.broadcast(BackendEvent::Leave { peer_id: event.id });
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Leave {
+                    peer_id: event.id,
+                }));
             }
             Event::Moved => {
                 let event = body.decode::<UpdatedTransform>()?;
@@ -68,10 +75,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::Moved {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Moved {
                     peer_id: event.id,
                     transform: event.transform,
-                });
+                }));
             }
             Event::LookedAt => {
                 let event = body.decode::<UpdatedLookAt>()?;
@@ -85,10 +92,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::LookAt {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::LookAt {
                     peer_id: event.id,
                     look_at: event.look_at,
-                });
+                }));
             }
             Event::UpdatedImage => {
                 let event = body.decode::<UpdatedImageBody>()?;
@@ -115,10 +122,12 @@ async fn handle_peer(
                     }
                 };
 
-                b.broadcast(BackendEvent::ImageUpdated {
-                    peer_id: event.id,
-                    image,
-                });
+                b.broadcast(BackendEvent::RemoteAvatar(
+                    RemoteAvatarEvent::ImageUpdated {
+                        peer_id: event.id,
+                        image,
+                    },
+                ));
             }
             Event::UpdatedColor => {
                 let event = body.decode::<UpdatedColorBody>()?;
@@ -132,10 +141,12 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::ColorUpdated {
-                    peer_id: event.id,
-                    color: event.color,
-                });
+                b.broadcast(BackendEvent::RemoteAvatar(
+                    RemoteAvatarEvent::ColorUpdated {
+                        peer_id: event.id,
+                        color: event.color,
+                    },
+                ));
             }
             Event::UpdatedName => {
                 let event = body.decode::<UpdatedNameBody>()?;
@@ -149,10 +160,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::NameUpdated {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::NameUpdated {
                     peer_id: event.id,
                     name: event.name,
-                });
+                }));
             }
             event => {
                 tracing::debug!(?event);
@@ -189,11 +200,14 @@ pub(crate) async fn run(b: Backend, connect: Option<String>) -> Result<()> {
         player = remote.player.clone();
     }
 
-    b.broadcast(BackendEvent::RemoteLost);
+    b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::RemoteLost));
 
     tracing::info!(?host, ?port, "Connecting to mumbler-server");
 
-    let client = Client::connect((host, port)).await?;
+    let client = Client::connect((host, port))
+        .await
+        .with_context(|| anyhow!("Connecting to {host}:{port}"))?;
+
     let addr = client.addr()?;
 
     tracing::info!(?addr, "Connected");
@@ -301,15 +315,18 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
     let (mut connect, mut enabled) = settings().await?;
 
-    let mut conn_future = pin!(run(b.clone(), connect.clone()));
+    let mut future = pin!(run(b.clone(), connect.clone()));
     let mut reconnect = pin!(time::sleep(Duration::from_secs(0)));
     let mut active = enabled;
 
     loop {
         tokio::select! {
-            result = conn_future.as_mut(), if active => {
+            result = future.as_mut(), if active => {
                 if let Err(error) = result {
                     tracing::error!(%error, "Client errored");
+                    b.notify_error(COMPONENT, format_args!("{error:#}"));
+                } else {
+                    b.notify_info(COMPONENT, "Disconnected from server");
                 }
 
                 active = false;
@@ -317,18 +334,23 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
                 tracing::info!("Client disconnected, reconnecting in 5s");
             }
             _ = reconnect.as_mut(), if !active && enabled => {
-                conn_future.set(run(b.clone(), connect.clone()));
-                reconnect.as_mut().reset(Instant::now() + Duration::from_secs(0));
+                b.notify_info(COMPONENT, "Reconnecting to server");
+                future.set(run(b.clone(), connect.clone()));
                 active = true;
             }
             () = b.client_restart_wait() => {
                 (connect, enabled) = settings().await?;
 
+                if enabled {
+                    b.notify_info(COMPONENT, "Restarting");
+                } else {
+                    b.notify_info(COMPONENT, "Disabled");
+                }
+
                 tracing::info!(?connect, %enabled, "Remote client config updated");
 
                 if enabled {
-                    conn_future.set(run(b.clone(), connect.clone()));
-                    reconnect.as_mut().reset(Instant::now() + Duration::from_secs(0));
+                    future.set(run(b.clone(), connect.clone()));
                     active = true;
                 } else {
                     active = false;

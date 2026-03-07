@@ -17,11 +17,13 @@ struct App {
     state: ws::State,
     log: log::Log,
     _state_listener: ws::StateListener,
+    _notification_listener: ws::Listener,
 }
 
 enum Msg {
     Error(error::Error),
     StateChanged(ws::State),
+    Notification(Result<ws::Packet<api::ServerNotification>, ws::Error>),
 }
 
 impl From<error::Error> for Msg {
@@ -51,12 +53,17 @@ impl Component for App {
             .handle()
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
+        let _notification_listener = ws
+            .handle()
+            .on_broadcast::<api::ServerNotification>(ctx.link().callback(Msg::Notification));
+
         ws.connect();
         Self {
             ws,
             state,
             log: log::Log::new(),
             _state_listener,
+            _notification_listener,
         }
     }
 
@@ -69,6 +76,20 @@ impl Component for App {
             Msg::StateChanged(state) => {
                 self.state = state;
                 true
+            }
+            Msg::Notification(result) => {
+                match result.and_then(|p| p.decode().map_err(Into::into)) {
+                    Ok(api::ServerNotificationBody::Info { component, message }) => {
+                        self.log.log_info(component, message);
+                    }
+                    Ok(api::ServerNotificationBody::Error { component, message }) => {
+                        self.log.error(component, message);
+                    }
+                    Err(e) => {
+                        tracing::error!("notification decode error: {e}");
+                    }
+                }
+                false
             }
         }
     }

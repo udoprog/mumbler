@@ -515,12 +515,21 @@ pub struct RemoteToggleResponse {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct SetRemoteServerRequest {
-    pub server: String,
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct SetRemoteServerResponse;
+pub struct SetRemoteServerResponse {
+    pub server: Option<String>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub enum ServerNotificationBody {
+    Info { component: String, message: String },
+    Error { component: String, message: String },
+}
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -659,5 +668,11 @@ api::define! {
 
     impl Broadcast for RemoteAvatarUpdate {
         impl Event for RemoteAvatarUpdateBody;
+    }
+
+    pub type ServerNotification;
+
+    impl Broadcast for ServerNotification {
+        impl Event for ServerNotificationBody;
     }
 }

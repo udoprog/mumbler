@@ -1,4 +1,12 @@
 .log {
+    &-component {
+        font-weight: bold;
+        color: var(--link-color);
+        display: flex;
+        flex-direction: row;
+        gap: 0.5em;
+    }
+
     &-header {
         display: flex;
         justify-content: space-between;
@@ -28,8 +36,30 @@
         flex-direction: column;
     }
 
+    &-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5em;
+        font-size: 0.85em;
+    }
+
+    &-time {
+        color: var(--text-color-muted);
+        font-family: "Courier New", Courier, monospace;
+    }
+
+    &-message {
+        color: var(--text-color);
+        font-family: "Courier New", Courier, monospace;
+        font-size: 0.75em;
+        word-break: break-word;
+    }
+
     &-entry {
-        border-radius: $border-radius;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25em;
         padding: 0.75em;
         border-left: 3px solid;
 
@@ -41,31 +71,6 @@
         &.severity-error {
             background-color: var(--danger-background-color);
             border-left-color: var(--danger-color);
-        }
-
-        &-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.5em;
-            font-size: 0.85em;
-        }
-
-        &-component {
-            font-weight: bold;
-            color: var(--link-color);
-        }
-
-        &-time {
-            color: var(--text-color-muted);
-            font-family: "Courier New", Courier, monospace;
-        }
-
-        &-message {
-            color: var(--text-color);
-            font-family: "Courier New", Courier, monospace;
-            font-size: 0.9em;
-            word-break: break-word;
         }
     }
 }

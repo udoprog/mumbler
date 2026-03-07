@@ -15,6 +15,7 @@ use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
 use crate::backend::BackendEvent;
+use crate::backend::RemoteAvatarEvent;
 
 struct Handler {
     backend: Backend,
@@ -250,34 +251,31 @@ pub(super) async fn entry(
 
                         tracing::debug!(?event, "backend event");
 
-                        let event = match event {
-                            BackendEvent::RemoteLost => {
-                                api::RemoteAvatarUpdateBody::RemoteLost
-                            },
-                            BackendEvent::Join { peer_id } => {
-                                api::RemoteAvatarUpdateBody::Join { peer_id }
-                            },
-                            BackendEvent::Leave { peer_id } => {
-                                api::RemoteAvatarUpdateBody::Leave { peer_id }
-                            },
-                            BackendEvent::Moved { peer_id, transform } => {
-                                api::RemoteAvatarUpdateBody::Move { peer_id, transform }
-                            },
-                            BackendEvent::LookAt { peer_id, look_at } => {
-                                api::RemoteAvatarUpdateBody::LookAt { peer_id, look_at }
-                            },
-                            BackendEvent::ImageUpdated { peer_id, image } => {
-                                api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image }
-                            },
-                            BackendEvent::ColorUpdated { peer_id, color } => {
-                                api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color }
-                            },
-                            BackendEvent::NameUpdated { peer_id, name } => {
-                                api::RemoteAvatarUpdateBody::NameUpdated { peer_id, name }
+                        let result = match event {
+                            BackendEvent::Notification { error, component, message } => {
+                                let body = if error {
+                                    api::ServerNotificationBody::Error { component, message }
+                                } else {
+                                    api::ServerNotificationBody::Info { component, message }
+                                };
+                                server.broadcast(body).context("send notification")
+                            }
+                            BackendEvent::RemoteAvatar(body) => {
+                                let body = match body {
+                                    RemoteAvatarEvent::RemoteLost => api::RemoteAvatarUpdateBody::RemoteLost,
+                                    RemoteAvatarEvent::Join { peer_id } => api::RemoteAvatarUpdateBody::Join { peer_id },
+                                    RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
+                                    RemoteAvatarEvent::Moved { peer_id, transform } => api::RemoteAvatarUpdateBody::Move { peer_id, transform },
+                                    RemoteAvatarEvent::LookAt { peer_id, look_at } => api::RemoteAvatarUpdateBody::LookAt { peer_id, look_at },
+                                    RemoteAvatarEvent::ImageUpdated { peer_id, image } => api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image },
+                                    RemoteAvatarEvent::ColorUpdated { peer_id, color } => api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color },
+                                    RemoteAvatarEvent::NameUpdated { peer_id, name } => api::RemoteAvatarUpdateBody::NameUpdated { peer_id, name },
+                                };
+                                server.broadcast(body).context("send broadcast")
                             }
                         };
 
-                        (server.broadcast(event).context("send broadcast"), false)
+                        (result, false)
                     }
                 };
 

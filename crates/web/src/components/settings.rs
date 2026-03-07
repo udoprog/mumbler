@@ -63,7 +63,7 @@ pub(crate) struct Settings {
     _select_color: ws::Request,
     _update_name: ws::Request,
     remote_server: String,
-    _set_remote_server: ws::Request,
+    set_remote_server: ws::Request,
 }
 
 impl From<ImageMessage> for Msg {
@@ -110,7 +110,7 @@ impl Component for Settings {
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
             remote_server: String::new(),
-            _set_remote_server: ws::Request::new(),
+            set_remote_server: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -168,6 +168,7 @@ impl Component for Settings {
             .then(|| ctx.link().callback(Msg::AvatarImageClear));
 
         let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
+        let is_remote_pending = self.set_remote_server.is_pending();
 
         html! {
             <div class="row">
@@ -238,7 +239,12 @@ impl Component for Settings {
                             placeholder="host[:port]"
                             value={self.remote_server.clone()}
                             onchange={ctx.link().callback(Msg::ServerChanged)}
+                            disabled={is_remote_pending}
                             />
+
+                        if is_remote_pending {
+                            <div class="loading">{"Saving ..."}</div>
+                        }
                     </section>
                 </div>
 
@@ -464,19 +470,23 @@ impl Settings {
                 Ok(false)
             }
             Msg::SetRemoteServer(server) => {
-                self._set_remote_server = ctx
+                let server = server.trim();
+                let server = (!server.is_empty()).then_some(server.to_owned());
+
+                self.set_remote_server = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::SetRemoteServerRequest { server })
                     .on_packet(ctx.link().callback(Msg::SetRemoteServerResult))
                     .send();
+
                 Ok(false)
             }
             Msg::SetRemoteServerResult(result) => {
                 let result = result?;
                 let response = result.decode()?;
-                self.remote_server = response.server;
+                self.remote_server = response.server.unwrap_or_default();
                 Ok(true)
             }
             Msg::ImageLoaded(msg) => {

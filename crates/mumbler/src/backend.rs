@@ -1,3 +1,5 @@
+use core::fmt;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ const COLOR_CHANGED: u8 = 0b0000_1000;
 const NAME_CHANGED: u8 = 0b0001_0000;
 
 #[derive(Debug, Clone)]
-pub(crate) enum BackendEvent {
+pub(crate) enum RemoteAvatarEvent {
     RemoteLost,
     Join { peer_id: Id },
     Leave { peer_id: Id },
@@ -24,6 +26,16 @@ pub(crate) enum BackendEvent {
     ImageUpdated { peer_id: Id, image: Option<Id> },
     ColorUpdated { peer_id: Id, color: Color },
     NameUpdated { peer_id: Id, name: Option<String> },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BackendEvent {
+    RemoteAvatar(RemoteAvatarEvent),
+    Notification {
+        error: bool,
+        component: String,
+        message: String,
+    },
 }
 
 /// State for the backend.
@@ -226,6 +238,24 @@ impl Backend {
     /// Broadcast an event to all peers.
     pub(crate) fn broadcast(&self, ev: BackendEvent) {
         let _ = self.inner.broadcast.send(ev);
+    }
+
+    /// Broadcast an info notification to all connected web clients.
+    pub(crate) fn notify_info(&self, component: impl fmt::Display, message: impl fmt::Display) {
+        self.broadcast(BackendEvent::Notification {
+            error: false,
+            component: component.to_string(),
+            message: message.to_string(),
+        });
+    }
+
+    /// Broadcast an error notification to all connected web clients.
+    pub(crate) fn notify_error(&self, component: impl fmt::Display, message: impl fmt::Display) {
+        self.broadcast(BackendEvent::Notification {
+            error: true,
+            component: component.to_string(),
+            message: message.to_string(),
+        });
     }
 
     /// Receive the next event.

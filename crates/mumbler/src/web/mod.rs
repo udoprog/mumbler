@@ -333,7 +333,9 @@ async fn remote_toggle(
         .db()
         .set_config("remote/enabled", request.enabled)
         .await?;
+
     backend.restart_client();
+
     Ok(api::RemoteToggleResponse {
         enabled: request.enabled,
     })
@@ -343,14 +345,14 @@ async fn set_remote_server(
     backend: &Backend,
     request: api::SetRemoteServerRequest,
 ) -> Result<api::SetRemoteServerResponse> {
-    let server = request.server.trim();
-    let server = (!server.is_empty()).then_some(server).map(str::to_owned);
-
     backend
         .db()
-        .set_optional_config("remote/server", server)
+        .set_optional_config("remote/server", request.server.clone())
         .await?;
 
     backend.restart_client();
-    Ok(api::SetRemoteServerResponse)
+
+    Ok(api::SetRemoteServerResponse {
+        server: request.server.clone(),
+    })
 }
