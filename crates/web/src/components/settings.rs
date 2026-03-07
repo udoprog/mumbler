@@ -163,65 +163,69 @@ impl Component for Settings {
         let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
 
         html! {
-            <div class="settings rows">
-                <h2>{"Avatar Preview:"}</h2>
+            <div class="row">
+                <div class="col-8 rows">
+                    <h2>{"Avatar Name:"}</h2>
 
-                <section class="avatar-preview">
-                    <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
-                </section>
-
-                <h2>{"Avatar Name:"}</h2>
-
-                <section>
-                    <input
-                        id="avatar-name"
-                        type="text"
-                        placeholder="Enter avatar name"
-                        value={self.name.clone().unwrap_or_default()}
-                        onchange={ctx.link().callback(Msg::NameChanged)}
-                        />
-                </section>
-
-                <h2>{"Select Avatar:"}</h2>
-
-                if let Some(url) = &self.preview_url {
-                    <section class="image-entry">
-                        <img src={url.clone()} alt="Preview" class="avatar" />
+                    <section>
+                        <input
+                            id="avatar-name"
+                            type="text"
+                            placeholder="Enter avatar name"
+                            value={self.name.clone().unwrap_or_default()}
+                            onchange={ctx.link().callback(Msg::NameChanged)}
+                            />
                     </section>
-                }
 
-                <section>
-                    <div class="btn-group">
-                        <label for="avatar-file" class={choose_classes} disabled={choose_disabled}>{"Upload image"}</label>
-                        <button onclick={ok} class={ok_classes}>{"Ok"}</button>
-                        <button onclick={cancel} class={cancel_classes}>{"Cancel"}</button>
+                    <h2>{"Select Avatar:"}</h2>
+
+                    if let Some(url) = &self.preview_url {
+                        <section class="image-entry">
+                            <img src={url.clone()} alt="Preview" class="avatar" />
+                        </section>
+                    }
+
+                    <section>
+                        <div class="btn-group">
+                            <label for="avatar-file" class={choose_classes} disabled={choose_disabled}>{"Upload image"}</label>
+                            <button onclick={ok} class={ok_classes}>{"Ok"}</button>
+                            <button onclick={cancel} class={cancel_classes}>{"Cancel"}</button>
+                        </div>
+
+                        <input
+                            id="avatar-file"
+                            class="hidden"
+                            title="Upload avatar image"
+                            type="file"
+                            accept="image/*"
+                            onchange={ctx.link().callback(Msg::AvatarImageSelected)}
+                            />
+                    </section>
+
+                    <div class="gallery">
+                        {for images}
                     </div>
 
-                    <input
-                        id="avatar-file"
-                        class="hidden"
-                        title="Upload avatar image"
-                        type="file"
-                        accept="image/*"
-                        onchange={ctx.link().callback(Msg::AvatarImageSelected)}
-                        />
-                </section>
+                    <h2>{"Avatar Color:"}</h2>
 
-                <div class="gallery">
-                    {for images}
+                    <section class="color-picker">
+                        <label for="avatar-color">{"Select Color:"}</label>
+                        <input
+                            id="avatar-color"
+                            type="color"
+                            value={self.color.to_css_string()}
+                            onchange={ctx.link().callback(Msg::ColorChanged)}
+                            />
+                    </section>
                 </div>
 
-                <h2>{"Avatar Color:"}</h2>
+                <div class="col-4 rows">
+                    <h2>{"Avatar Preview:"}</h2>
 
-                <section class="color-picker">
-                    <label for="avatar-color">{"Select Color:"}</label>
-                    <input
-                        id="avatar-color"
-                        type="color"
-                        value={self.color.to_css_string()}
-                        onchange={ctx.link().callback(Msg::ColorChanged)}
-                        />
-                </section>
+                    <section class="avatar-preview">
+                        <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
+                    </section>
+                </div>
             </div>
         }
     }

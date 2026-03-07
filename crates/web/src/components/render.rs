@@ -238,15 +238,20 @@ pub(crate) fn draw_avatar_token(
         draw_facing_arc(cx, x, y, arc_radius, angle, token_radius * 0.25)?;
     }
 
-    // Draw avatar name below the token if present.
+    // Draw avatar name above the token if present.
     if let Some(name) = &a.name {
         let font_size = (token_radius * 0.6).max(10.0);
-        cx.set_font(&format!("{font_size}px sans-serif"));
-        cx.set_fill_style_str("#ffffff");
+        cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
-        cx.set_text_baseline("top");
-        let name_y = y + token_radius + 4.0;
+        cx.set_text_baseline("bottom");
+
+        let name_y = y - token_radius - 4.0;
+
+        cx.set_shadow_color("rgba(0,0,0,0.8)");
+        cx.set_shadow_blur(3.0);
+        cx.set_fill_style_str("#ffffff");
         let _ = cx.fill_text(name, x, name_y);
+        cx.set_shadow_blur(0.0);
     }
 
     Ok(())
@@ -297,7 +302,7 @@ pub(crate) fn draw_avatar_preview(
 
     cx.clear_rect(0.0, 0.0, w, h);
 
-    let token_radius = w.min(h) / 3.0;
+    let token_radius = w.min(h) / 4.0;
     let center_x = w / 2.0;
     let center_y = h / 2.0;
 
@@ -359,15 +364,18 @@ pub(crate) fn draw_avatar_preview(
         )?;
     }
 
-    // Draw name below
+    // Draw name above the token.
     if let Some(name) = &avatar.name {
         let font_size = (token_radius * 0.5).max(12.0);
-        cx.set_font(&format!("{font_size}px sans-serif"));
-        cx.set_fill_style_str("#ffffff");
+        cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
-        cx.set_text_baseline("top");
-        let name_y = center_y + token_radius + 8.0;
+        cx.set_text_baseline("bottom");
+        let name_y = center_y - token_radius - 8.0;
+        cx.set_shadow_color("rgba(0,0,0,0.8)");
+        cx.set_shadow_blur(3.0);
+        cx.set_fill_style_str("#ffffff");
         let _ = cx.fill_text(name, center_x, name_y);
+        cx.set_shadow_blur(0.0);
     }
 
     Ok(())

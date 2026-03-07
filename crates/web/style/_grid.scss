@@ -1,0 +1,28 @@
+$grid-columns: 12 !default;
+$grid-breakpoint: 560px !default;
+$grid-gap: 1em !default;
+
+.row {
+    display: grid;
+    grid-template-columns: repeat(#{$grid-columns}, 1fr);
+    gap: $grid-gap;
+    align-items: start;
+}
+
+@for $i from 1 through $grid-columns {
+    .col-#{$i} {
+        grid-column: span #{$i};
+    }
+}
+
+@media (max-width: $grid-breakpoint) {
+    .row {
+        grid-template-columns: 1fr;
+    }
+
+    @for $i from 1 through $grid-columns {
+        .col-#{$i} {
+            grid-column: 1 / -1;
+        }
+    }
+}
