@@ -134,6 +134,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-fuse"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82df7329ab1c125f8f7dd4b64368d876a06a94e7d5d7aa3f1479c1d1d8e229ff"
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1609,6 +1615,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "api",
+ "async-fuse",
  "axum",
  "bstr",
  "clap",
@@ -1635,6 +1642,8 @@ dependencies = [
 [[package]]
 name = "musli"
 version = "0.0.149"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d1824ac6e17853c4eabc4d952122aecc1454c0e22bbfd3a44f43c1a46c1af3"
 dependencies = [
  "loom",
  "musli-core",
@@ -1645,6 +1654,8 @@ dependencies = [
 [[package]]
 name = "musli-core"
 version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a89a1338c2da9f8cbf8b60c4e3edaab4eb0809d52fc2d7f69ac4da58d9050953"
 dependencies = [
  "musli-macros",
 ]
@@ -1652,6 +1663,8 @@ dependencies = [
 [[package]]
 name = "musli-macros"
 version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff6dea70dccfc68fd441c128bdaf31c454542676f750f095465640367fd94118"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1660,7 +1673,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web"
-version = "0.2.1"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab17d5feaf18223f1e3db03d8469622b5ec13f39cff9ef8e39b7d20e532db055"
 dependencies = [
  "axum",
  "axum-core",
@@ -1680,7 +1695,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web-macros"
-version = "0.2.1"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2afdc8d9d0650ed9f403cee342d52200e78e88ce7b0c1e9103306a73e8cf772"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2717,9 +2734,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.0.4+spec-1.1.0"
+version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c94c3321114413476740df133f0d8862c61d87c8d26f04c6841e033c8c80db47"
+checksum = "399b1124a3c9e16766831c6bba21e50192572cdd98706ea114f9502509686ffc"
 dependencies = [
  "indexmap",
  "serde_core",

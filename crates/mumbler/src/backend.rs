@@ -135,8 +135,6 @@ impl Images {
 /// State communicated to the mumblelink plugin.
 pub(crate) struct MumblelinkState {
     pub(crate) transform: Transform,
-    pub(crate) enabled: bool,
-    pub(crate) restart: bool,
 }
 
 struct Inner {
@@ -148,6 +146,7 @@ struct Inner {
     client_restart_notify: Notify,
     mumblelink_state: Mutex<MumblelinkState>,
     mumblelink_notify: Notify,
+    mumblelink_restart_notify: Notify,
     images: RwLock<Images>,
     broadcast: Sender<BackendEvent>,
 }
@@ -179,11 +178,6 @@ impl Backend {
 
         let name = database.get_config::<String>("avatar/name").await?;
 
-        let mumblelink_enabled = database
-            .get_config::<bool>("mumble/enabled")
-            .await?
-            .unwrap_or_default();
-
         Ok(Self {
             inner: Arc::new(Inner {
                 database,
@@ -206,10 +200,9 @@ impl Backend {
                 client_restart_notify: Notify::new(),
                 mumblelink_state: Mutex::new(MumblelinkState {
                     transform: Transform::origin(),
-                    restart: false,
-                    enabled: mumblelink_enabled,
                 }),
                 mumblelink_notify: Notify::new(),
+                mumblelink_restart_notify: Notify::new(),
                 broadcast,
             }),
         })
@@ -329,10 +322,13 @@ impl Backend {
     }
 
     /// Restart the mumblelink connection.
-    pub(crate) async fn restart_mumblelink(&self) {
-        let mut state = self.inner.mumblelink_state.lock().await;
-        state.restart = true;
-        self.inner.mumblelink_notify.notify_one();
+    pub(crate) fn restart_mumblelink(&self) {
+        self.inner.mumblelink_restart_notify.notify_one();
+    }
+
+    /// Wait for a mumblelink restart signal.
+    pub(crate) async fn mumblelink_restart_wait(&self) {
+        self.inner.mumblelink_restart_notify.notified().await;
     }
 
     /// Signal the remote client to restart (re-read server config from DB).
@@ -343,13 +339,6 @@ impl Backend {
     /// Wait for a client restart signal.
     pub(crate) async fn client_restart_wait(&self) {
         self.inner.client_restart_notify.notified().await;
-    }
-
-    /// Set whether mumblelink is enabled.
-    pub(crate) async fn set_mumblelink_enabled(&self, enabled: bool) {
-        let mut state = self.inner.mumblelink_state.lock().await;
-        state.enabled = enabled;
-        self.inner.mumblelink_notify.notify_one();
     }
 
     /// Get a reference to the database.

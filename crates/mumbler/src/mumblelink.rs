@@ -1,7 +1,7 @@
-use core::mem;
 use core::pin::pin;
 
 use anyhow::{Context as _, Result};
+use async_fuse::Fuse;
 use mumblelink::{Link, Position};
 use tokio::time::{self, Duration};
 
@@ -15,13 +15,7 @@ const UPDATES_PER_SECOND: u64 = 20;
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(b: Backend) -> Result<()> {
-    let mut enabled = b.mumblelink_state().await.enabled;
-
-    let mut link = if enabled {
-        Link::new().context("Creating link")?
-    } else {
-        Link::disabled()
-    };
+    let mut link = Link::new().context("Creating link")?;
 
     let mut pos = Position::FORWARD;
     pos.position = [0., 0., 0.];
@@ -42,43 +36,14 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
 
     loop {
         tokio::select! {
-            _ = update_interval.tick(), if enabled => {
+            _ = update_interval.tick() => {
                 link.update();
             }
-            _ = update_all_interval.tick(), if enabled => {
+            _ = update_all_interval.tick() => {
                 link.update_all()?;
             }
             () = b.mumblelink_wait() => {
-                let mut state = b.mumblelink_state().await;
-
-                if enabled != state.enabled {
-                    enabled = state.enabled;
-
-                    if enabled {
-                        link = Link::new()?;
-                        setup_link(&mut link, pos);
-                    } else {
-                        link = Link::disabled();
-                    }
-
-                    if enabled {
-                        update_interval.reset();
-                        update_all_interval.reset();
-                        b.notify_info(COMPONENT, "Enabling");
-                        tracing::info!("Enabling");
-                    } else {
-                        b.notify_info(COMPONENT, "Disabling");
-                        tracing::info!("Disabling");
-                    }
-                }
-
-                if mem::take(&mut state.restart) {
-                    b.notify_info(COMPONENT, "Restarting");
-                    tracing::info!("Restarting");
-                    link.reconnect().context("Reconnecting link")?;
-                    setup_link(&mut link, pos);
-                }
-
+                let state = b.mumblelink_state().await;
                 pos.position = state.transform.position.as_array();
                 pos.front = state.transform.front.as_array();
                 link.set_avatar(pos);
@@ -89,29 +54,54 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
 }
 
 /// Runs mumblelink and automatically restarts it on error with a 5-second
-/// back-off.
+/// back-off. Reads `mumble/enabled` from the database and re-reads it
+/// whenever a restart is signalled by [`Backend::restart_mumblelink`].
 pub async fn managed(b: Backend) -> Result<()> {
-    let mut future = pin!(run(b.clone()));
-    let mut reconnect = pin!(time::sleep(Duration::from_secs(0)));
-    let mut active = true;
+    let settings = async || -> Result<bool> {
+        Ok(b.db()
+            .get_config::<bool>("mumble/enabled")
+            .await?
+            .unwrap_or_default())
+    };
+
+    let mut enabled = settings().await?;
+
+    let build = |enabled| {
+        if enabled {
+            tracing::info!("Starting");
+            b.notify_info(COMPONENT, "Starting");
+            Fuse::new(run(b.clone()))
+        } else {
+            tracing::info!("Disabled");
+            b.notify_info(COMPONENT, "Disabled");
+            Fuse::empty()
+        }
+    };
+
+    let mut future = pin!(build(enabled));
+    let mut reconnect = pin!(Fuse::empty());
 
     loop {
         tokio::select! {
-            result = future.as_mut(), if active => {
+            result = future.as_mut() => {
                 if let Err(error) = result {
                     tracing::error!(%error);
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
+                } else {
+                    tracing::info!("mumblelink stopped");
                 }
 
-                tracing::info!("mumblelink stopped, restarting in 5s");
-                reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(5));
-                active = false;
+                tracing::info!("Reconnecting in 5s");
+                reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
             }
-            _ = reconnect.as_mut(), if !active => {
-                b.notify_info(COMPONENT, "Restarting");
-                tracing::info!("Restarting");
-                future.set(run(b.clone()));
-                active = true;
+            _ = reconnect.as_mut() => {
+                b.notify_info(COMPONENT, "Reconnecting");
+                future.set(Fuse::new(run(b.clone())));
+            }
+            () = b.mumblelink_restart_wait() => {
+                enabled = settings().await?;
+                reconnect.set(Fuse::empty());
+                future.set(build(enabled));
             }
         }
     }

@@ -270,7 +270,7 @@ async fn mumble_restart(
     backend: &Backend,
     _request: api::MumbleRestartRequest,
 ) -> Result<api::MumbleRestartResponse> {
-    backend.restart_mumblelink().await;
+    backend.restart_mumblelink();
     Ok(api::MumbleRestartResponse)
 }
 
@@ -282,7 +282,7 @@ async fn mumble_toggle(
         .db()
         .set_config("mumble/enabled", request.enabled)
         .await?;
-    backend.set_mumblelink_enabled(request.enabled).await;
+    backend.restart_mumblelink();
     Ok(api::MumbleToggleResponse {
         enabled: request.enabled,
     })

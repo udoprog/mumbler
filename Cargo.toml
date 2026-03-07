@@ -6,10 +6,5 @@ members = [
 ]
 
 [workspace.dependencies]
-musli-web = { version = "0.2.1", default-features = false }
-
-[patch.crates-io]
-musli-web = { path = "../musli/crates/musli-web" }
-musli-core = { path = "../musli/crates/musli-core" }
-musli = { path = "../musli/crates/musli" }
+musli-web = { version = "0.2.2", default-features = false }
  

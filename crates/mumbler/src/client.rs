@@ -1,9 +1,10 @@
+use core::mem;
 use core::pin::{Pin, pin};
 use core::time::Duration;
-use core::{future, mem};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use api::Transform;
+use async_fuse::Fuse;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
@@ -175,13 +176,7 @@ async fn handle_peer(
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(b: Backend, connect: Option<String>) -> Result<()> {
-    let Some(connect) = connect else {
-        tracing::info!("remote client disabled");
-        future::pending::<()>().await;
-        return Ok(());
-    };
-
+pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
     let port;
 
     let host = if let Some((host, port_s)) = connect.rsplit_once(':') {
@@ -315,13 +310,30 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
     let (mut connect, mut enabled) = settings().await?;
 
-    let mut future = pin!(run(b.clone(), connect.clone()));
-    let mut reconnect = pin!(time::sleep(Duration::from_secs(0)));
-    let mut active = enabled;
+    let build = |connect: Option<&str>, enabled: bool| {
+        if enabled {
+            if let Some(connect) = &connect {
+                tracing::info!("Restarting");
+                b.notify_info(COMPONENT, "Restarting");
+                Fuse::new(run(b.clone(), connect.to_string()))
+            } else {
+                tracing::info!("Enabled, but no server configured");
+                b.notify_info(COMPONENT, "Enabled, but no server configured");
+                Fuse::empty()
+            }
+        } else {
+            tracing::info!("Disabling");
+            b.notify_info(COMPONENT, "Disabling");
+            Fuse::empty()
+        }
+    };
+
+    let mut future = pin!(build(connect.as_deref(), enabled));
+    let mut reconnect = pin!(Fuse::empty());
 
     loop {
         tokio::select! {
-            result = future.as_mut(), if active => {
+            result = future.as_mut() => {
                 if let Err(error) = result {
                     tracing::error!(%error);
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
@@ -330,34 +342,19 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
                     b.notify_info(COMPONENT, "Disconnected");
                 }
 
-                active = false;
-                reconnect.as_mut().reset(Instant::now() + Duration::from_secs(5));
+                reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
                 tracing::info!("Reconnecting in 5s");
             }
-            _ = reconnect.as_mut(), if !active && enabled => {
-                b.notify_info(COMPONENT, "Reconnecting to server");
-                future.set(run(b.clone(), connect.clone()));
-                active = true;
+            _ = reconnect.as_mut() => {
+                if let Some(connect) = &connect {
+                    b.notify_info(COMPONENT, "Reconnecting to server");
+                    future.set(Fuse::new(run(b.clone(), connect.clone())));
+                }
             }
             () = b.client_restart_wait() => {
                 (connect, enabled) = settings().await?;
-
-                if enabled {
-                    tracing::info!("Restarting");
-                    b.notify_info(COMPONENT, "Restarting");
-                } else {
-                    tracing::info!("Disabling");
-                    b.notify_info(COMPONENT, "Disabling");
-                }
-
-                tracing::info!(?connect, %enabled, "Remote client config updated");
-
-                if enabled {
-                    future.set(run(b.clone(), connect.clone()));
-                    active = true;
-                } else {
-                    active = false;
-                }
+                reconnect.set(Fuse::empty());
+                future.set(build(connect.as_deref(), enabled));
             }
         }
     }
