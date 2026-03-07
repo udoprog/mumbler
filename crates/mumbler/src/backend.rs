@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Color, Id, Key, Transform, Vec3};
+use api::{Color, Id, Key, Transform, Value, Vec3};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -21,11 +21,7 @@ pub(crate) enum RemoteAvatarEvent {
     RemoteLost,
     Join { peer_id: Id },
     Leave { peer_id: Id },
-    Moved { peer_id: Id, transform: Transform },
-    LookAt { peer_id: Id, look_at: Option<Vec3> },
-    ImageUpdated { peer_id: Id, image: Option<Id> },
-    ColorUpdated { peer_id: Id, color: Color },
-    NameUpdated { peer_id: Id, name: Option<String> },
+    Update { peer_id: Id, key: Key, value: Value },
 }
 
 #[derive(Debug, Clone)]

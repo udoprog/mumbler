@@ -266,12 +266,9 @@ pub(super) async fn entry(
                                     RemoteAvatarEvent::RemoteLost => api::RemoteAvatarUpdateBody::RemoteLost,
                                     RemoteAvatarEvent::Join { peer_id } => api::RemoteAvatarUpdateBody::Join { peer_id },
                                     RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
-                                    RemoteAvatarEvent::Moved { peer_id, transform } => api::RemoteAvatarUpdateBody::Move { peer_id, transform },
-                                    RemoteAvatarEvent::LookAt { peer_id, look_at } => api::RemoteAvatarUpdateBody::LookAt { peer_id, look_at },
-                                    RemoteAvatarEvent::ImageUpdated { peer_id, image } => api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image },
-                                    RemoteAvatarEvent::ColorUpdated { peer_id, color } => api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color },
-                                    RemoteAvatarEvent::NameUpdated { peer_id, name } => api::RemoteAvatarUpdateBody::NameUpdated { peer_id, name },
+                                    RemoteAvatarEvent::Update { peer_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, key, value },
                                 };
+
                                 server.broadcast(body).context("send broadcast")
                             }
                         };

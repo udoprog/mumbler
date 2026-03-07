@@ -6,7 +6,7 @@ use musli_core::{Decode, Encode};
 #[cfg(feature = "sqll")]
 use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
-#[derive(Clone, Copy, Encode, Decode)]
+#[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core, transparent)]
 pub struct Key {
     raw: u32,

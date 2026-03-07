@@ -4,6 +4,9 @@ pub use id::Id;
 mod config;
 pub use config::Key;
 
+mod value;
+pub use self::value::Value;
+
 use core::fmt;
 
 use musli_core::{Decode, Encode};
@@ -538,13 +541,18 @@ pub enum ServerNotificationBody {
 #[musli(crate = musli_core)]
 pub enum RemoteAvatarUpdateBody {
     RemoteLost,
-    Join { peer_id: Id },
-    Leave { peer_id: Id },
-    Move { peer_id: Id, transform: Transform },
-    LookAt { peer_id: Id, look_at: Option<Vec3> },
-    ImageUpdated { peer_id: Id, image: Option<Id> },
-    ColorUpdated { peer_id: Id, color: Color },
-    NameUpdated { peer_id: Id, name: Option<String> },
+    Join {
+        peer_id: Id,
+    },
+    Leave {
+        peer_id: Id,
+    },
+    /// Update to a remote avatar's property.
+    Update {
+        peer_id: Id,
+        key: Key,
+        value: Value,
+    },
 }
 
 api::define! {

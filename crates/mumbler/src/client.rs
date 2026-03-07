@@ -3,7 +3,7 @@ use core::pin::{Pin, pin};
 use core::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Id, Key, Transform};
+use api::{Id, Key, Transform, Value};
 use async_fuse::Fuse;
 use tokio::time::{self, Instant, Sleep};
 
@@ -76,9 +76,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Moved {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
                     peer_id: event.id,
-                    transform: event.transform,
+                    key: Key::AVATAR_TRANSFORM,
+                    value: Value::from(event.transform),
                 }));
             }
             Event::LookedAt => {
@@ -93,9 +94,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::LookAt {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
                     peer_id: event.id,
-                    look_at: event.look_at,
+                    key: Key::AVATAR_LOOK_AT,
+                    value: Value::from(event.look_at),
                 }));
             }
             Event::UpdatedImage => {
@@ -119,12 +121,11 @@ async fn handle_peer(
                     }
                 };
 
-                b.broadcast(BackendEvent::RemoteAvatar(
-                    RemoteAvatarEvent::ImageUpdated {
-                        peer_id: event.id,
-                        image,
-                    },
-                ));
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
+                    peer_id: event.id,
+                    key: Key::AVATAR_IMAGE,
+                    value: Value::from(image),
+                }));
             }
             Event::UpdatedColor => {
                 let event = body.decode::<UpdatedColorBody>()?;
@@ -138,12 +139,11 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(
-                    RemoteAvatarEvent::ColorUpdated {
-                        peer_id: event.id,
-                        color: event.color,
-                    },
-                ));
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
+                    peer_id: event.id,
+                    key: Key::AVATAR_COLOR,
+                    value: Value::from(event.color),
+                }));
             }
             Event::UpdatedName => {
                 let event = body.decode::<UpdatedNameBody>()?;
@@ -157,9 +157,10 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::NameUpdated {
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
                     peer_id: event.id,
-                    name: event.name,
+                    key: Key::AVATAR_NAME,
+                    value: Value::from(event.name),
                 }));
             }
             event => {
