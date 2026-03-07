@@ -41,8 +41,8 @@ impl ws::Handler for Handler {
         outgoing: &mut ws::Outgoing<'_>,
     ) -> Self::Response {
         match id {
-            api::Request::Initialize => {
-                outgoing.write(super::initialize(&self.backend).await?);
+            api::Request::InitializeMap => {
+                outgoing.write(super::initialize_map(&self.backend).await?);
             }
             api::Request::UpdatePlayer => {
                 let request = incoming
@@ -105,6 +105,30 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
 
                 let response = super::update_world(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::MumbleRestart => {
+                let request = incoming
+                    .read::<api::MumbleRestartRequest>()
+                    .context("missing request")?;
+
+                let response = super::mumble_restart(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::MumbleToggle => {
+                let request = incoming
+                    .read::<api::MumbleToggleRequest>()
+                    .context("missing request")?;
+
+                let response = super::mumble_toggle(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::GetMumbleStatus => {
+                let request = incoming
+                    .read::<api::GetMumbleStatusRequest>()
+                    .context("missing request")?;
+
+                let response = super::get_mumble_status(&self.backend, request).await?;
                 outgoing.write(response);
             }
             api::Request::Unknown(id) => {

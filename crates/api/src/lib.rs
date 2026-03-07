@@ -78,7 +78,7 @@ impl fmt::Debug for Color {
 
 #[derive(Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct InitializeRequest;
+pub struct InitializeMapRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -322,10 +322,10 @@ impl Avatar {
     }
 }
 
-/// Event emitted when the API is initialized.
+/// Event emitted when the map is initialized.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct InitializeEvent {
+pub struct InitializeMapEvent {
     /// The player avatar.
     pub player: Avatar,
     /// The name of the current user.
@@ -413,6 +413,39 @@ pub struct UpdateWorldRequest {
 #[musli(crate = musli_core)]
 pub struct UpdateWorldResponse;
 
+/// Request to restart the mumble link connection.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct MumbleRestartRequest;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct MumbleRestartResponse;
+
+/// Request to toggle mumble integration enabled/disabled.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct MumbleToggleRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct MumbleToggleResponse {
+    pub enabled: bool,
+}
+
+/// Request to get the mumble status.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetMumbleStatusRequest;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetMumbleStatusResponse {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum RemoteAvatarUpdateBody {
@@ -425,11 +458,11 @@ pub enum RemoteAvatarUpdateBody {
 }
 
 api::define! {
-    pub type Initialize;
+    pub type InitializeMap;
 
-    impl Endpoint for Initialize {
-        impl Request for InitializeRequest;
-        type Response<'de> = InitializeEvent;
+    impl Endpoint for InitializeMap {
+        impl Request for InitializeMapRequest;
+        type Response<'de> = InitializeMapEvent;
     }
 
     pub type UpdatePlayer;
@@ -479,6 +512,27 @@ api::define! {
     impl Endpoint for UpdateWorld {
         impl Request for UpdateWorldRequest;
         type Response<'de> = UpdateWorldResponse;
+    }
+
+    pub type MumbleRestart;
+
+    impl Endpoint for MumbleRestart {
+        impl Request for MumbleRestartRequest;
+        type Response<'de> = MumbleRestartResponse;
+    }
+
+    pub type MumbleToggle;
+
+    impl Endpoint for MumbleToggle {
+        impl Request for MumbleToggleRequest;
+        type Response<'de> = MumbleToggleResponse;
+    }
+
+    pub type GetMumbleStatus;
+
+    impl Endpoint for GetMumbleStatus {
+        impl Request for GetMumbleStatusRequest;
+        type Response<'de> = GetMumbleStatusResponse;
     }
 
     pub type RemoteAvatarUpdate;

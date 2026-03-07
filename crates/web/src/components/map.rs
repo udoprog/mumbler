@@ -178,7 +178,7 @@ pub(crate) struct Map {
 }
 
 pub(crate) enum Msg {
-    Initialize(Result<Packet<api::Initialize>, ws::Error>),
+    InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
     RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
@@ -333,15 +333,15 @@ impl Map {
                 .props()
                 .ws
                 .request()
-                .body(api::InitializeRequest)
-                .on_packet(ctx.link().callback(Msg::Initialize))
+                .body(api::InitializeMapRequest)
+                .on_packet(ctx.link().callback(Msg::InitializeMap))
                 .send();
         }
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::Initialize(result) => {
+            Msg::InitializeMap(result) => {
                 let initialize = result?;
                 let initialize = initialize.decode()?;
 

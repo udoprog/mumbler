@@ -257,6 +257,20 @@ impl Backend {
         self.inner.mumblelink_notify.notify_one();
     }
 
+    /// Restart the mumblelink connection.
+    pub(crate) async fn restart_mumblelink(&self) {
+        let mut state = self.inner.mumblelink_state.lock().await;
+        state.restart = true;
+        self.inner.mumblelink_notify.notify_one();
+    }
+
+    /// Set whether mumblelink is enabled.
+    pub(crate) async fn set_mumblelink_enabled(&self, enabled: bool) {
+        let mut state = self.inner.mumblelink_state.lock().await;
+        state.enabled = enabled;
+        self.inner.mumblelink_notify.notify_one();
+    }
+
     /// Get a reference to the database.
     pub(crate) fn db(&self) -> &Database {
         &self.inner.database

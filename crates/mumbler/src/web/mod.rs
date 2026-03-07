@@ -137,7 +137,7 @@ async fn image(
     Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data))
 }
 
-async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
+async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let player;
     let mut remote_avatars = Vec::new();
 
@@ -173,7 +173,7 @@ async fn initialize(b: &Backend) -> Result<api::InitializeEvent> {
         .await?
         .unwrap_or_else(api::Pan::zero);
 
-    let ev = api::InitializeEvent {
+    let ev = api::InitializeMapEvent {
         player,
         name: Some("Gilbert".to_owned()),
         remote_avatars,
@@ -249,4 +249,38 @@ async fn update_world(
     backend.db().set_config("world/pan", request.pan).await?;
     backend.db().set_config("world/zoom", request.zoom).await?;
     Ok(api::UpdateWorldResponse)
+}
+
+async fn mumble_restart(
+    backend: &Backend,
+    _request: api::MumbleRestartRequest,
+) -> Result<api::MumbleRestartResponse> {
+    backend.restart_mumblelink().await;
+    Ok(api::MumbleRestartResponse)
+}
+
+async fn mumble_toggle(
+    backend: &Backend,
+    request: api::MumbleToggleRequest,
+) -> Result<api::MumbleToggleResponse> {
+    backend
+        .db()
+        .set_config("mumble/enabled", request.enabled)
+        .await?;
+    backend.set_mumblelink_enabled(request.enabled).await;
+    Ok(api::MumbleToggleResponse {
+        enabled: request.enabled,
+    })
+}
+
+async fn get_mumble_status(
+    backend: &Backend,
+    _request: api::GetMumbleStatusRequest,
+) -> Result<api::GetMumbleStatusResponse> {
+    let enabled = backend
+        .db()
+        .get_config::<bool>("mumble/enabled")
+        .await?
+        .unwrap_or(false);
+    Ok(api::GetMumbleStatusResponse { enabled })
 }

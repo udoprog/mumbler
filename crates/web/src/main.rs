@@ -127,6 +127,7 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
                     <Link<Route> to={Route::Map} classes={classes!((route == Route::Map).then_some("active"))}>{"Map"}</Link<Route>>
                     <Link<Route> to={Route::Settings} classes={classes!((route == Route::Settings).then_some("active"))}>{"Settings"}</Link<Route>>
                 </section>
+                <components::MumbleStatus ws={ws.clone()} />
                 <section class="connection">
                     {connected}
                     <span class={classes!("connection-indicator", indicator_class)}>{indicator}</span>

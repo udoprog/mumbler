@@ -1,9 +1,8 @@
 use core::mem;
-use core::pin::pin;
 
 use anyhow::Result;
 use mumblelink::{Link, Position};
-use tokio::time::{self, Duration, Instant};
+use tokio::time::{self, Duration};
 
 use crate::Backend;
 

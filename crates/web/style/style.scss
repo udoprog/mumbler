@@ -1,5 +1,6 @@
 @import "_reset";
 @import "_mixins";
+@import "_icons";
 
 $margin: 10px;
 $border-radius: 4px;
@@ -7,13 +8,20 @@ $border-radius2: 8px;
 
 :root {
     --background-color: #121212;
+    --surface-color: #1e1e1e;
     --text-color: #d9d9d9;
     --text-color-inverted: #121212;
+    --text-color-muted: #888;
     --heading-color: #eee;
     --link-color: #b3d9ec;
     --link-hover: #eee;
+    --border-color: #333;
     --btn-color: #4caf50;
     --btn-color-disabled: #888;
+    --btn-secondary-bg: #333;
+    --btn-secondary-bg-hover: #444;
+    --btn-secondary-bg-disabled: #2a2a2a;
+    --btn-secondary-border: #555;
     --danger-color: #e05252;
     --danger-background-color: #2e1e1e;
     --success-color: #4caf50;
@@ -28,7 +36,7 @@ body {
 .pre {
     font-size: 0.8em;
     font-family: "Courier New", Courier, monospace;
-    background-color: #1e1e1e;
+    background-color: var(--surface-color);
     overflow-x: auto;
 }
 
@@ -64,6 +72,12 @@ body {
     color: var(--text-color-inverted);
     border: none;
     border-radius: $border-radius;
+    transition: background-color 0.15s, border-color 0.15s;
+
+    &:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
 
     &.disabled {
         cursor: not-allowed;
@@ -73,6 +87,38 @@ body {
     &.danger {
         background-color: var(--danger-color);
         color: var(--text-color-inverted);
+    }
+
+    &.secondary {
+        background-color: var(--btn-secondary-bg);
+        color: var(--text-color);
+        border: 1px solid var(--btn-secondary-border);
+
+        &:hover:not(:disabled) {
+            background-color: var(--btn-secondary-bg-hover);
+            border-color: var(--link-color);
+        }
+
+        &:disabled {
+            background-color: var(--btn-secondary-bg-disabled);
+        }
+    }
+
+    &.sm {
+        padding: 0.25em 0.75em;
+        font-size: 0.85em;
+    }
+
+    &.square {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5em;
+        aspect-ratio: 1;
+
+        &.sm {
+            padding: 0.4em;
+        }
     }
 
     &.icon {
@@ -107,14 +153,15 @@ body {
 }
 
 canvas#map {
-    background-color: #1e1e1e;
-    border: 1px solid #333;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
     border-radius: $border-radius;
 }
 
 .status {
     display: flex;
     flex-direction: row;
+    align-items: center;
     gap: 1em;
     margin-bottom: 1em;
 
@@ -124,6 +171,25 @@ canvas#map {
 
         .connection-indicator {
             margin-left: 0.5em;
+        }
+    }
+
+    .mumble {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        margin-left: auto;
+
+        .mumble-status {
+            font-weight: bold;
+
+            &.enabled {
+                color: var(--link-color);
+            }
+
+            &.disabled {
+                color: var(--text-color-muted);
+            }
         }
     }
 
@@ -139,8 +205,9 @@ canvas#map {
 
 .navigation {
     display: flex;
+    flex-direction: row;
+    align-items: center;
     gap: 1em;
-    margin-bottom: 1em;
 
     a {
         color: var(--link-color);
@@ -148,7 +215,8 @@ canvas#map {
         font-weight: bold;
         transition: color 0.15s;
 
-        &.active, &:hover {
+        &.active,
+        &:hover {
             color: var(--link-hover);
         }
     }
@@ -159,7 +227,7 @@ canvas#map {
     margin: $margin auto;
     padding: 1em;
 
-    background-color: #1e1e1e;
+    background-color: var(--surface-color);
     border-radius: $border-radius2;
     box-shadow: 0 0 $margin rgba(0, 0, 0, 0.5);
 }
