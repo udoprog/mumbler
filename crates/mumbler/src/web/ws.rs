@@ -49,11 +49,15 @@ impl ws::Handler for Handler {
                     .read::<api::UpdatePlayerRequest>()
                     .context("missing request")?;
 
-                self.backend
-                    .set_transform(request.avatar.transform, request.avatar.look_at)
-                    .await;
-                self.backend
-                    .set_transform_mumblelink(request.avatar.transform);
+                let fut1 = self
+                    .backend
+                    .set_client_transform(request.avatar.transform, request.avatar.look_at);
+
+                let fut2 = self
+                    .backend
+                    .set_mumblelink_transform(request.avatar.transform);
+
+                let ((), ()) = tokio::join!(fut1, fut2);
                 self.update_transform = Some((request.avatar.transform, request.avatar.look_at));
             }
             api::Request::UploadImage => {

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use api::{Color, Id, Transform, Vec3};
-use parking_lot::Mutex as BlockingMutex;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -71,7 +70,7 @@ impl Default for PeerInfo {
 }
 
 /// Information about remote peers.
-pub(crate) struct State {
+pub(crate) struct ClientState {
     pub(crate) player: Player,
     pub(crate) peers: HashMap<Id, PeerInfo>,
 }
@@ -100,14 +99,21 @@ impl Images {
     }
 }
 
+/// State communicated to the mumblelink plugin.
+pub(crate) struct MumblelinkState {
+    pub(crate) transform: Transform,
+    pub(crate) enabled: bool,
+    pub(crate) restart: bool,
+}
+
 struct Inner {
     database: Database,
     #[allow(unused)]
     paths: Paths,
-    state: Mutex<State>,
+    client_state: Mutex<ClientState>,
     client_notify: Notify,
-    transform: BlockingMutex<Transform>,
-    transform_notify: Notify,
+    mumblelink_state: Mutex<MumblelinkState>,
+    mumblelink_notify: Notify,
     images: RwLock<Images>,
     broadcast: Sender<BackendEvent>,
 }
@@ -137,11 +143,16 @@ impl Backend {
 
         let look_at = database.get_config::<Vec3>("avatar/look-at").await?;
 
+        let mumblelink_enabled = database
+            .get_config::<bool>("mumble/enabled")
+            .await?
+            .unwrap_or_default();
+
         Ok(Self {
             inner: Arc::new(Inner {
                 database,
                 paths,
-                state: Mutex::new(State {
+                client_state: Mutex::new(ClientState {
                     player: Player {
                         transform,
                         look_at,
@@ -155,8 +166,12 @@ impl Backend {
                     images: HashMap::new(),
                 }),
                 client_notify: Notify::new(),
-                transform: BlockingMutex::new(transform),
-                transform_notify: Notify::new(),
+                mumblelink_state: Mutex::new(MumblelinkState {
+                    transform: Transform::origin(),
+                    restart: false,
+                    enabled: mumblelink_enabled,
+                }),
+                mumblelink_notify: Notify::new(),
                 broadcast,
             }),
         })
@@ -168,8 +183,8 @@ impl Backend {
     }
 
     /// Lock the remote state and access it.
-    pub(crate) async fn state(&self) -> MutexGuard<'_, State> {
-        self.inner.state.lock().await
+    pub(crate) async fn state(&self) -> MutexGuard<'_, ClientState> {
+        self.inner.client_state.lock().await
     }
 
     /// Write temporary images.
@@ -187,9 +202,19 @@ impl Backend {
         let _ = self.inner.broadcast.send(ev);
     }
 
+    /// Receive the next event.
+    pub(crate) async fn client_wait(&self) {
+        self.inner.client_notify.notified().await;
+    }
+
+    /// Receive the next transform update.
+    pub(crate) async fn mumblelink_wait(&self) {
+        self.inner.mumblelink_notify.notified().await;
+    }
+
     /// Update position and front.
-    pub(crate) async fn set_transform(&self, transform: Transform, look_at: Option<Vec3>) {
-        let mut state = self.inner.state.lock().await;
+    pub(crate) async fn set_client_transform(&self, transform: Transform, look_at: Option<Vec3>) {
+        let mut state = self.inner.client_state.lock().await;
         state.player.transform = transform;
         state.player.look_at = look_at;
         state.player.changed |= TRANSFORM_CHANGED;
@@ -197,48 +222,39 @@ impl Backend {
     }
 
     /// Update the player's image.
-    pub(crate) async fn set_image(&self, image: Option<Id>) {
-        let mut state = self.inner.state.lock().await;
+    pub(crate) async fn set_client_image(&self, image: Option<Id>) {
+        let mut state = self.inner.client_state.lock().await;
         state.player.image = image;
         state.player.changed |= IMAGE_CHANGED;
         self.inner.client_notify.notify_one();
     }
 
     /// Update the player's color.
-    pub(crate) async fn set_color(&self, color: Color) {
-        let mut state = self.inner.state.lock().await;
+    pub(crate) async fn set_client_color(&self, color: Color) {
+        let mut state = self.inner.client_state.lock().await;
         state.player.color = color;
         state.player.changed |= COLOR_CHANGED;
         self.inner.client_notify.notify_one();
     }
 
     /// Get the current state, resetting any changed flags.
-    pub(crate) async fn take_player(&self) -> Player {
-        let mut state = self.inner.state.lock().await;
+    pub(crate) async fn take_client_player(&self) -> Player {
+        let mut state = self.inner.client_state.lock().await;
         let out = state.player.clone();
         state.player.changed = 0;
         out
     }
 
-    /// Receive the next event.
-    pub(crate) async fn client_wait(&self) {
-        self.inner.client_notify.notified().await;
-    }
-
     /// Get the transform.
-    pub(crate) fn transform(&self) -> Transform {
-        *self.inner.transform.lock()
+    pub(crate) async fn mumblelink_state(&self) -> MutexGuard<'_, MumblelinkState> {
+        self.inner.mumblelink_state.lock().await
     }
 
     /// Set the transform for mumblelink.
-    pub(crate) fn set_transform_mumblelink(&self, transform: Transform) {
-        *self.inner.transform.lock() = transform;
-        self.inner.transform_notify.notify_one();
-    }
-
-    /// Receive the next transform update.
-    pub(crate) async fn transform_wait(&self) {
-        self.inner.transform_notify.notified().await;
+    pub(crate) async fn set_mumblelink_transform(&self, transform: Transform) {
+        let mut state = self.inner.mumblelink_state.lock().await;
+        state.transform = transform;
+        self.inner.mumblelink_notify.notify_one();
     }
 
     /// Get a reference to the database.

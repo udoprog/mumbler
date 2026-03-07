@@ -1,5 +1,4 @@
 use core::mem;
-use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_6, TAU};
 
 use api::{Avatar, Extent2, Id, RemoteAvatar, Vec3, World};
@@ -8,12 +7,13 @@ use musli_web::web::Packet;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, HtmlImageElement, MouseEvent,
-    ResizeObserver, WheelEvent,
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, ResizeObserver,
+    WheelEvent,
 };
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::images::{ImageMessage, Images};
 use crate::ws;
 
 const ZOOM_FACTOR: f64 = 1.2;
@@ -170,7 +170,7 @@ pub(crate) struct Map {
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
     /// Loaded avatar images, keyed by image id.
     /// The closure must be kept alive alongside the element for the onload callback to fire.
-    images: HashMap<Id, (HtmlImageElement, Option<Closure<dyn FnMut()>>)>,
+    images: Images<Self>,
     /// Target position for interpolated movement.
     move_target: Option<Vec3>,
     /// Animation interval for smooth movement.
@@ -184,13 +184,20 @@ pub(crate) enum Msg {
     RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     StateChanged(ws::State),
     Resized,
-    ImageLoaded(Id),
+    ImageLoaded(ImageMessage),
     MouseDown(MouseEvent),
     MouseMove(MouseEvent),
     MouseUp(MouseEvent),
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
+}
+
+impl From<ImageMessage> for Msg {
+    #[inline]
+    fn from(message: ImageMessage) -> Self {
+        Msg::ImageLoaded(message)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -231,7 +238,7 @@ impl Component for Map {
             start_press: None,
             arrow_target: None,
             _resize_observer: None,
-            images: HashMap::new(),
+            images: Images::new(),
             move_target: None,
             _animation_interval: None,
         };
@@ -244,18 +251,8 @@ impl Component for Map {
         if first_render {
             self.resize_canvas();
 
-            if let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() {
-                let link = ctx.link().clone();
-                let closure = Closure::<dyn FnMut()>::new(move || {
-                    link.send_message(Msg::Resized);
-                });
-                let observer = ResizeObserver::new(closure.as_ref().unchecked_ref()).unwrap();
-                observer.observe(&sizer);
-
-                if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
-                    o.disconnect();
-                    drop(_closure);
-                }
+            if let Err(error) = self.setup_resizer(ctx) {
+                tracing::error!(%error, "Failed to setup resize observer");
             }
         }
 
@@ -408,12 +405,11 @@ impl Map {
                         };
 
                         if let Some(id) = old {
-                            self.images.remove(&id);
+                            self.images.remove(id);
                         }
 
                         if let Some(id) = image {
-                            let image = Self::load_image(ctx, id);
-                            self.images.insert(id, image);
+                            self.images.load(ctx, id);
                         }
                     }
                     api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color } => {
@@ -436,11 +432,8 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::ImageLoaded(id) => {
-                if let Some((_, closure)) = self.images.get_mut(&id) {
-                    *closure = None;
-                }
-
+            Msg::ImageLoaded(msg) => {
+                self.images.update(msg);
                 self.redraw()?;
                 Ok(false)
             }
@@ -714,20 +707,8 @@ impl Map {
         let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
 
         for id in ids {
-            let image = Self::load_image(ctx, id);
-            self.images.insert(id, image);
+            self.images.load(ctx, id);
         }
-    }
-
-    fn load_image(ctx: &Context<Map>, id: Id) -> (HtmlImageElement, Option<Closure<dyn FnMut()>>) {
-        let link = ctx.link().clone();
-        let img = HtmlImageElement::new().unwrap();
-        let closure = Closure::<dyn FnMut()>::new(move || {
-            link.send_message(Msg::ImageLoaded(id));
-        });
-        img.set_onload(Some(closure.as_ref().unchecked_ref()));
-        img.set_src(&format!("/api/image/{id}"));
-        (img, Some(closure))
     }
 
     fn resize_canvas(&self) {
@@ -745,6 +726,29 @@ impl Map {
 
         canvas.set_width(width);
         canvas.set_height(width);
+    }
+
+    fn setup_resizer(&mut self, ctx: &Context<Self>) -> Result<(), Error> {
+        let sizer = self
+            .canvas_sizer
+            .cast::<HtmlElement>()
+            .ok_or("missing canvas sizer element")?;
+
+        let link = ctx.link().clone();
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            link.send_message(Msg::Resized);
+        });
+
+        let observer = ResizeObserver::new(closure.as_ref().unchecked_ref())?;
+
+        observer.observe(&sizer);
+
+        if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
+            o.disconnect();
+            drop(_closure);
+        }
+
+        Ok(())
     }
 
     fn redraw(&self) -> Result<(), Error> {
@@ -800,13 +804,9 @@ impl Map {
                     break 'draw false;
                 };
 
-                let Some((img, _)) = self.images.get(&id) else {
+                let Some(img) = self.images.get(id) else {
                     break 'draw false;
                 };
-
-                if !img.complete() || img.natural_width() == 0 {
-                    break 'draw false;
-                }
 
                 let iw = img.natural_width() as f64;
                 let ih = img.natural_height() as f64;

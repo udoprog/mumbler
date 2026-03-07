@@ -185,7 +185,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
                 handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut()).await?;
             }
             () = wait.as_mut() => {
-                let state = b.take_player().await;
+                let state = b.take_client_player().await;
 
                 if state.is_transform() {
                     peer.update_transform(state.transform)?;

@@ -32,7 +32,6 @@ const CONTEXT_FLAG: u8 = 0b0000_1000;
 const IDENTITY_FLAG: u8 = 0b0001_0000;
 const AVATAR_FLAG: u8 = 0b0010_0000;
 const CAMERA_FLAG: u8 = 0b0100_0000;
-const ALL_FLAGS: u8 = 0b0111_1111;
 
 /// A position in three-dimensional space.
 ///
@@ -239,6 +238,15 @@ impl Link {
         })
     }
 
+    /// Cosntruct a disabled link.
+    pub fn disabled() -> Self {
+        Self {
+            map: None,
+            local: Body::zero(),
+            changes: 0,
+        }
+    }
+
     /// Reconnect the link, reopening the shared memory if it was lost.
     pub fn reconnect(&mut self) -> io::Result<()> {
         self.disable();
@@ -321,6 +329,16 @@ impl Link {
         self.changes |= DESCRIPTION_FLAG;
     }
 
+    /// Update all fields in the link.
+    ///
+    /// This is useful to do periodically, because the mumble interaction is
+    /// non-deterministic.
+    pub fn update_all(&mut self) -> io::Result<()> {
+        self.changes = 0xff;
+        self.update();
+        Ok(())
+    }
+
     /// Update the link with the latest position information.
     ///
     /// This must be called fairly periodically to keep the link alive, even if
@@ -333,32 +351,42 @@ impl Link {
         let changes = mem::take(&mut self.changes);
 
         if changes != 0 {
-            unsafe {
-                let body = ptr::addr_of_mut!((*map.ptr.as_ptr()).body);
-
-                if changes & AVATAR_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).avatar).write_volatile(self.local.avatar);
+            if changes == 0xff {
+                // Write everything.
+                unsafe {
+                    ptr::addr_of_mut!((*map.ptr.as_ptr()).body).write_volatile(self.local);
                 }
+            } else {
+                // Only write to the parts that have changed.
+                unsafe {
+                    let body = ptr::addr_of_mut!((*map.ptr.as_ptr()).body);
 
-                if changes & NAME_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).name).write_volatile(self.local.name);
-                }
+                    if changes & AVATAR_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).avatar).write_volatile(self.local.avatar);
+                    }
 
-                if changes & CAMERA_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).camera).write_volatile(self.local.camera);
-                }
+                    if changes & NAME_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).name).write_volatile(self.local.name);
+                    }
 
-                if changes & IDENTITY_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).identity).write_volatile(self.local.identity);
-                }
+                    if changes & CAMERA_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).camera).write_volatile(self.local.camera);
+                    }
 
-                if changes & CONTEXT_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).context).write_volatile(self.local.context);
-                    ptr::addr_of_mut!((*body).context_len).write_volatile(self.local.context_len);
-                }
+                    if changes & IDENTITY_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).identity).write_volatile(self.local.identity);
+                    }
 
-                if changes & DESCRIPTION_FLAG != 0 {
-                    ptr::addr_of_mut!((*body).description).write_volatile(self.local.description);
+                    if changes & CONTEXT_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).context).write_volatile(self.local.context);
+                        ptr::addr_of_mut!((*body).context_len)
+                            .write_volatile(self.local.context_len);
+                    }
+
+                    if changes & DESCRIPTION_FLAG != 0 {
+                        ptr::addr_of_mut!((*body).description)
+                            .write_volatile(self.local.description);
+                    }
                 }
             }
         }
@@ -398,7 +426,7 @@ impl Link {
             }
 
             // A deactivation causes the remote context to be fully out of sync.
-            self.changes = ALL_FLAGS;
+            self.changes = 0;
         }
     }
 }

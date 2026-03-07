@@ -42,7 +42,10 @@ pub(super) struct Map<T> {
 impl<T> Map<T> {
     pub(super) fn new() -> io::Result<Map<T>> {
         unsafe {
-            let path = CString::new(format!("/MumbleLink.{}", libc::getuid())).unwrap();
+            let Ok(path) = CString::new(format!("/MumbleLink.{}", libc::getuid()).into_bytes())
+            else {
+                return Err(io::Error::from(io::ErrorKind::InvalidInput));
+            };
 
             let fd = shm_open(&path, libc::O_RDWR, libc::S_IRUSR | libc::S_IWUSR);
 

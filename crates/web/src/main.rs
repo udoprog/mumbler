@@ -2,6 +2,7 @@
 
 mod components;
 mod error;
+mod images;
 
 use musli_web::web03::prelude::*;
 use tracing::Level;

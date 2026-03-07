@@ -15,6 +15,7 @@ $border-radius2: 8px;
     --btn-color: #4caf50;
     --btn-color-disabled: #888;
     --danger-color: #e05252;
+    --danger-background-color: #2e1e1e;
     --success-color: #4caf50;
     --warning-color: #ffcc00;
 }
@@ -82,6 +83,17 @@ body {
         width: 24px;
         height: 24px;
         padding: 0;
+    }
+}
+
+.banner {
+    padding: 1em;
+    border-radius: $border-radius;
+
+    &.error {
+        border: 1px solid var(--danger-color);
+        background-color: var(--danger-background-color);
+        font-weight: bold;
     }
 }
 

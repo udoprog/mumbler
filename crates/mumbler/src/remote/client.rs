@@ -9,7 +9,8 @@ use musli_core::mode::Binary;
 use musli_web::api::{Broadcast, Event};
 use tokio::net::{TcpStream, ToSocketAddrs};
 
-const CAP: usize = 4096;
+const READ_CAP: usize = 4096;
+const MAX_CAPACITY: usize = 10 * 1024 * 1024;
 
 /// A scratch buffer for temporary data, used for serialization.
 pub struct Scratch {
@@ -21,7 +22,7 @@ impl Scratch {
     #[inline]
     pub fn new() -> Self {
         Self {
-            data: Vec::with_capacity(CAP),
+            data: Vec::with_capacity(READ_CAP),
         }
     }
 
@@ -137,14 +138,20 @@ impl Buf {
 
     /// Get the unread portion of the buffer.
     #[inline]
-    pub fn write_buf(&mut self) -> &mut [u8] {
-        if self.write + CAP > self.data.len() {
-            self.data.resize(self.write + CAP, 0);
+    pub fn write_buf(&mut self) -> Option<&mut [u8]> {
+        let needed = self.write + READ_CAP;
+
+        if needed > MAX_CAPACITY {
+            return None;
         }
 
-        self.data
-            .get_mut(self.write..self.write + CAP)
-            .unwrap_or_default()
+        if needed > self.data.len() {
+            self.data.resize(needed, 0);
+        }
+
+        let bytes = self.data.get_mut(self.write..needed).unwrap_or_default();
+
+        Some(bytes)
     }
 
     /// Get the number of unread bytes in the buffer.
@@ -218,12 +225,16 @@ impl Client {
     #[inline]
     pub fn try_read(&self, buf: &mut Buf) -> io::Result<()> {
         loop {
-            match self.stream.try_read(buf.write_buf()) {
+            let Some(bytes) = buf.write_buf() else {
+                return Err(io::Error::other("receive buffer capacity exceeded"));
+            };
+
+            match self.stream.try_read(bytes) {
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
                 Ok(n) => {
                     buf.write += n;
 
-                    if buf.remaining() > CAP {
+                    if buf.remaining() > READ_CAP {
                         return Ok(());
                     }
                 }

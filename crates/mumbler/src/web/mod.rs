@@ -220,7 +220,7 @@ async fn select_image(
     request: api::SelectImageRequest,
 ) -> Result<api::SelectImageResponse> {
     backend.db().set_config("avatar/image", request.id).await?;
-    backend.set_image(Some(request.id)).await;
+    backend.set_client_image(Some(request.id)).await;
     Ok(api::SelectImageResponse { id: request.id })
 }
 
@@ -238,7 +238,7 @@ async fn select_color(
 ) -> Result<api::SelectColorResponse> {
     let color = request.color;
     backend.db().set_config("avatar/color", color).await?;
-    backend.set_color(color).await;
+    backend.set_client_color(color).await;
     Ok(api::SelectColorResponse { color })
 }
 

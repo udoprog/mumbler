@@ -21,7 +21,7 @@ use crate::remote::api::{
 use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
 use super::{Buf, Client, Scratch};
 
-const MAX_CAPACITY: usize = 1024 * 1024;
+const MAX_MESSAGE: usize = 1024 * 1024;
 
 enum State {
     Idle,
@@ -71,6 +71,13 @@ impl Peer {
                     };
 
                     let len = u32::from_be_bytes(buf) as usize;
+
+                    if len > MAX_MESSAGE {
+                        return Err(anyhow::anyhow!(
+                            "received message {len} is larger than max {MAX_MESSAGE} bytes"
+                        ));
+                    }
+
                     self.state = State::Recv(len);
                 }
                 State::Recv(len) => {
@@ -240,13 +247,6 @@ impl Peer {
     /// Polls the peer for readiness.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.write.has_remaining() {
-            if self.write.capacity() > MAX_CAPACITY {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "write buffer too large",
-                )));
-            }
-
             if let Poll::Ready(result) = self.client.poll_write_ready(cx) {
                 if let Err(e) = result {
                     return Poll::Ready(Err(e));
@@ -266,13 +266,6 @@ impl Peer {
             if let Err(e) = self.client.try_read(&mut self.read) {
                 return Poll::Ready(Err(e));
             };
-
-            if self.read.capacity() > MAX_CAPACITY {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "read buffer too large",
-                )));
-            }
 
             return Poll::Ready(Ok(()));
         }

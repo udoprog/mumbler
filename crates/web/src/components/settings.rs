@@ -13,7 +13,7 @@ pub(crate) enum Msg {
     AvatarImageUpload(MouseEvent),
     AvatarImageClear(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
-    AvatarUploaded(Result<Packet<api::UploadImage>, ws::Error>),
+    ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ListImages(Result<Packet<api::ListSettings>, ws::Error>),
     SelectImage(api::Id),
     SelectImageResult(Result<Packet<api::SelectImage>, ws::Error>),
@@ -36,9 +36,11 @@ pub(crate) struct Settings {
     images: Vec<api::Image>,
     file: Option<File>,
     preview_url: Option<String>,
+    error: Option<String>,
     _state_change: ws::StateListener,
     _file_reader: Option<FileReader>,
-    _upload_avatar: ws::Request,
+    upload_image: ws::Request,
+    image_uploading: bool,
     _list_images: ws::Request,
     _select_image: ws::Request,
     _delete_image: ws::Request,
@@ -62,9 +64,11 @@ impl Component for Settings {
             images: Vec::new(),
             file: None,
             preview_url: None,
+            error: None,
             _state_change,
             _file_reader: None,
-            _upload_avatar: ws::Request::new(),
+            upload_image: ws::Request::new(),
+            image_uploading: false,
             _list_images: ws::Request::new(),
             _select_image: ws::Request::new(),
             _delete_image: ws::Request::new(),
@@ -79,8 +83,9 @@ impl Component for Settings {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
+                self.error = Some(error.to_string());
                 tracing::error!(%error, "Failed to update settings");
-                false
+                true
             }
         }
     }
@@ -100,7 +105,12 @@ impl Component for Settings {
             }
         });
 
-        let choose_classes = classes!("btn", self.file.is_some().then_some("hidden"));
+        let choose_classes = classes!(
+            "btn",
+            self.file.is_some().then_some("hidden"),
+            self.image_uploading.then_some("disabled")
+        );
+        let choose_disabled = self.file.is_some() || self.image_uploading;
 
         let ok = self
             .file
@@ -116,8 +126,16 @@ impl Component for Settings {
 
         let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
 
+        let error = self.error.as_ref().map(|e| {
+            html! {
+                <div class="banner error">{e}</div>
+            }
+        });
+
         html! {
             <div class="settings rows">
+                {error}
+
                 <h2>{"Select Avatar:"}</h2>
 
                 if let Some(url) = &self.preview_url {
@@ -128,7 +146,7 @@ impl Component for Settings {
 
                 <section>
                     <div class="btn-group">
-                        <label for="avatar-file" class={choose_classes}>{"Upload image"}</label>
+                        <label for="avatar-file" class={choose_classes} disabled={choose_disabled}>{"Upload image"}</label>
                         <button onclick={ok} class={ok_classes}>{"Ok"}</button>
                         <button onclick={cancel} class={cancel_classes}>{"Cancel"}</button>
                     </div>
@@ -239,19 +257,22 @@ impl Settings {
             }
             Msg::AvatarImageData(content_type, result) => {
                 self._file_reader = None;
+
                 let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
 
-                self._upload_avatar = ctx
+                self.upload_image = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UploadImageRequest { content_type, data })
-                    .on_packet(ctx.link().callback(Msg::AvatarUploaded))
+                    .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
 
+                self.image_uploading = true;
                 Ok(false)
             }
-            Msg::AvatarUploaded(result) => {
+            Msg::ImageUploaded(result) => {
+                self.image_uploading = false;
                 let result = result?;
                 _ = result.decode()?;
                 self.refresh(ctx);
