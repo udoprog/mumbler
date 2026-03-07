@@ -184,13 +184,17 @@ impl Component for Settings {
                             />
                     </section>
 
-                    <h2>{"Remote Server:"}</h2>
+                    <h2>{"Remote Server"}</h2>
+
+                    <div class="hint">
+                        {"If a remote server is configured and enabled, it can be used to synchronize state between many Mumbler Clients."}
+                    </div>
 
                     <section>
                         <input
                             id="remote-server"
                             type="text"
-                            placeholder="host:port (e.g. 127.0.0.1:44114)"
+                            placeholder="host[:port]"
                             value={self.remote_server.clone()}
                             onchange={ctx.link().callback(Msg::ServerChanged)}
                             />

@@ -83,14 +83,14 @@ impl Component for RemoteStatus {
         };
 
         let toggle_title = if self.enabled {
-            "Disable remote server"
+            "Disable Remote Server"
         } else {
-            "Enable remote server"
+            "Enable Remote Server"
         };
 
         html! {
             <section class="remote control-group">
-                <Icon name="remote" title="Status of Remote server connection" />
+                <Icon name="remote" title="Status of Remote Server connection" />
                 <button
                     class="btn square sm secondary"
                     onclick={on_restart}

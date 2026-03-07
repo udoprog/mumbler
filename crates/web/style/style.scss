@@ -314,3 +314,37 @@ canvas#map {
         cursor: pointer;
     }
 }
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="url"],
+input[type="number"],
+input[type="search"] {
+    background-color: var(--control-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: $border-radius;
+    padding: 0.4em 0.6em;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+
+    &::placeholder {
+        color: var(--text-color-muted);
+    }
+
+    &:focus {
+        border-color: var(--link-color);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+}
+
+.hint {
+    font-size: 0.9em;
+    color: var(--text-color-muted);
+}
