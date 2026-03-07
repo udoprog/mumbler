@@ -2,11 +2,14 @@ use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{File, HtmlInputElement, Url};
+use web_sys::{CanvasRenderingContext2d, File, HtmlCanvasElement, HtmlInputElement, Url};
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::images::{ImageMessage, Images};
 use crate::log;
+
+use super::render;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -23,6 +26,10 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     SelectColor(api::Color),
     SelectColorResult(Result<Packet<api::SelectColor>, ws::Error>),
+    NameChanged(Event),
+    UpdateName(Option<String>),
+    UpdateNameResult(Result<Packet<api::UpdateName>, ws::Error>),
+    ImageLoaded(ImageMessage),
     ContextUpdate(log::Log),
 }
 
@@ -35,9 +42,12 @@ pub(crate) struct Settings {
     state: ws::State,
     selected: Option<api::Id>,
     color: api::Color,
+    name: Option<String>,
     images: Vec<api::Image>,
     file: Option<File>,
     preview_url: Option<String>,
+    preview_canvas: NodeRef,
+    preview_images: Images<Self>,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
@@ -48,6 +58,14 @@ pub(crate) struct Settings {
     _select_image: ws::Request,
     _delete_image: ws::Request,
     _select_color: ws::Request,
+    _update_name: ws::Request,
+}
+
+impl From<ImageMessage> for Msg {
+    #[inline]
+    fn from(message: ImageMessage) -> Self {
+        Msg::ImageLoaded(message)
+    }
 }
 
 impl Component for Settings {
@@ -69,9 +87,12 @@ impl Component for Settings {
             state,
             selected: None,
             color: api::Color::neutral(),
+            name: None,
             images: Vec::new(),
             file: None,
             preview_url: None,
+            preview_canvas: NodeRef::default(),
+            preview_images: Images::new(),
             log,
             _log_handle,
             _state_change,
@@ -82,6 +103,7 @@ impl Component for Settings {
             _select_image: ws::Request::new(),
             _delete_image: ws::Request::new(),
             _select_color: ws::Request::new(),
+            _update_name: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -95,6 +117,12 @@ impl Component for Settings {
                 self.log.error("settings::update", &error);
                 true
             }
+        }
+    }
+
+    fn rendered(&mut self, _ctx: &Context<Self>, _first_render: bool) {
+        if let Err(error) = self.redraw_preview() {
+            self.log.error("settings::redraw_preview", error);
         }
     }
 
@@ -136,6 +164,24 @@ impl Component for Settings {
 
         html! {
             <div class="settings rows">
+                <h2>{"Avatar Preview:"}</h2>
+
+                <section class="avatar-preview">
+                    <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
+                </section>
+
+                <h2>{"Avatar Name:"}</h2>
+
+                <section>
+                    <input
+                        id="avatar-name"
+                        type="text"
+                        placeholder="Enter avatar name"
+                        value={self.name.clone().unwrap_or_default()}
+                        onchange={ctx.link().callback(Msg::NameChanged)}
+                        />
+                </section>
+
                 <h2>{"Select Avatar:"}</h2>
 
                 if let Some(url) = &self.preview_url {
@@ -284,6 +330,8 @@ impl Settings {
                 self.selected = response.selected;
                 self.color = response.color;
                 self.images = response.images;
+                self.name = response.name;
+                self.load_preview_image(ctx);
                 Ok(true)
             }
             Msg::SelectImage(id) => {
@@ -301,6 +349,7 @@ impl Settings {
                 let result = result?;
                 let response = result.decode()?;
                 self.selected = Some(response.id);
+                self.load_preview_image(ctx);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -347,10 +396,77 @@ impl Settings {
                 self.color = response.color;
                 Ok(true)
             }
+            Msg::NameChanged(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                let value = input.value();
+                let name = if value.is_empty() { None } else { Some(value) };
+                ctx.link().send_message(Msg::UpdateName(name));
+                Ok(false)
+            }
+            Msg::UpdateName(name) => {
+                self._update_name = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateNameRequest { name })
+                    .on_packet(ctx.link().callback(Msg::UpdateNameResult))
+                    .send();
+                Ok(false)
+            }
+            Msg::UpdateNameResult(result) => {
+                let result = result?;
+                let response = result.decode()?;
+                self.name = response.name;
+                Ok(true)
+            }
+            Msg::ImageLoaded(msg) => {
+                self.preview_images.update(msg);
+                Ok(true)
+            }
             Msg::ContextUpdate(log) => {
                 self.log = log;
                 Ok(false)
             }
         }
+    }
+
+    fn load_preview_image(&mut self, ctx: &Context<Self>) {
+        self.preview_images.clear();
+
+        if let Some(id) = self.selected {
+            self.preview_images.load(ctx, id);
+        }
+    }
+
+    fn redraw_preview(&self) -> Result<(), Error> {
+        let Some(canvas) = self.preview_canvas.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
+
+        let cx = canvas.get_context("2d")?.ok_or("missing canvas context")?;
+
+        let cx = cx
+            .dyn_into::<CanvasRenderingContext2d>()
+            .map_err(|_| "invalid canvas context")?;
+
+        let avatar = render::RenderAvatar {
+            transform: api::Transform::origin(),
+            look_at: None,
+            image: self.selected,
+            color: self.color,
+            name: self.name.clone(),
+            player: true,
+        };
+
+        render::draw_avatar_preview(&cx, &canvas, &avatar, |id| {
+            self.preview_images.get(id).cloned()
+        })?;
+
+        Ok(())
     }
 }

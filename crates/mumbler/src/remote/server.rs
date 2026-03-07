@@ -16,7 +16,9 @@ use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::{UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateTransform};
+use crate::remote::api::{
+    UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateNameBody, UpdateTransform,
+};
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
@@ -38,6 +40,8 @@ struct PeerState {
     color: api::Color,
     /// The current image of the peer.
     image: Option<Vec<u8>>,
+    /// The display name of the peer.
+    name: Option<String>,
     /// The room the peer is in.
     room: Option<Box<[u8]>>,
 }
@@ -52,6 +56,7 @@ impl PeerState {
             look_at: None,
             color: api::Color::neutral(),
             image: None,
+            name: None,
             room: None,
         }
     }
@@ -371,6 +376,37 @@ impl State {
                         }
                     }
                 }
+                Event::UpdateName => {
+                    let event = body.decode::<UpdateNameBody>()?;
+                    tracing::debug!(name = ?event.name, "update name");
+
+                    this.name = event.name;
+
+                    let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                        continue;
+                    };
+
+                    tracing::debug! {
+                        room.name = ?BStr::new(&room.name),
+                        members = ?room.members,
+                        name = ?this.name,
+                        "broadcasting name update"
+                    };
+
+                    for id in room.members.iter() {
+                        if *id == this.id {
+                            continue;
+                        }
+
+                        if let Some(peer) = peers.get_mut(id) {
+                            if let Err(e) = peer.peer.updated_name(this.id, this.name.clone()) {
+                                tracing::error!(?id, ?e, "failed to send name update");
+                            } else {
+                                self.poll.insert(*id);
+                            }
+                        }
+                    }
+                }
                 event => {
                     return Err(anyhow::anyhow!("unsupported event: {event:?}"));
                 }
@@ -473,6 +509,10 @@ impl State {
 
             if let Err(e) = joining.peer.updated_image(other.id, other.image.clone()) {
                 tracing::error!(?id, ?e, "failed to send image update");
+            }
+
+            if let Err(e) = joining.peer.updated_name(other.id, other.name.clone()) {
+                tracing::error!(?id, ?e, "failed to send name update");
             }
 
             self.poll.insert(joining.id);

@@ -10,7 +10,7 @@ use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::remote::api::{
     Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedLookAt,
-    UpdatedTransform,
+    UpdatedNameBody, UpdatedTransform,
 };
 use crate::remote::{Client, Peer};
 
@@ -137,6 +137,23 @@ async fn handle_peer(
                     color: event.color,
                 });
             }
+            Event::UpdatedName => {
+                let event = body.decode::<UpdatedNameBody>()?;
+                tracing::debug!(?event.id, name = ?event.name, "updated name");
+
+                {
+                    let mut remote = b.client_state().await;
+
+                    if let Some(peer) = remote.peers.get_mut(&event.id) {
+                        peer.name = event.name.clone();
+                    }
+                }
+
+                b.broadcast(BackendEvent::NameUpdated {
+                    peer_id: event.id,
+                    name: event.name,
+                });
+            }
             event => {
                 tracing::debug!(?event);
             }
@@ -196,6 +213,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
 
     peer.update_image(image)?;
     peer.update_color(player.color.clone())?;
+    peer.update_name(player.name.clone())?;
 
     loop {
         tokio::select! {
@@ -228,6 +246,10 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
 
                 if state.is_color() {
                     peer.update_color(state.color)?;
+                }
+
+                if state.is_name() {
+                    peer.update_name(state.name.clone())?;
                 }
 
                 wait.set(b.client_wait());

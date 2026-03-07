@@ -12,6 +12,7 @@ const TRANSFORM_CHANGED: u8 = 0b0000_0001;
 const LOOK_AT_CHANGED: u8 = 0b0000_0010;
 const IMAGE_CHANGED: u8 = 0b0000_0100;
 const COLOR_CHANGED: u8 = 0b0000_1000;
+const NAME_CHANGED: u8 = 0b0001_0000;
 
 #[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
@@ -22,6 +23,7 @@ pub(crate) enum BackendEvent {
     LookAt { peer_id: Id, look_at: Option<Vec3> },
     ImageUpdated { peer_id: Id, image: Option<Id> },
     ColorUpdated { peer_id: Id, color: Color },
+    NameUpdated { peer_id: Id, name: Option<String> },
 }
 
 /// State for the backend.
@@ -31,6 +33,7 @@ pub(crate) struct Player {
     pub(crate) look_at: Option<Vec3>,
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
+    pub(crate) name: Option<String>,
     changed: u8,
 }
 
@@ -58,6 +61,12 @@ impl Player {
     pub(crate) fn is_color(&self) -> bool {
         self.changed & COLOR_CHANGED != 0
     }
+
+    /// Check if the player's name has changed.
+    #[inline]
+    pub(crate) fn is_name(&self) -> bool {
+        self.changed & NAME_CHANGED != 0
+    }
 }
 
 /// Information about a remote peer.
@@ -66,6 +75,7 @@ pub(crate) struct PeerInfo {
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
     pub(crate) look_at: Option<Vec3>,
+    pub(crate) name: Option<String>,
 }
 
 impl Default for PeerInfo {
@@ -75,6 +85,7 @@ impl Default for PeerInfo {
             image: None,
             color: Color::neutral(),
             look_at: None,
+            name: None,
         }
     }
 }
@@ -153,6 +164,8 @@ impl Backend {
 
         let look_at = database.get_config::<Vec3>("avatar/look-at").await?;
 
+        let name = database.get_config::<String>("avatar/name").await?;
+
         let mumblelink_enabled = database
             .get_config::<bool>("mumble/enabled")
             .await?
@@ -168,6 +181,7 @@ impl Backend {
                         look_at,
                         image,
                         color,
+                        name,
                         changed: 0,
                     },
                     peers: HashMap::new(),
@@ -251,6 +265,14 @@ impl Backend {
         let mut state = self.inner.client_state.lock().await;
         state.player.color = color;
         state.player.changed |= COLOR_CHANGED;
+        self.inner.client_notify.notify_one();
+    }
+
+    /// Update the player's display name.
+    pub(crate) async fn set_client_name(&self, name: Option<String>) {
+        let mut state = self.inner.client_state.lock().await;
+        state.player.name = name;
+        state.player.changed |= NAME_CHANGED;
         self.inner.client_notify.notify_one();
     }
 

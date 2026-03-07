@@ -124,6 +124,24 @@ pub struct UpdatedColorBody {
     pub color: Color,
 }
 
+/// A request to update the display name.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateNameBody {
+    /// The new display name for the peer.
+    pub name: Option<String>,
+}
+
+/// Information that a peer updated their display name.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdatedNameBody {
+    /// The peer that updated their name.
+    pub id: Id,
+    /// The new display name for the peer.
+    pub name: Option<String>,
+}
+
 api::define! {
     pub type Connect;
 
@@ -201,5 +219,17 @@ api::define! {
 
     impl Broadcast for UpdatedColor {
         impl Event for UpdatedColorBody;
+    }
+
+    pub type UpdateName;
+
+    impl Broadcast for UpdateName {
+        impl Event for UpdateNameBody;
+    }
+
+    pub type UpdatedName;
+
+    impl Broadcast for UpdatedName {
+        impl Event for UpdatedNameBody;
     }
 }

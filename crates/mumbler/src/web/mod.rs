@@ -149,6 +149,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
             look_at: state.player.look_at,
             image: state.player.image,
             color: state.player.color.clone(),
+            name: state.player.name.clone(),
         };
 
         for (id, peer) in state.peers.iter() {
@@ -158,6 +159,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                 image: peer.image,
                 color: peer.color.clone(),
                 look_at: peer.look_at,
+                name: peer.name.clone(),
             });
         }
     }
@@ -176,7 +178,6 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
     let ev = api::InitializeMapEvent {
         player,
-        name: Some("Gilbert".to_owned()),
         remote_avatars,
         world: api::World {
             zoom,
@@ -203,16 +204,14 @@ async fn upload_image(
 }
 
 async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
-    let selected = backend.db().get_config::<Id>("avatar/image").await?;
     let images = backend.db().list_images().await?;
-    let color = {
-        let state = backend.client_state().await;
-        state.player.color
-    };
+    let state = backend.client_state().await;
+
     Ok(api::ListSettingsResponse {
-        selected,
+        selected: state.player.image,
         images,
-        color,
+        color: state.player.color,
+        name: state.player.name.clone(),
     })
 }
 
@@ -241,6 +240,19 @@ async fn select_color(
     backend.db().set_config("avatar/color", color).await?;
     backend.set_client_color(color).await;
     Ok(api::SelectColorResponse { color })
+}
+
+async fn update_name(
+    backend: &Backend,
+    request: api::UpdateNameRequest,
+) -> Result<api::UpdateNameResponse> {
+    let name = request.name;
+    backend
+        .db()
+        .set_optional_config("avatar/name", name.clone())
+        .await?;
+    backend.set_client_name(name.clone()).await;
+    Ok(api::UpdateNameResponse { name })
 }
 
 async fn update_world(

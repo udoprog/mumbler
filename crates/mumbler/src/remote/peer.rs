@@ -14,8 +14,8 @@ use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
 use crate::remote::api::{
-    UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateTransform, UpdatedColorBody,
-    UpdatedImageBody, UpdatedLookAt, UpdatedTransform,
+    UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateNameBody, UpdateTransform,
+    UpdatedColorBody, UpdatedImageBody, UpdatedLookAt, UpdatedNameBody, UpdatedTransform,
 };
 
 use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
@@ -211,6 +211,20 @@ impl Peer {
     /// Mark the given peer as having updated their color.
     pub fn updated_color(&mut self, peer_id: Id, color: Color) -> Result<()> {
         self.scratch.send(UpdatedColorBody { id: peer_id, color })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Update the peer's display name.
+    pub fn update_name(&mut self, name: Option<String>) -> Result<()> {
+        self.scratch.send(UpdateNameBody { name })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having updated their display name.
+    pub fn updated_name(&mut self, peer_id: Id, name: Option<String>) -> Result<()> {
+        self.scratch.send(UpdatedNameBody { id: peer_id, name })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

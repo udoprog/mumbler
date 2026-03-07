@@ -106,6 +106,14 @@ impl ws::Handler for Handler {
                 let response = super::select_color(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::UpdateName => {
+                let request = incoming
+                    .read::<api::UpdateNameRequest>()
+                    .context("missing request")?;
+
+                let response = super::update_name(&self.backend, request).await?;
+                outgoing.write(response);
+            }
             api::Request::UpdateWorld => {
                 let request = incoming
                     .read::<api::UpdateWorldRequest>()
@@ -231,6 +239,9 @@ pub(super) async fn entry(
                             },
                             BackendEvent::ColorUpdated { peer_id, color } => {
                                 api::RemoteAvatarUpdateBody::ColorUpdated { peer_id, color }
+                            },
+                            BackendEvent::NameUpdated { peer_id, name } => {
+                                api::RemoteAvatarUpdateBody::NameUpdated { peer_id, name }
                             }
                         };
 

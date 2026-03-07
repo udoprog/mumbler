@@ -306,6 +306,8 @@ pub struct RemoteAvatar {
     pub color: Color,
     /// The point in world coordinates that the avatar is looking at.
     pub look_at: Option<Vec3>,
+    /// The display name of this avatar.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -319,6 +321,8 @@ pub struct Avatar {
     pub image: Option<Id>,
     /// The custom color for the avatar.
     pub color: Color,
+    /// The display name of this avatar.
+    pub name: Option<String>,
 }
 
 impl Avatar {
@@ -330,6 +334,7 @@ impl Avatar {
             look_at: None,
             image: None,
             color: Color::neutral(),
+            name: None,
         }
     }
 }
@@ -340,8 +345,6 @@ impl Avatar {
 pub struct InitializeMapEvent {
     /// The player avatar.
     pub player: Avatar,
-    /// The name of the current user.
-    pub name: Option<String>,
     /// List of remote avatars.
     pub remote_avatars: Vec<RemoteAvatar>,
     /// The configuration of the world.
@@ -372,6 +375,8 @@ pub struct ListSettingsResponse {
     pub color: Color,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
+    /// The display name of the player's avatar.
+    pub name: Option<String>,
 }
 
 /// Request to select an image for use as the player's avatar.
@@ -398,6 +403,20 @@ pub struct DeleteImageRequest {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct DeleteImageResponse;
+
+/// Request to update the avatar display name.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateNameRequest {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateNameResponse {
+    /// The updated name.
+    pub name: Option<String>,
+}
 
 /// Request to select a custom color for the player's avatar.
 #[derive(Debug, Encode, Decode)]
@@ -468,6 +487,7 @@ pub enum RemoteAvatarUpdateBody {
     LookAt { peer_id: Id, look_at: Option<Vec3> },
     ImageUpdated { peer_id: Id, image: Option<Id> },
     ColorUpdated { peer_id: Id, color: Color },
+    NameUpdated { peer_id: Id, name: Option<String> },
 }
 
 api::define! {
@@ -525,6 +545,13 @@ api::define! {
     impl Endpoint for SelectColor {
         impl Request for SelectColorRequest;
         type Response<'de> = SelectColorResponse;
+    }
+
+    pub type UpdateName;
+
+    impl Endpoint for UpdateName {
+        impl Request for UpdateNameRequest;
+        type Response<'de> = UpdateNameResponse;
     }
 
     pub type UpdateWorld;
