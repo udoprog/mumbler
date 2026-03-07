@@ -224,7 +224,7 @@ impl Component for Map {
         if self._animation_interval.is_none() && self.move_target.is_some() {
             let link = ctx.link().clone();
 
-            let interval = Interval::new((1000 / ANIMATION_FPS) as u32, move || {
+            let interval = Interval::new(1000 / ANIMATION_FPS, move || {
                 link.send_message(Msg::AnimationFrame);
             });
 

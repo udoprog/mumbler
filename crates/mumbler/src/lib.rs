@@ -1,3 +1,5 @@
+#![allow(clippy::async_yields_async)]
+
 mod web;
 
 mod database;

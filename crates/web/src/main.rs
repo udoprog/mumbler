@@ -78,7 +78,7 @@ impl Component for App {
                 true
             }
             Msg::Notification(result) => {
-                match result.and_then(|p| p.decode().map_err(Into::into)) {
+                match result.and_then(|p| p.decode()) {
                     Ok(api::ServerNotificationBody::Info { component, message }) => {
                         self.log.log_info(component, message);
                     }

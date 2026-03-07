@@ -79,10 +79,10 @@ impl PeerState {
                 continue;
             }
 
-            if let Some(peer) = peers.get_mut(id) {
-                if let Err(e) = f(&mut peer.peer) {
-                    tracing::error!(?id, ?e, "failed to send update");
-                }
+            if let Some(peer) = peers.get_mut(id)
+                && let Err(e) = f(&mut peer.peer)
+            {
+                tracing::error!(?id, ?e, "failed to send update");
             }
         }
 

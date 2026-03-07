@@ -275,16 +275,16 @@ impl Unpin for ReadyFuture<'_> {}
 impl Peer {
     /// Polls the peer for readiness.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.write.has_remaining() {
-            if let Poll::Ready(result) = self.client.poll_write_ready(cx) {
-                if let Err(e) = result {
-                    return Poll::Ready(Err(e));
-                };
+        if self.write.has_remaining()
+            && let Poll::Ready(result) = self.client.poll_write_ready(cx)
+        {
+            if let Err(e) = result {
+                return Poll::Ready(Err(e));
+            };
 
-                if let Err(e) = self.client.try_write(&mut self.write) {
-                    return Poll::Ready(Err(e));
-                };
-            }
+            if let Err(e) = self.client.try_write(&mut self.write) {
+                return Poll::Ready(Err(e));
+            };
         }
 
         if let Poll::Ready(result) = self.client.poll_read_ready(cx) {

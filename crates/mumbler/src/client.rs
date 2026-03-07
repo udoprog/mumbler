@@ -107,11 +107,7 @@ async fn handle_peer(
                     let mut images = b.images().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        let image = if let Some(data) = event.image {
-                            Some(images.store(data))
-                        } else {
-                            None
-                        };
+                        let image = event.image.map(|data| images.store(data));
 
                         if let Some(old) = mem::replace(&mut peer.image, image) {
                             images.remove(old);
@@ -138,7 +134,7 @@ async fn handle_peer(
                     let mut remote = b.client_state().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
-                        peer.color = event.color.clone();
+                        peer.color = event.color;
                     }
                 }
 
@@ -222,7 +218,7 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
     };
 
     peer.update_image(image)?;
-    peer.update_color(player.color.clone())?;
+    peer.update_color(player.color)?;
     peer.update_name(player.name.clone())?;
 
     loop {

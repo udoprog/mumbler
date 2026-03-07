@@ -148,7 +148,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
             transform: state.player.transform,
             look_at: state.player.look_at,
             image: state.player.image,
-            color: state.player.color.clone(),
+            color: state.player.color,
             name: state.player.name.clone(),
         };
 
@@ -157,7 +157,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                 id: Id::new(id.get()),
                 transform: peer.transform,
                 image: peer.image,
-                color: peer.color.clone(),
+                color: peer.color,
                 look_at: peer.look_at,
                 name: peer.name.clone(),
             });

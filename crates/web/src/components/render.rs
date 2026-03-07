@@ -222,8 +222,8 @@ pub(crate) fn draw_avatar_token(
     {
         let (x, y) = (a.transform.position.x, a.transform.position.z);
         let angle_rad = (my - y).atan2(mx - x);
-        let dir_x = angle_rad.cos() as f32;
-        let dir_z = angle_rad.sin() as f32;
+        let dir_x = angle_rad.cos();
+        let dir_z = angle_rad.sin();
         Vec3::new(dir_x, 0.0, dir_z)
     } else {
         a.transform.front
