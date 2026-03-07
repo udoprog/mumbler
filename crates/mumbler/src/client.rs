@@ -3,7 +3,7 @@ use core::pin::{Pin, pin};
 use core::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::Transform;
+use api::{Id, Key, Transform};
 use async_fuse::Fuse;
 use tokio::time::{self, Instant, Sleep};
 
@@ -284,7 +284,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
     let settings = async || -> Result<(Option<String>, bool)> {
         let connect = b
             .db()
-            .get_config::<String>("remote/server")
+            .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
             .await?
             .as_deref()
             .or(default_connect)
@@ -292,7 +292,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
         let enabled = b
             .db()
-            .get_config::<bool>("remote/enabled")
+            .get::<bool>(Id::GLOBAL, Key::REMOTE_ENABLED)
             .await?
             .unwrap_or(true);
 

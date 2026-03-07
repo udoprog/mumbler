@@ -99,6 +99,7 @@ dependencies = [
  "musli-core",
  "musli-web",
  "serde_core",
+ "sqll",
 ]
 
 [[package]]

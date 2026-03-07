@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Color, Id, Transform, Vec3};
+use api::{Color, Id, Key, Transform, Vec3};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -162,21 +162,22 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        let image = database.get_config::<Id>("avatar/image").await?;
+        let image = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE).await?;
 
         let color = database
-            .get_config::<Color>("avatar/color")
+            .get::<Color>(Id::GLOBAL, Key::AVATAR_COLOR)
             .await?
             .unwrap_or_else(Color::neutral);
 
         let transform = database
-            .get_config::<Transform>("avatar/transform")
+            .get::<Transform>(Id::GLOBAL, Key::AVATAR_TRANSFORM)
             .await?
             .unwrap_or_else(Transform::origin);
 
-        let look_at = database.get_config::<Vec3>("avatar/look-at").await?;
-
-        let name = database.get_config::<String>("avatar/name").await?;
+        let look_at = database
+            .get::<Vec3>(Id::GLOBAL, Key::AVATAR_LOOK_AT)
+            .await?;
+        let name = database.get::<String>(Id::GLOBAL, Key::AVATAR_NAME).await?;
 
         Ok(Self {
             inner: Arc::new(Inner {

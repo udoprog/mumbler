@@ -50,7 +50,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use api::Id;
+use api::{Id, Key};
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
@@ -166,13 +166,13 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
     let zoom = b
         .db()
-        .get_config::<f32>("world/zoom")
+        .get::<f32>(Id::GLOBAL, Key::WORLD_ZOOM)
         .await?
         .unwrap_or(10.0);
 
     let pan = b
         .db()
-        .get_config::<api::Pan>("world/pan")
+        .get::<api::Pan>(Id::GLOBAL, Key::WORLD_PAN)
         .await?
         .unwrap_or_else(api::Pan::zero);
 
@@ -206,7 +206,10 @@ async fn upload_image(
 async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
     let images = backend.db().list_images().await?;
     let state = backend.client_state().await;
-    let remote_server = backend.db().get_config::<String>("remote/server").await?;
+    let remote_server = backend
+        .db()
+        .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
+        .await?;
 
     Ok(api::ListSettingsResponse {
         selected: state.player.image,
@@ -221,7 +224,10 @@ async fn select_image(
     backend: &Backend,
     request: api::SelectImageRequest,
 ) -> Result<api::SelectImageResponse> {
-    backend.db().set_config("avatar/image", request.id).await?;
+    backend
+        .db()
+        .set(Id::GLOBAL, Key::AVATAR_IMAGE, request.id)
+        .await?;
     backend.set_client_image(Some(request.id)).await;
     Ok(api::SelectImageResponse { id: request.id })
 }
@@ -239,7 +245,10 @@ async fn select_color(
     request: api::SelectColorRequest,
 ) -> Result<api::SelectColorResponse> {
     let color = request.color;
-    backend.db().set_config("avatar/color", color).await?;
+    backend
+        .db()
+        .set(Id::GLOBAL, Key::AVATAR_COLOR, color)
+        .await?;
     backend.set_client_color(color).await;
     Ok(api::SelectColorResponse { color })
 }
@@ -251,7 +260,7 @@ async fn update_name(
     let name = request.name;
     backend
         .db()
-        .set_optional_config("avatar/name", name.clone())
+        .set_optional(Id::GLOBAL, Key::AVATAR_NAME, name.clone())
         .await?;
     backend.set_client_name(name.clone()).await;
     Ok(api::UpdateNameResponse { name })
@@ -261,8 +270,14 @@ async fn update_world(
     backend: &Backend,
     request: api::UpdateWorldRequest,
 ) -> Result<api::UpdateWorldResponse> {
-    backend.db().set_config("world/pan", request.pan).await?;
-    backend.db().set_config("world/zoom", request.zoom).await?;
+    backend
+        .db()
+        .set(Id::GLOBAL, Key::WORLD_PAN, request.pan)
+        .await?;
+    backend
+        .db()
+        .set(Id::GLOBAL, Key::WORLD_ZOOM, request.zoom)
+        .await?;
     Ok(api::UpdateWorldResponse)
 }
 
@@ -280,7 +295,7 @@ async fn mumble_toggle(
 ) -> Result<api::MumbleToggleResponse> {
     backend
         .db()
-        .set_config("mumble/enabled", request.enabled)
+        .set(Id::GLOBAL, Key::MUMBLE_ENABLED, request.enabled)
         .await?;
     backend.restart_mumblelink();
     Ok(api::MumbleToggleResponse {
@@ -294,9 +309,10 @@ async fn get_mumble_status(
 ) -> Result<api::GetMumbleStatusResponse> {
     let enabled = backend
         .db()
-        .get_config::<bool>("mumble/enabled")
+        .get::<bool>(Id::GLOBAL, Key::MUMBLE_ENABLED)
         .await?
         .unwrap_or(false);
+
     Ok(api::GetMumbleStatusResponse { enabled })
 }
 
@@ -306,14 +322,16 @@ async fn get_remote_status(
 ) -> Result<api::GetRemoteStatusResponse> {
     let enabled = backend
         .db()
-        .get_config::<bool>("remote/enabled")
+        .get::<bool>(Id::GLOBAL, Key::REMOTE_ENABLED)
         .await?
         .unwrap_or(true);
+
     let server = backend
         .db()
-        .get_config::<String>("remote/server")
+        .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
         .await?
         .unwrap_or_else(|| "127.0.0.1:44114".to_string());
+
     Ok(api::GetRemoteStatusResponse { enabled, server })
 }
 
@@ -331,7 +349,7 @@ async fn remote_toggle(
 ) -> Result<api::RemoteToggleResponse> {
     backend
         .db()
-        .set_config("remote/enabled", request.enabled)
+        .set(Id::GLOBAL, Key::REMOTE_ENABLED, request.enabled)
         .await?;
 
     backend.restart_client();
@@ -347,7 +365,7 @@ async fn set_remote_server(
 ) -> Result<api::SetRemoteServerResponse> {
     backend
         .db()
-        .set_optional_config("remote/server", request.server.clone())
+        .set_optional(Id::GLOBAL, Key::REMOTE_SERVER, request.server.clone())
         .await?;
 
     backend.restart_client();

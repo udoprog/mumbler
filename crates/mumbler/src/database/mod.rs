@@ -1,4 +1,3 @@
-use core::ffi::c_int;
 use core::str;
 
 use std::collections::HashSet;
@@ -6,7 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Id, Image};
+use api::{Id, Image, Key};
 use jiff::Timestamp;
 use musli::Encode;
 use musli::alloc::Global;
@@ -14,38 +13,9 @@ use musli::de::DecodeOwned;
 use musli::mode::Binary;
 use relative_path::{RelativePath, RelativePathBuf};
 use rust_embed::RustEmbed;
-use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 use sqll::{OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
-
-#[derive(Clone, Copy)]
-struct BlobId(Id);
-
-impl BindValue for BlobId {
-    #[inline]
-    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        let bytes = self.0.get().to_le_bytes();
-        bytes.bind_value(stmt, index)
-    }
-}
-
-impl Bind for BlobId {
-    #[inline]
-    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
-        self.bind_value(stmt, BIND_INDEX)
-    }
-}
-
-impl FromColumn<'_> for BlobId {
-    type Type = ty::Blob;
-
-    #[inline]
-    fn from_column(stmt: &Statement, index: ty::Blob) -> Result<Self, sqll::Error> {
-        let id = u64::from_le_bytes(<[u8; 8]>::from_column(stmt, index)?);
-        Ok(BlobId(Id::new(id)))
-    }
-}
 
 use crate::Paths;
 
@@ -54,6 +24,7 @@ use crate::Paths;
 struct Migrations;
 
 struct Inner {
+    scratch: Vec<u8>,
     insert_image: SendStatement,
     select_images: SendStatement,
     select_image_data: SendStatement,
@@ -142,13 +113,14 @@ impl Database {
 
         let inner = unsafe {
             Inner {
+                scratch: Vec::new(),
                 insert_image: c.prepare("INSERT INTO images (id, width, height, content_type, data) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
                 select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
-                get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
-                set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
-                delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
+                get_config: c.prepare("SELECT value FROM config WHERE id = ? AND key = ?")?.into_send()?,
+                set_config: c.prepare("INSERT INTO config (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                delete_config: c.prepare("DELETE FROM config WHERE id = ? AND key = ?")?.into_send()?,
             }
         };
 
@@ -162,7 +134,7 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.select_image_data.bind((BlobId(id),))?;
+            inner.select_image_data.bind((id,))?;
 
             if let Some(data) = inner.select_image_data.next::<Vec<u8>>()? {
                 return Ok(Some(data));
@@ -183,11 +155,8 @@ impl Database {
 
             let mut images = Vec::new();
 
-            while let Some((BlobId(id), width, height)) =
-                inner.select_images.next::<(BlobId, u32, u32)>()?
-            {
+            while let Some((id, width, height)) = inner.select_images.next::<(Id, u32, u32)>()? {
                 let image = Image { id, width, height };
-
                 images.push(image);
             }
 
@@ -202,7 +171,7 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.delete_image.execute((BlobId(id),))?;
+            inner.delete_image.execute((id,))?;
             Ok(())
         });
 
@@ -217,7 +186,7 @@ impl Database {
             let id = Id::new(rand::random());
             inner
                 .insert_image
-                .execute((BlobId(id), width, height, "image/png", data))?;
+                .execute((id, width, height, "image/png", data))?;
             Ok(id)
         });
 
@@ -225,19 +194,17 @@ impl Database {
     }
 
     /// Get specific configuration by key.
-    pub async fn get_config<T>(&self, key: &str) -> Result<Option<T>>
+    pub async fn get<T>(&self, id: Id, key: Key) -> Result<Option<T>>
     where
         T: 'static + Send + DecodeOwned<Binary, Global>,
     {
         let mut inner = self.inner.clone().lock_owned().await;
 
-        let key = Box::<str>::from(key);
-
         let task = task::spawn_blocking(move || {
-            inner.get_config.bind((key,))?;
+            inner.get_config.bind((id, key))?;
 
             if let Some(row) = inner.get_config.next::<&[u8]>()? {
-                let value = musli::storage::from_slice::<T>(row)?;
+                let value = musli::descriptive::from_slice::<T>(row)?;
                 return Ok(Some(value));
             }
 
@@ -248,31 +215,39 @@ impl Database {
     }
 
     /// Set specific configuration by key, or delete it if the value is `None`.
-    pub async fn set_optional_config(
+    pub async fn set_optional(
         &self,
-        key: &str,
+        id: Id,
+        key: Key,
         value: Option<impl 'static + Send + Encode<Binary>>,
     ) -> Result<()> {
         if let Some(value) = value {
-            self.set_config(key, value).await
+            self.set(id, key, value).await
         } else {
-            self.delete_config(key).await
+            self.delete(id, key).await
         }
     }
 
     /// Set specific configuration by key.
-    pub async fn set_config(
+    pub async fn set(
         &self,
-        key: &str,
+        id: Id,
+        key: Key,
         value: impl 'static + Send + Encode<Binary>,
     ) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
-        let key = Box::<str>::from(key);
-
         let task = task::spawn_blocking(move || {
-            let value = musli::storage::to_vec(&value)?;
-            inner.set_config.execute((key, value))?;
+            musli::descriptive::encode(&mut inner.scratch, &value)?;
+
+            let Inner {
+                set_config,
+                scratch,
+                ..
+            } = &mut *inner;
+
+            set_config.execute((id, key, &scratch[..]))?;
+            scratch.clear();
             Ok(())
         });
 
@@ -280,13 +255,11 @@ impl Database {
     }
 
     /// Remove the specified configuration.
-    pub async fn delete_config(&self, key: &str) -> Result<()> {
+    pub async fn delete(&self, id: Id, key: Key) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
-        let key = Box::<str>::from(key);
-
         let task = task::spawn_blocking(move || {
-            inner.delete_config.execute((key,))?;
+            inner.delete_config.execute((id, key))?;
             Ok(())
         });
 

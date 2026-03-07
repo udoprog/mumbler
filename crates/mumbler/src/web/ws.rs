@@ -3,6 +3,8 @@ use core::pin::pin;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
+use api::Id;
+use api::Key;
 use axum::Extension;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::WebSocketUpgrade;
@@ -53,7 +55,6 @@ impl ws::Handler for Handler {
                     .context("missing request")?;
 
                 let fut1 = self.backend.set_client_transform(request.transform);
-
                 let fut2 = self.backend.set_mumblelink_transform(request.transform);
 
                 let ((), ()) = tokio::join!(fut1, fut2);
@@ -231,11 +232,11 @@ pub(super) async fn entry(
 
                         let mut result = async || {
                             if let Some(transform) = update_transform.take() {
-                                backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")?;
+                                backend.db().set(Id::GLOBAL, Key::AVATAR_TRANSFORM, transform).await.context("saving avatar transform")?;
                             }
 
                             if let Some(look_at) = update_look_at.take() {
-                                backend.db().set_optional_config("avatar/look_at", look_at).await.context("saving avatar look_at")?;
+                                backend.db().set_optional(Id::GLOBAL, Key::AVATAR_LOOK_AT, look_at).await.context("saving avatar look_at")?;
                             }
 
                             Ok(())

@@ -1,6 +1,9 @@
 mod id;
 pub use id::Id;
 
+mod config;
+pub use config::Key;
+
 use core::fmt;
 
 use musli_core::{Decode, Encode};

@@ -7,6 +7,8 @@ CREATE TABLE `images` (
 );
 
 CREATE TABLE `config` (
-    `key` TEXT PRIMARY KEY,
-    `value` BLOB NOT NULL
+    `id` INTEGER NOT NULL,
+    `key` INTEGER NOT NULL,
+    `value` BLOB NOT NULL,
+    PRIMARY KEY (`id`, `key`)
 );

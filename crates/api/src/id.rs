@@ -1,9 +1,13 @@
+#[cfg(feature = "sqll")]
+use core::ffi::c_int;
 use core::fmt;
 
 use base64::Engine as _;
 use base64::display::Base64Display;
 use musli_core::{Decode, Encode};
 use serde_core::{Deserialize, Deserializer, de};
+#[cfg(feature = "sqll")]
+use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 /// The engine used for base64.
 static ENGINE: base64::engine::general_purpose::GeneralPurpose =
@@ -12,24 +16,31 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
-pub struct Id(u64);
+pub struct Id {
+    raw: u64,
+}
 
 impl Id {
+    /// The global identifier, use for global objects.
+    pub const GLOBAL: Id = Id::new(u64::MAX);
+
+    /// Create a new identifier from a u64.
     #[inline]
     pub const fn new(id: u64) -> Self {
-        Self(id)
+        Self { raw: id }
     }
 
+    /// Get the inner u64 value of the identifier.
     #[inline]
     pub const fn get(self) -> u64 {
-        self.0
+        self.raw
     }
 }
 
 impl fmt::Display for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.0.to_be_bytes();
+        let bytes = self.raw.to_be_bytes();
         let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
@@ -38,7 +49,7 @@ impl fmt::Display for Id {
 impl fmt::Debug for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.0.to_be_bytes();
+        let bytes = self.raw.to_be_bytes();
         let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
@@ -77,10 +88,37 @@ impl<'de> Deserialize<'de> for Id {
                 }
 
                 let id = u64::from_be_bytes(dest);
-                Ok(Id(id))
+                Ok(Id::new(id))
             }
         }
 
         deserializer.deserialize_str(Visitor)
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl BindValue for Id {
+    #[inline]
+    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
+        self.raw.cast_signed().bind_value(stmt, index)
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl Bind for Id {
+    #[inline]
+    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
+        self.bind_value(stmt, BIND_INDEX)
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl FromColumn<'_> for Id {
+    type Type = ty::Integer;
+
+    #[inline]
+    fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
+        let id = i64::from_column(stmt, index)?.cast_unsigned();
+        Ok(Id::new(id))
     }
 }
