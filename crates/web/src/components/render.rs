@@ -177,7 +177,6 @@ pub(crate) fn draw_avatar_token(
 ) -> Result<(), Error> {
     let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
 
-    // Draw avatar token: circular image if available, otherwise a filled circle.
     let image_drawn = 'draw: {
         let Some(id) = a.image else {
             break 'draw false;
@@ -230,7 +229,6 @@ pub(crate) fn draw_avatar_token(
         a.transform.front
     };
 
-    // Only draw the facing arc when the avatar has a non-zero facing direction.
     if front.x.hypot(front.z) > 0.01 {
         let angle = (-front.z as f64).atan2(front.x as f64);
         let arc_radius = token_radius * 1.5;
@@ -238,15 +236,23 @@ pub(crate) fn draw_avatar_token(
         draw_facing_arc(cx, x, y, arc_radius, angle, token_radius * 0.25)?;
     }
 
-    // Draw avatar name above the token if present.
     if let Some(name) = &a.name {
         let font_size = (token_radius * 0.6).max(10.0);
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
-        cx.set_text_baseline("bottom");
 
-        let name_y = y - token_radius - 4.0;
+        let facing_up = front.x.hypot(front.z) > 0.01 && {
+            let angle = (-front.z as f64).atan2(front.x as f64);
+            angle.sin() < 0.0
+        };
 
+        let (name_y, baseline) = if facing_up {
+            (y + token_radius + 4.0, "top")
+        } else {
+            (y - token_radius - 4.0, "bottom")
+        };
+
+        cx.set_text_baseline(baseline);
         cx.set_shadow_color("rgba(0,0,0,0.8)");
         cx.set_shadow_blur(3.0);
         cx.set_fill_style_str("#ffffff");

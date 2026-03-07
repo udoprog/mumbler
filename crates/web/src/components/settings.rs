@@ -173,13 +173,13 @@ impl Component for Settings {
         html! {
             <div class="row">
                 <div class="col-8 rows">
-                    <h2>{"Avatar Name"}</h2>
+                    <h2>{"Name"}</h2>
 
                     <section>
                         <input
                             id="avatar-name"
                             type="text"
-                            placeholder="Enter avatar name"
+                            placeholder="Enter name"
                             value={self.name.clone().unwrap_or_default()}
                             onchange={ctx.link().callback(Msg::NameChanged)}
                             />
@@ -249,7 +249,7 @@ impl Component for Settings {
                 </div>
 
                 <div class="col-4 rows">
-                    <h2>{"Avatar Preview"}</h2>
+                    <h2>{"Preview"}</h2>
 
                     <section class="avatar-preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />

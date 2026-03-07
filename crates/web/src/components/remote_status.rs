@@ -92,7 +92,7 @@ impl Component for RemoteStatus {
             <section class="remote control-group">
                 <Icon name="remote" title="Status of Remote Server connection" />
                 <button
-                    class="btn square sm secondary"
+                    class="btn square sm"
                     onclick={on_restart}
                     disabled={!self.enabled}
                     title="Restart remote connection"
@@ -100,7 +100,7 @@ impl Component for RemoteStatus {
                     <Icon name="restart" />
                 </button>
                 <button
-                    class="btn square sm secondary"
+                    class="btn square sm"
                     onclick={on_toggle}
                     title={toggle_title}
                 >

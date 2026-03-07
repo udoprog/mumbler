@@ -20,7 +20,7 @@ pub(crate) fn log_component() -> Html {
         })
     };
 
-    let entries = log_context.entries();
+    let entries = log_context.borrow_entries();
 
     let on_clear = {
         let log_context = log_context.clone();
@@ -34,7 +34,7 @@ pub(crate) fn log_component() -> Html {
         <div id="content" class="log">
             <div class="log-header">
                 <div class="log-actions">
-                    <button class="btn sm secondary" onclick={on_clear}>{"Clear"}</button>
+                    <button class="btn" onclick={on_clear}>{"Clear"}</button>
                 </div>
             </div>
 

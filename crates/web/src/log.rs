@@ -1,3 +1,4 @@
+use core::cell::Ref;
 use core::fmt;
 
 use std::cell::RefCell;
@@ -24,14 +25,14 @@ impl Severity {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ErrorEntry {
+pub struct LogEntry {
     pub timestamp: f64,
     pub component: String,
     pub error: String,
     pub severity: Severity,
 }
 
-impl ErrorEntry {
+impl LogEntry {
     pub(crate) fn formatted_time(&self) -> String {
         let date = Date::new(&self.timestamp.into());
         let hours = date.get_hours();
@@ -55,9 +56,9 @@ impl PartialEq for Log {
 
 #[derive(Debug)]
 struct ErrorLogInner {
-    entries: VecDeque<ErrorEntry>,
+    entries: VecDeque<LogEntry>,
     max_entries: usize,
-    listeners: Slab<Callback<usize>>,
+    listeners: Slab<Callback<()>>,
 }
 
 pub struct ListenerHandle {
@@ -84,7 +85,7 @@ impl Log {
         }
     }
 
-    pub(crate) fn add_listener(&self, callback: Callback<usize>) -> ListenerHandle {
+    pub(crate) fn add_listener(&self, callback: Callback<()>) -> ListenerHandle {
         let mut inner = self.inner.borrow_mut();
         let id = inner.listeners.insert(callback);
 
@@ -96,16 +97,15 @@ impl Log {
 
     fn notify_listeners(&self) {
         let inner = self.inner.borrow();
-        let len = inner.entries.len();
 
         for listener in inner.listeners.iter() {
-            listener.1.emit(len);
+            listener.1.emit(());
         }
     }
 
     fn log(&self, component: impl fmt::Display, error: impl fmt::Display, severity: Severity) {
         let timestamp = Self::now();
-        let entry = ErrorEntry {
+        let entry = LogEntry {
             timestamp,
             component: component.to_string(),
             error: error.to_string(),
@@ -133,8 +133,9 @@ impl Log {
         self.log(component, error, Severity::Error);
     }
 
-    pub(crate) fn entries(&self) -> Vec<ErrorEntry> {
-        self.inner.borrow().entries.iter().cloned().collect()
+    pub(crate) fn borrow_entries(&self) -> Ref<'_, VecDeque<LogEntry>> {
+        let entries = self.inner.borrow();
+        Ref::map(entries, |inner| &inner.entries)
     }
 
     pub(crate) fn clear(&self) {

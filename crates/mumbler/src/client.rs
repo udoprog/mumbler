@@ -323,15 +323,16 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
         tokio::select! {
             result = future.as_mut(), if active => {
                 if let Err(error) = result {
-                    tracing::error!(%error, "Client errored");
+                    tracing::error!(%error);
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 } else {
-                    b.notify_info(COMPONENT, "Disconnected from server");
+                    tracing::info!("Disconnected");
+                    b.notify_info(COMPONENT, "Disconnected");
                 }
 
                 active = false;
                 reconnect.as_mut().reset(Instant::now() + Duration::from_secs(5));
-                tracing::info!("Client disconnected, reconnecting in 5s");
+                tracing::info!("Reconnecting in 5s");
             }
             _ = reconnect.as_mut(), if !active && enabled => {
                 b.notify_info(COMPONENT, "Reconnecting to server");
@@ -342,9 +343,11 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
                 (connect, enabled) = settings().await?;
 
                 if enabled {
+                    tracing::info!("Restarting");
                     b.notify_info(COMPONENT, "Restarting");
                 } else {
-                    b.notify_info(COMPONENT, "Disabled");
+                    tracing::info!("Disabling");
+                    b.notify_info(COMPONENT, "Disabling");
                 }
 
                 tracing::info!(?connect, %enabled, "Remote client config updated");

@@ -64,15 +64,17 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
                     if enabled {
                         update_interval.reset();
                         update_all_interval.reset();
-                        b.notify_info(COMPONENT, "Mumblelink enabled");
+                        b.notify_info(COMPONENT, "Enabling");
+                        tracing::info!("Enabling");
                     } else {
-                        b.notify_info(COMPONENT, "Mumblelink disabled");
+                        b.notify_info(COMPONENT, "Disabling");
+                        tracing::info!("Disabling");
                     }
                 }
 
                 if mem::take(&mut state.restart) {
-                    b.notify_info(COMPONENT, "Mumblelink restarted");
-                    tracing::info!("restarting link");
+                    b.notify_info(COMPONENT, "Restarting");
+                    tracing::info!("Restarting");
                     link.reconnect().context("Reconnecting link")?;
                     setup_link(&mut link, pos);
                 }
@@ -97,7 +99,7 @@ pub async fn managed(b: Backend) -> Result<()> {
         tokio::select! {
             result = future.as_mut(), if active => {
                 if let Err(error) = result {
-                    tracing::error!(%error, "mumblelink errored");
+                    tracing::error!(%error);
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 }
 
@@ -106,7 +108,8 @@ pub async fn managed(b: Backend) -> Result<()> {
                 active = false;
             }
             _ = reconnect.as_mut(), if !active => {
-                b.notify_info(COMPONENT, "Reconnecting");
+                b.notify_info(COMPONENT, "Restarting");
+                tracing::info!("Restarting");
                 future.set(run(b.clone()));
                 active = true;
             }
