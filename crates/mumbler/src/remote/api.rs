@@ -1,7 +1,7 @@
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{Color, Id, Transform};
+use ::api::{Color, Id, Transform, Vec3};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -72,6 +72,24 @@ pub struct UpdatedTransform {
     pub id: Id,
     /// The transform (position and orientation) of the peer.
     pub transform: Transform,
+}
+
+/// Information that a peer looked at something.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateLookAt {
+    /// The position the peer is looking at.
+    pub look_at: Option<Vec3>,
+}
+
+/// Information that a peer looked at something.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdatedLookAt {
+    /// The peer that looked at something.
+    pub id: Id,
+    /// The position the peer is looking at.
+    pub look_at: Option<Vec3>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -147,6 +165,18 @@ api::define! {
 
     impl Broadcast for Moved {
         impl Event for UpdatedTransform;
+    }
+
+    pub type LookAt;
+
+    impl Broadcast for LookAt {
+        impl Event for UpdateLookAt;
+    }
+
+    pub type LookedAt;
+
+    impl Broadcast for LookedAt {
+        impl Event for UpdatedLookAt;
     }
 
     pub type UpdateImage;

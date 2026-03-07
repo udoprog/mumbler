@@ -9,7 +9,8 @@ use tokio::time::{self, Instant, Sleep};
 use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::remote::api::{
-    Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedTransform,
+    Event, JoinBody, LeaveBody, PongBody, UpdatedColorBody, UpdatedImageBody, UpdatedLookAt,
+    UpdatedTransform,
 };
 use crate::remote::{Client, Peer};
 
@@ -36,7 +37,7 @@ async fn handle_peer(
                 tracing::debug!(?event.id, "join");
 
                 {
-                    let mut remote = b.state().await;
+                    let mut remote = b.client_state().await;
                     let peer = remote.peers.entry(event.id).or_default();
 
                     peer.transform = Transform::origin();
@@ -49,7 +50,7 @@ async fn handle_peer(
                 tracing::debug!(?event.id, "leave");
 
                 {
-                    let mut remote = b.state().await;
+                    let mut remote = b.client_state().await;
                     remote.peers.remove(&event.id);
                 }
 
@@ -60,7 +61,7 @@ async fn handle_peer(
                 tracing::debug!(?event.id, ?event.transform, "moved");
 
                 {
-                    let mut remote = b.state().await;
+                    let mut remote = b.client_state().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
                         peer.transform = event.transform;
@@ -72,12 +73,29 @@ async fn handle_peer(
                     transform: event.transform,
                 });
             }
+            Event::LookedAt => {
+                let event = body.decode::<UpdatedLookAt>()?;
+                tracing::debug!(?event.id, ?event.look_at, "looked at");
+
+                {
+                    let mut remote = b.client_state().await;
+
+                    if let Some(peer) = remote.peers.get_mut(&event.id) {
+                        peer.look_at = event.look_at;
+                    }
+                }
+
+                b.broadcast(BackendEvent::LookAt {
+                    peer_id: event.id,
+                    look_at: event.look_at,
+                });
+            }
             Event::UpdatedImage => {
                 let event = body.decode::<UpdatedImageBody>()?;
                 tracing::debug!(?event.id, image = ?event.image.as_ref().map(|i| i.len()), "updated image");
 
                 let image = {
-                    let mut remote = b.state().await;
+                    let mut remote = b.client_state().await;
                     let mut images = b.images().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
@@ -107,7 +125,7 @@ async fn handle_peer(
                 tracing::debug!(?event.id, color = ?event.color, "updated color");
 
                 {
-                    let mut remote = b.state().await;
+                    let mut remote = b.client_state().await;
 
                     if let Some(peer) = remote.peers.get_mut(&event.id) {
                         peer.color = event.color.clone();
@@ -143,7 +161,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
     let player;
 
     {
-        let mut remote = b.state().await;
+        let mut remote = b.client_state().await;
         remote.peers.clear();
         player = remote.player.clone();
     }
@@ -166,6 +184,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
     let mut wait = pin!(b.client_wait());
 
     peer.update_transform(player.transform)?;
+    peer.update_look_at(player.look_at)?;
 
     let image = 'image: {
         let Some(image) = player.image else {
@@ -189,6 +208,10 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
 
                 if state.is_transform() {
                     peer.update_transform(state.transform)?;
+                }
+
+                if state.is_look_at() {
+                    peer.update_look_at(state.look_at)?;
                 }
 
                 if state.is_image() {

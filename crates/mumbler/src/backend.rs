@@ -9,8 +9,9 @@ use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWrit
 use super::{Database, Paths};
 
 const TRANSFORM_CHANGED: u8 = 0b0000_0001;
-const IMAGE_CHANGED: u8 = 0b0000_0010;
-const COLOR_CHANGED: u8 = 0b0000_0100;
+const LOOK_AT_CHANGED: u8 = 0b0000_0010;
+const IMAGE_CHANGED: u8 = 0b0000_0100;
+const COLOR_CHANGED: u8 = 0b0000_1000;
 
 #[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
@@ -18,6 +19,7 @@ pub(crate) enum BackendEvent {
     Join { peer_id: Id },
     Leave { peer_id: Id },
     Moved { peer_id: Id, transform: Transform },
+    LookAt { peer_id: Id, look_at: Option<Vec3> },
     ImageUpdated { peer_id: Id, image: Option<Id> },
     ColorUpdated { peer_id: Id, color: Color },
 }
@@ -39,6 +41,12 @@ impl Player {
         self.changed & TRANSFORM_CHANGED != 0
     }
 
+    /// Check if the look at point has changed in the current state.
+    #[inline]
+    pub(crate) fn is_look_at(&self) -> bool {
+        self.changed & LOOK_AT_CHANGED != 0
+    }
+
     /// Check if the player's image has changed.
     #[inline]
     pub(crate) fn is_image(&self) -> bool {
@@ -57,6 +65,7 @@ pub(crate) struct PeerInfo {
     pub(crate) transform: Transform,
     pub(crate) image: Option<Id>,
     pub(crate) color: Color,
+    pub(crate) look_at: Option<Vec3>,
 }
 
 impl Default for PeerInfo {
@@ -65,6 +74,7 @@ impl Default for PeerInfo {
             transform: Transform::origin(),
             image: None,
             color: Color::neutral(),
+            look_at: None,
         }
     }
 }
@@ -183,7 +193,7 @@ impl Backend {
     }
 
     /// Lock the remote state and access it.
-    pub(crate) async fn state(&self) -> MutexGuard<'_, ClientState> {
+    pub(crate) async fn client_state(&self) -> MutexGuard<'_, ClientState> {
         self.inner.client_state.lock().await
     }
 
@@ -213,11 +223,18 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_client_transform(&self, transform: Transform, look_at: Option<Vec3>) {
+    pub(crate) async fn set_client_transform(&self, transform: Transform) {
         let mut state = self.inner.client_state.lock().await;
         state.player.transform = transform;
-        state.player.look_at = look_at;
         state.player.changed |= TRANSFORM_CHANGED;
+        self.inner.client_notify.notify_one();
+    }
+
+    /// Update the look at point.
+    pub(crate) async fn set_client_look_at(&self, look_at: Option<Vec3>) {
+        let mut state = self.inner.client_state.lock().await;
+        state.player.look_at = look_at;
+        state.player.changed |= LOOK_AT_CHANGED;
         self.inner.client_notify.notify_one();
     }
 

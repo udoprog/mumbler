@@ -18,7 +18,8 @@ use crate::backend::BackendEvent;
 
 struct Handler {
     backend: Backend,
-    update_transform: Option<(api::Transform, Option<api::Vec3>)>,
+    update_transform: Option<api::Transform>,
+    update_look_at: Option<Option<api::Vec3>>,
 }
 
 impl Handler {
@@ -26,6 +27,7 @@ impl Handler {
         Self {
             backend,
             update_transform: None,
+            update_look_at: None,
         }
     }
 }
@@ -44,21 +46,26 @@ impl ws::Handler for Handler {
             api::Request::InitializeMap => {
                 outgoing.write(super::initialize_map(&self.backend).await?);
             }
-            api::Request::UpdatePlayer => {
+            api::Request::UpdateTransform => {
                 let request = incoming
-                    .read::<api::UpdatePlayerRequest>()
+                    .read::<api::UpdateTransformRequest>()
                     .context("missing request")?;
 
-                let fut1 = self
-                    .backend
-                    .set_client_transform(request.avatar.transform, request.avatar.look_at);
+                let fut1 = self.backend.set_client_transform(request.transform);
 
-                let fut2 = self
-                    .backend
-                    .set_mumblelink_transform(request.avatar.transform);
+                let fut2 = self.backend.set_mumblelink_transform(request.transform);
 
                 let ((), ()) = tokio::join!(fut1, fut2);
-                self.update_transform = Some((request.avatar.transform, request.avatar.look_at));
+                self.update_transform = Some(request.transform);
+            }
+            api::Request::UpdateLookAt => {
+                let request = incoming
+                    .read::<api::UpdateLookAtRequest>()
+                    .context("missing request")?;
+
+                self.backend.set_client_look_at(request.look_at).await;
+
+                self.update_look_at = Some(request.look_at);
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -155,6 +162,7 @@ pub(super) async fn entry(
             let mut server = axum08::server(socket, Handler::new(backend.clone()));
             let mut debounce_timer = pin!(time::sleep(Duration::from_secs(0)));
             let mut update_transform = None;
+            let mut update_look_at = None;
 
             loop {
                 if let Some(update) = server.handler_mut().update_transform.take() {
@@ -165,30 +173,34 @@ pub(super) async fn entry(
                         .reset(Instant::now() + Duration::from_secs(1));
                 }
 
+                if let Some(update) = server.handler_mut().update_look_at.take() {
+                    update_look_at = Some(update);
+
+                    debounce_timer
+                        .as_mut()
+                        .reset(Instant::now() + Duration::from_secs(1));
+                }
+
                 let (result, done) = tokio::select! {
                     result = server.run() => {
                         (result.context("error in server"), true)
                     }
-                    () = debounce_timer.as_mut(), if update_transform.is_some() => {
+                    () = debounce_timer.as_mut() => {
                         tracing::debug!("saving transform");
 
-                        let result = if let Some((transform, look_at)) = update_transform.take() {
-                            (async || {
+                        let mut result = async || {
+                            if let Some(transform) = update_transform.take() {
                                 backend.db().set_config("avatar/transform", transform).await.context("saving avatar transform")?;
+                            }
 
-                                if let Some(value) = look_at {
-                                    backend.db().set_config("avatar/look-at", value).await.context("saving avatar transform")?;
-                                } else {
-                                    backend.db().delete_config("avatar/look-at").await.context("deleting avatar look-at")?;
-                                }
+                            if let Some(look_at) = update_look_at.take() {
+                                backend.db().set_optional_config("avatar/look_at", look_at).await.context("saving avatar look_at")?;
+                            }
 
-                                Ok(())
-                            })().await
-                        } else {
                             Ok(())
                         };
 
-                        (result, false)
+                        (result().await, false)
                     }
                     event = events.recv() => {
                         let Ok(event) = event else {
@@ -210,6 +222,9 @@ pub(super) async fn entry(
                             },
                             BackendEvent::Moved { peer_id, transform } => {
                                 api::RemoteAvatarUpdateBody::Move { peer_id, transform }
+                            },
+                            BackendEvent::LookAt { peer_id, look_at } => {
+                                api::RemoteAvatarUpdateBody::LookAt { peer_id, look_at }
                             },
                             BackendEvent::ImageUpdated { peer_id, image } => {
                                 api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image }

@@ -142,7 +142,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let mut remote_avatars = Vec::new();
 
     {
-        let state = b.state().await;
+        let state = b.client_state().await;
 
         player = api::Avatar {
             transform: state.player.transform,
@@ -157,6 +157,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                 transform: peer.transform,
                 image: peer.image,
                 color: peer.color.clone(),
+                look_at: peer.look_at,
             });
         }
     }
@@ -205,7 +206,7 @@ async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
     let selected = backend.db().get_config::<Id>("avatar/image").await?;
     let images = backend.db().list_images().await?;
     let color = {
-        let state = backend.state().await;
+        let state = backend.client_state().await;
         state.player.color
     };
     Ok(api::ListSettingsResponse {

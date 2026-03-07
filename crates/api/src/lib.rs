@@ -82,13 +82,23 @@ pub struct InitializeMapRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdatePlayerRequest {
-    pub avatar: Avatar,
+pub struct UpdateTransformRequest {
+    pub transform: Transform,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdatePlayerResponse;
+pub struct UpdateTransformResponse;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateLookAtRequest {
+    pub look_at: Option<Vec3>,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UpdateLookAtResponse;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -294,6 +304,8 @@ pub struct RemoteAvatar {
     pub image: Option<Id>,
     /// The custom color for the avatar.
     pub color: Color,
+    /// The point in world coordinates that the avatar is looking at.
+    pub look_at: Option<Vec3>,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -453,6 +465,7 @@ pub enum RemoteAvatarUpdateBody {
     Join { peer_id: Id },
     Leave { peer_id: Id },
     Move { peer_id: Id, transform: Transform },
+    LookAt { peer_id: Id, look_at: Option<Vec3> },
     ImageUpdated { peer_id: Id, image: Option<Id> },
     ColorUpdated { peer_id: Id, color: Color },
 }
@@ -465,11 +478,18 @@ api::define! {
         type Response<'de> = InitializeMapEvent;
     }
 
-    pub type UpdatePlayer;
+    pub type UpdateTransform;
 
-    impl Endpoint for UpdatePlayer {
-        impl Request for UpdatePlayerRequest;
-        type Response<'de> = UpdatePlayerResponse;
+    impl Endpoint for UpdateTransform {
+        impl Request for UpdateTransformRequest;
+        type Response<'de> = UpdateTransformResponse;
+    }
+
+    pub type UpdateLookAt;
+
+    impl Endpoint for UpdateLookAt {
+        impl Request for UpdateLookAtRequest;
+        type Response<'de> = UpdateLookAtResponse;
     }
 
     pub type UploadImage;

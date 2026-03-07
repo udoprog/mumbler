@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::{UpdateColorBody, UpdateImageBody, UpdateTransform};
+use crate::remote::api::{UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateTransform};
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
@@ -32,6 +32,8 @@ struct PeerState {
     timeout: Pin<Box<Sleep>>,
     /// The current transform (position and orientation) of the peer.
     transform: Transform,
+    /// The point in world coordinates that the peer is looking at.
+    look_at: Option<api::Vec3>,
     /// The color of the peer.
     color: api::Color,
     /// The current image of the peer.
@@ -47,6 +49,7 @@ impl PeerState {
             peer,
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
             transform: Transform::origin(),
+            look_at: None,
             color: api::Color::neutral(),
             image: None,
             room: None,
@@ -269,6 +272,37 @@ impl State {
                         if let Some(peer) = peers.get_mut(id) {
                             if let Err(e) = peer.peer.updated_transform(this.id, this.transform) {
                                 tracing::error!(?id, ?e, "failed to send move");
+                            } else {
+                                self.poll.insert(*id);
+                            }
+                        }
+                    }
+                }
+                Event::LookAt => {
+                    let event = body.decode::<UpdateLookAt>()?;
+                    tracing::debug!(?event.look_at, "look at");
+
+                    this.look_at = event.look_at;
+
+                    let Some(room) = this.room.as_ref().and_then(|r| self.rooms.get(r)) else {
+                        continue;
+                    };
+
+                    tracing::debug! {
+                        room.name = ?BStr::new(&room.name),
+                        members = ?room.members,
+                        look_at = ?this.look_at,
+                        "broadcasting look at"
+                    };
+
+                    for id in room.members.iter() {
+                        if *id == this.id {
+                            continue;
+                        }
+
+                        if let Some(peer) = peers.get_mut(id) {
+                            if let Err(e) = peer.peer.updated_look_at(this.id, this.look_at) {
+                                tracing::error!(?id, ?e, "failed to send look at");
                             } else {
                                 self.poll.insert(*id);
                             }

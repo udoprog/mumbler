@@ -144,7 +144,8 @@ impl ViewTransform {
 
 pub(crate) struct Map {
     _initialize: ws::Request,
-    _update_avatars: ws::Request,
+    _update_transform: ws::Request,
+    _update_look_at: ws::Request,
     _update_world: ws::Request,
     _state_change: ws::StateListener,
     _remote_avatar_listener: ws::Listener,
@@ -156,7 +157,9 @@ pub(crate) struct Map {
     /// World configuration.
     world: World,
     /// List of local avatars that need to be updated remotely.
-    update: bool,
+    update_transform: bool,
+    /// Update what the player is looking at.
+    update_look_at: bool,
     /// Whether world settings need to be updated.
     update_world: bool,
     /// The player avatar.
@@ -182,7 +185,8 @@ pub(crate) struct Map {
 
 pub(crate) enum Msg {
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
-    AvatarsUpdated(Result<Packet<api::UpdatePlayer>, ws::Error>),
+    TransformUpdated(Result<Packet<api::UpdateTransform>, ws::Error>),
+    LookAtUpdated(Result<Packet<api::UpdateLookAt>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
     RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     StateChanged(ws::State),
@@ -231,7 +235,8 @@ impl Component for Map {
 
         let mut this = Self {
             _initialize: ws::Request::new(),
-            _update_avatars: ws::Request::new(),
+            _update_transform: ws::Request::new(),
+            _update_look_at: ws::Request::new(),
             _update_world: ws::Request::new(),
             _remote_avatar_listener: remote_avatar_listener,
             _state_change,
@@ -243,7 +248,8 @@ impl Component for Map {
             world: api::World::zero(),
             player: api::Avatar::zero(),
             remote_avatars: Vec::new(),
-            update: false,
+            update_transform: false,
+            update_look_at: false,
             update_world: false,
             pan_anchor: None,
             start_press: None,
@@ -287,9 +293,14 @@ impl Component for Map {
             }
         };
 
-        if self.update {
-            self.send_updates(ctx);
-            self.update = false;
+        if self.update_transform {
+            self.send_transform_update(ctx);
+            self.update_transform = false;
+        }
+
+        if self.update_look_at {
+            self.send_look_at_update(ctx);
+            self.update_look_at = false;
         }
 
         if self.update_world {
@@ -366,14 +377,16 @@ impl Map {
                 self.redraw()?;
                 Ok(true)
             }
-            Msg::AvatarsUpdated(result) => {
+            Msg::TransformUpdated(result) => {
                 result?;
-                self.update = false;
+                Ok(false)
+            }
+            Msg::LookAtUpdated(result) => {
+                result?;
                 Ok(false)
             }
             Msg::WorldUpdated(result) => {
                 result?;
-                self.update_world = false;
                 Ok(false)
             }
             Msg::RemoteAvatarUpdate(update) => {
@@ -392,6 +405,7 @@ impl Map {
                             transform: api::Transform::origin(),
                             image: None,
                             color: api::Color::neutral(),
+                            look_at: None,
                         });
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
@@ -400,6 +414,11 @@ impl Map {
                     api::RemoteAvatarUpdateBody::Move { peer_id, transform } => {
                         if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
                             a.transform = transform;
+                        }
+                    }
+                    api::RemoteAvatarUpdateBody::LookAt { peer_id, look_at } => {
+                        if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
+                            a.look_at = look_at;
                         }
                     }
                     api::RemoteAvatarUpdateBody::ImageUpdated { peer_id, image } => {
@@ -492,7 +511,7 @@ impl Map {
                 self.player.transform.position = target;
                 self.move_target = None;
                 self._animation_interval = None;
-                self.update = true;
+                self.update_transform = true;
                 break 'done;
             }
 
@@ -502,7 +521,7 @@ impl Map {
 
             self.player.transform.position.x += dx * ratio;
             self.player.transform.position.z += dz * ratio;
-            self.update = true;
+            self.update_transform = true;
         };
 
         'done: {
@@ -514,15 +533,27 @@ impl Map {
         };
     }
 
-    fn send_updates(&mut self, ctx: &Context<Self>) {
-        self._update_avatars = ctx
+    fn send_transform_update(&mut self, ctx: &Context<Self>) {
+        self._update_transform = ctx
             .props()
             .ws
             .request()
-            .body(api::UpdatePlayerRequest {
-                avatar: self.player.clone(),
+            .body(api::UpdateTransformRequest {
+                transform: self.player.transform,
             })
-            .on_packet(ctx.link().callback(Msg::AvatarsUpdated))
+            .on_packet(ctx.link().callback(Msg::TransformUpdated))
+            .send();
+    }
+
+    fn send_look_at_update(&mut self, ctx: &Context<Self>) {
+        self._update_look_at = ctx
+            .props()
+            .ws
+            .request()
+            .body(api::UpdateLookAtRequest {
+                look_at: self.player.look_at,
+            })
+            .on_packet(ctx.link().callback(Msg::LookAtUpdated))
             .send();
     }
 
@@ -563,7 +594,7 @@ impl Map {
 
                         self.look_at(px, py, ex, ey);
                         self.player.look_at = Some(Vec3::new(ex, 0.0, ey));
-                        self.update = true;
+                        self.update_look_at = true;
                     } else {
                         self.start_press = Some((ex, ey, false));
                         self.move_target = Some(Vec3::new(ex, 0.0, ey));
@@ -620,6 +651,7 @@ impl Map {
                     self.player.look_at = None;
                 }
 
+                self.update_look_at = true;
                 self.look_at(px, py, mx, my);
                 needs_redraw = true;
             }
@@ -638,7 +670,7 @@ impl Map {
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
         self.player.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
-        self.update = true;
+        self.update_transform = true;
     }
 
     fn on_mouse_up(&mut self, e: MouseEvent) -> Result<(), Error> {
@@ -765,6 +797,7 @@ impl Map {
     fn redraw(&self) -> Result<(), Error> {
         struct RenderAvatar {
             transform: api::Transform,
+            look_at: Option<Vec3>,
             image: Option<Id>,
             color: api::Color,
             player: bool,
@@ -791,6 +824,7 @@ impl Map {
 
         let player_avatar = |a: &Avatar| RenderAvatar {
             transform: a.transform,
+            look_at: a.look_at,
             image: a.image,
             color: a.color,
             player: true,
@@ -798,6 +832,7 @@ impl Map {
 
         let remote_avatar = |a: &RemoteAvatar| RenderAvatar {
             transform: a.transform,
+            look_at: a.look_at,
             image: a.image,
             color: a.color,
             player: false,
@@ -869,33 +904,33 @@ impl Map {
                 cx.set_stroke_style_str(&a.color.to_css_string());
                 draw_facing_arc(&cx, x, y, arc_radius, angle, token_radius * 0.25)?;
             }
-        }
 
-        // Draw eye icon at look_at position
-        if let Some(target) = self.player.look_at {
-            let zoom = self.world.zoom as f64;
+            // Draw eye icon at look_at position
+            if let Some(target) = a.look_at {
+                let zoom = self.world.zoom as f64;
 
-            let eye_width = 46.0 * zoom;
-            let eye_height = 20.0 * zoom;
-            let radius = 5.0 * zoom;
+                let eye_width = 46.0 * zoom;
+                let eye_height = 20.0 * zoom;
+                let radius = 5.0 * zoom;
 
-            let color = self.player.color.to_css_string();
+                let color = a.color.to_css_string();
 
-            let (ex, ey) = t.world_to_canvas(target.x, target.z);
+                let (ex, ey) = t.world_to_canvas(target.x, target.z);
 
-            cx.save();
-            cx.set_stroke_style_str(&color);
-            cx.set_line_width(2.0 * zoom);
-            cx.begin_path();
-            cx.ellipse(ex, ey, eye_width / 2.0, eye_height / 2.0, 0.0, 0.0, TAU)?;
-            cx.stroke();
+                cx.save();
+                cx.set_stroke_style_str(&color);
+                cx.set_line_width(2.0 * zoom);
+                cx.begin_path();
+                cx.ellipse(ex, ey, eye_width / 2.0, eye_height / 2.0, 0.0, 0.0, TAU)?;
+                cx.stroke();
 
-            cx.set_fill_style_str(&color);
-            cx.begin_path();
-            cx.arc(ex, ey, radius, 0.0, TAU)?;
-            cx.fill();
+                cx.set_fill_style_str(&color);
+                cx.begin_path();
+                cx.arc(ex, ey, radius, 0.0, TAU)?;
+                cx.fill();
 
-            cx.restore();
+                cx.restore();
+            }
         }
 
         Ok(())

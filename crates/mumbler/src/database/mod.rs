@@ -247,11 +247,25 @@ impl Database {
         task.await?
     }
 
+    /// Set specific configuration by key, or delete it if the value is `None`.
+    pub async fn set_optional_config(
+        &self,
+        key: &str,
+        value: Option<impl 'static + Send + Encode<Binary>>,
+    ) -> Result<()> {
+        if let Some(value) = value {
+            self.set_config(key, value).await
+        } else {
+            self.delete_config(key).await
+        }
+    }
+
     /// Set specific configuration by key.
-    pub async fn set_config<T>(&self, key: &str, value: T) -> Result<()>
-    where
-        T: 'static + Send + Encode<Binary>,
-    {
+    pub async fn set_config(
+        &self,
+        key: &str,
+        value: impl 'static + Send + Encode<Binary>,
+    ) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let key = Box::<str>::from(key);

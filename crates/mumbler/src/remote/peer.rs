@@ -14,8 +14,8 @@ use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
 use crate::remote::api::{
-    UpdateColorBody, UpdateImageBody, UpdateTransform, UpdatedColorBody, UpdatedImageBody,
-    UpdatedTransform,
+    UpdateColorBody, UpdateImageBody, UpdateLookAt, UpdateTransform, UpdatedColorBody,
+    UpdatedImageBody, UpdatedLookAt, UpdatedTransform,
 };
 
 use super::api::{ConnectBody, Header, JoinBody, LeaveBody, PingBody, PongBody};
@@ -173,14 +173,28 @@ impl Peer {
         Ok(())
     }
 
-    /// Update the peer's image.
+    /// Set the peer's look at point.
+    pub fn update_look_at(&mut self, look_at: Option<api::Vec3>) -> Result<()> {
+        self.scratch.send(UpdateLookAt { look_at })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having updated their look at point.
+    pub fn updated_look_at(&mut self, id: Id, look_at: Option<api::Vec3>) -> Result<()> {
+        self.scratch.send(UpdatedLookAt { id, look_at })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having updated their image.
     pub fn update_image(&mut self, image: Option<Vec<u8>>) -> Result<()> {
         self.scratch.send(UpdateImageBody { image })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
-    /// Update the peer's image.
+    /// Mark the given peer as having updated their image.
     pub fn updated_image(&mut self, peer_id: Id, image: Option<Vec<u8>>) -> Result<()> {
         self.scratch.send(UpdatedImageBody { id: peer_id, image })?;
         self.write.write_message(&mut self.scratch);
@@ -194,12 +208,13 @@ impl Peer {
         Ok(())
     }
 
-    /// Update the peer's color.
+    /// Mark the given peer as having updated their color.
     pub fn updated_color(&mut self, peer_id: Id, color: Color) -> Result<()> {
         self.scratch.send(UpdatedColorBody { id: peer_id, color })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
+
     /// Poll the peer for readiness.
     pub async fn ready(&mut self) -> io::Result<()> {
         let ready = ReadyFuture { peer: self };
