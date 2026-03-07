@@ -377,6 +377,8 @@ pub struct ListSettingsResponse {
     pub images: Vec<Image>,
     /// The display name of the player's avatar.
     pub name: Option<String>,
+    /// The remote server address (e.g. "127.0.0.1:44114").
+    pub remote_server: Option<String>,
 }
 
 /// Request to select an image for use as the player's avatar.
@@ -475,6 +477,51 @@ pub struct GetMumbleStatusRequest;
 #[musli(crate = musli_core)]
 pub struct GetMumbleStatusResponse {
     pub enabled: bool,
+}
+
+// Remote server management.
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetRemoteStatusRequest;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetRemoteStatusResponse {
+    pub enabled: bool,
+    pub server: String,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RemoteRestartRequest;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RemoteRestartResponse;
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RemoteToggleRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RemoteToggleResponse {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct SetRemoteServerRequest {
+    pub server: String,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct SetRemoteServerResponse {
+    pub server: String,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -580,6 +627,34 @@ api::define! {
     impl Endpoint for GetMumbleStatus {
         impl Request for GetMumbleStatusRequest;
         type Response<'de> = GetMumbleStatusResponse;
+    }
+
+    pub type GetRemoteStatus;
+
+    impl Endpoint for GetRemoteStatus {
+        impl Request for GetRemoteStatusRequest;
+        type Response<'de> = GetRemoteStatusResponse;
+    }
+
+    pub type RemoteRestart;
+
+    impl Endpoint for RemoteRestart {
+        impl Request for RemoteRestartRequest;
+        type Response<'de> = RemoteRestartResponse;
+    }
+
+    pub type RemoteToggle;
+
+    impl Endpoint for RemoteToggle {
+        impl Request for RemoteToggleRequest;
+        type Response<'de> = RemoteToggleResponse;
+    }
+
+    pub type SetRemoteServer;
+
+    impl Endpoint for SetRemoteServer {
+        impl Request for SetRemoteServerRequest;
+        type Response<'de> = SetRemoteServerResponse;
     }
 
     pub type RemoteAvatarUpdate;

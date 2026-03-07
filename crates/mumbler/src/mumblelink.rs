@@ -1,4 +1,5 @@
 use core::mem;
+use core::pin::pin;
 
 use anyhow::Result;
 use mumblelink::{Link, Position};
@@ -10,7 +11,7 @@ use crate::Backend;
 const UPDATES_PER_SECOND: u64 = 20;
 
 #[tracing::instrument(skip_all)]
-pub async fn run(b: Backend) -> Result<()> {
+pub(crate) async fn run(b: Backend) -> Result<()> {
     let mut enabled = b.mumblelink_state().await.enabled;
 
     let mut link = if enabled {
@@ -73,6 +74,32 @@ pub async fn run(b: Backend) -> Result<()> {
                 pos.front = state.transform.front.as_array();
                 link.set_avatar(pos);
                 link.set_camera(pos);
+            }
+        }
+    }
+}
+
+/// Runs mumblelink and automatically restarts it on error with a 5-second
+/// back-off.
+pub async fn managed(b: Backend) -> Result<()> {
+    let mut future = pin!(run(b.clone()));
+    let mut reconnect = pin!(time::sleep(Duration::from_secs(0)));
+    let mut active = true;
+
+    loop {
+        tokio::select! {
+            result = future.as_mut(), if active => {
+                if let Err(error) = result {
+                    tracing::error!(%error, "mumblelink errored");
+                }
+
+                tracing::info!("mumblelink stopped, restarting in 5s");
+                reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(5));
+                active = false;
+            }
+            _ = reconnect.as_mut(), if !active => {
+                future.set(run(b.clone()));
+                active = true;
             }
         }
     }

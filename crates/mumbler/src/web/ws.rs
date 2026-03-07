@@ -146,6 +146,38 @@ impl ws::Handler for Handler {
                 let response = super::get_mumble_status(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::GetRemoteStatus => {
+                let request = incoming
+                    .read::<api::GetRemoteStatusRequest>()
+                    .context("missing request")?;
+
+                let response = super::get_remote_status(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::RemoteRestart => {
+                let request = incoming
+                    .read::<api::RemoteRestartRequest>()
+                    .context("missing request")?;
+
+                let response = super::remote_restart(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::RemoteToggle => {
+                let request = incoming
+                    .read::<api::RemoteToggleRequest>()
+                    .context("missing request")?;
+
+                let response = super::remote_toggle(&self.backend, request).await?;
+                outgoing.write(response);
+            }
+            api::Request::SetRemoteServer => {
+                let request = incoming
+                    .read::<api::SetRemoteServerRequest>()
+                    .context("missing request")?;
+
+                let response = super::set_remote_server(&self.backend, request).await?;
+                outgoing.write(response);
+            }
             api::Request::Unknown(id) => {
                 anyhow::bail!("unknown request type: {id}");
             }

@@ -16,7 +16,7 @@ $border-radius2: 8px;
     --text-color: #d9d9d9;
     --text-color-inverted: #121212;
     --text-color-muted: #888;
-    --heading-color: #eee;
+    --heading-color: #7bdea7;
     --link-color: #b3d9ec;
     --link-hover: #eee;
     --border-color: #333;
@@ -37,6 +37,12 @@ $border-radius2: 8px;
 body {
     background-color: var(--background-color);
     color: var(--text-color);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--heading-color);
+    margin: 0.5em 0;
+    font-weight: bold;
 }
 
 .pre {

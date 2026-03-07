@@ -100,19 +100,19 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     };
 
     let connected;
-    let indicator;
+    let icon;
     let title;
 
     match state {
         ws::State::Open => {
             connected = "signal";
-            indicator = None;
+            icon = "check";
             title = "Connected";
         }
         _ => {
             connected = "signal-slash";
-            indicator = Some(("⚠", "warning"));
-            title = "Not connected";
+            icon = "x-mark";
+            title = "Not connected, will reconnect automatically";
         }
     }
 
@@ -121,12 +121,10 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
             <div class="status">
                 <components::Navigation route={route} />
                 <components::MumbleStatus ws={ws.clone()} />
+                <components::RemoteStatus ws={ws.clone()} />
                 <section class="connection control-group" {title}>
-                    <Icon name={connected} />
-
-                    if let Some((indicator, indicator_class)) = indicator {
-                        <span class={classes!("connection-indicator", indicator_class)}>{indicator}</span>
-                    }
+                    <Icon name={connected} title="Application connection" />
+                    <Icon name={icon} />
                 </section>
             </div>
 

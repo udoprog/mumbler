@@ -9,6 +9,9 @@ pub(crate) use self::settings::Settings;
 mod mumble_status;
 pub(crate) use self::mumble_status::MumbleStatus;
 
+mod remote_status;
+pub(crate) use self::remote_status::RemoteStatus;
+
 mod log;
 pub(crate) use self::log::Log;
 

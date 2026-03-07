@@ -29,6 +29,9 @@ pub(crate) enum Msg {
     NameChanged(Event),
     UpdateName(Option<String>),
     UpdateNameResult(Result<Packet<api::UpdateName>, ws::Error>),
+    ServerChanged(Event),
+    SetRemoteServer(String),
+    SetRemoteServerResult(Result<Packet<api::SetRemoteServer>, ws::Error>),
     ImageLoaded(ImageMessage),
     ContextUpdate(log::Log),
 }
@@ -59,6 +62,8 @@ pub(crate) struct Settings {
     _delete_image: ws::Request,
     _select_color: ws::Request,
     _update_name: ws::Request,
+    remote_server: String,
+    _set_remote_server: ws::Request,
 }
 
 impl From<ImageMessage> for Msg {
@@ -104,6 +109,8 @@ impl Component for Settings {
             _delete_image: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
+            remote_server: String::new(),
+            _set_remote_server: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -165,7 +172,7 @@ impl Component for Settings {
         html! {
             <div class="row">
                 <div class="col-8 rows">
-                    <h2>{"Avatar Name:"}</h2>
+                    <h2>{"Avatar Name"}</h2>
 
                     <section>
                         <input
@@ -177,7 +184,19 @@ impl Component for Settings {
                             />
                     </section>
 
-                    <h2>{"Select Avatar:"}</h2>
+                    <h2>{"Remote Server:"}</h2>
+
+                    <section>
+                        <input
+                            id="remote-server"
+                            type="text"
+                            placeholder="host:port (e.g. 127.0.0.1:44114)"
+                            value={self.remote_server.clone()}
+                            onchange={ctx.link().callback(Msg::ServerChanged)}
+                            />
+                    </section>
+
+                    <h2>{"Select Avatar"}</h2>
 
                     if let Some(url) = &self.preview_url {
                         <section class="image-entry">
@@ -206,7 +225,7 @@ impl Component for Settings {
                         {for images}
                     </div>
 
-                    <h2>{"Avatar Color:"}</h2>
+                    <h2>{"Avatar Color"}</h2>
 
                     <section class="color-picker">
                         <label for="avatar-color">{"Select Color:"}</label>
@@ -220,7 +239,7 @@ impl Component for Settings {
                 </div>
 
                 <div class="col-4 rows">
-                    <h2>{"Avatar Preview:"}</h2>
+                    <h2>{"Avatar Preview"}</h2>
 
                     <section class="avatar-preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
@@ -335,6 +354,7 @@ impl Settings {
                 self.color = response.color;
                 self.images = response.images;
                 self.name = response.name;
+                self.remote_server = response.remote_server.unwrap_or_default();
                 self.load_preview_image(ctx);
                 Ok(true)
             }
@@ -426,6 +446,33 @@ impl Settings {
                 let result = result?;
                 let response = result.decode()?;
                 self.name = response.name;
+                Ok(true)
+            }
+            Msg::ServerChanged(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                let value = input.value();
+                ctx.link().send_message(Msg::SetRemoteServer(value));
+                Ok(false)
+            }
+            Msg::SetRemoteServer(server) => {
+                self._set_remote_server = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::SetRemoteServerRequest { server })
+                    .on_packet(ctx.link().callback(Msg::SetRemoteServerResult))
+                    .send();
+                Ok(false)
+            }
+            Msg::SetRemoteServerResult(result) => {
+                let result = result?;
+                let response = result.decode()?;
+                self.remote_server = response.server;
                 Ok(true)
             }
             Msg::ImageLoaded(msg) => {

@@ -7,11 +7,11 @@ use crate::error::Error;
 use crate::log;
 
 pub(crate) enum Msg {
-    GetMumbleStatus(Result<Packet<api::GetMumbleStatus>, ws::Error>),
+    GetRemoteStatus(Result<Packet<api::GetRemoteStatus>, ws::Error>),
     Restart,
-    RestartResponse(Result<Packet<api::MumbleRestart>, ws::Error>),
+    RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
-    ToggleResponse(Result<Packet<api::MumbleToggle>, ws::Error>),
+    ToggleResponse(Result<Packet<api::RemoteToggle>, ws::Error>),
     StateChanged(ws::State),
     LogUpdate(log::Log),
 }
@@ -21,7 +21,7 @@ pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
 }
 
-pub(crate) struct MumbleStatus {
+pub(crate) struct RemoteStatus {
     enabled: bool,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
@@ -32,7 +32,7 @@ pub(crate) struct MumbleStatus {
     _toggle_request: ws::Request,
 }
 
-impl Component for MumbleStatus {
+impl Component for RemoteStatus {
     type Message = Msg;
     type Properties = Props;
 
@@ -48,7 +48,7 @@ impl Component for MumbleStatus {
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
         let mut this = Self {
-            enabled: false,
+            enabled: true,
             log,
             _log_handle,
             _state_change,
@@ -66,7 +66,7 @@ impl Component for MumbleStatus {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("mumble::update", &error);
+                self.log.error("remote::update", &error);
                 false
             }
         }
@@ -81,20 +81,21 @@ impl Component for MumbleStatus {
         } else {
             html!(<Icon name="check" />)
         };
+
         let toggle_title = if self.enabled {
-            "Disable Mumble Link"
+            "Disable remote server"
         } else {
-            "Enable Mumble Link"
+            "Enable remote server"
         };
 
         html! {
-            <section class="mumble control-group">
-                <Icon name="mumble" title="Status of Mumble Link Connection" />
+            <section class="remote control-group">
+                <Icon name="remote" title="Status of Remote server connection" />
                 <button
                     class="btn square sm secondary"
                     onclick={on_restart}
                     disabled={!self.enabled}
-                    title="Restart Mumble Link"
+                    title="Restart remote connection"
                 >
                     <Icon name="restart" />
                 </button>
@@ -110,10 +111,10 @@ impl Component for MumbleStatus {
     }
 }
 
-impl MumbleStatus {
+impl RemoteStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::GetMumbleStatus(result) => {
+            Msg::GetRemoteStatus(result) => {
                 let packet = result?;
                 let response = packet.decode()?;
                 self.enabled = response.enabled;
@@ -124,13 +125,12 @@ impl MumbleStatus {
                     return Ok(false);
                 }
 
-                let ws = ctx.props().ws.clone();
-                let callback = ctx.link().callback(Msg::RestartResponse);
-
-                self._restart_request = ws
+                self._restart_request = ctx
+                    .props()
+                    .ws
                     .request()
-                    .body(api::MumbleRestartRequest)
-                    .on_packet(callback)
+                    .body(api::RemoteRestartRequest)
+                    .on_packet(ctx.link().callback(Msg::RestartResponse))
                     .send();
 
                 Ok(false)
@@ -145,15 +145,15 @@ impl MumbleStatus {
                 }
 
                 let new_enabled = !self.enabled;
-                let ws = ctx.props().ws.clone();
-                let callback = ctx.link().callback(Msg::ToggleResponse);
 
-                self._toggle_request = ws
+                self._toggle_request = ctx
+                    .props()
+                    .ws
                     .request()
-                    .body(api::MumbleToggleRequest {
+                    .body(api::RemoteToggleRequest {
                         enabled: new_enabled,
                     })
-                    .on_packet(callback)
+                    .on_packet(ctx.link().callback(Msg::ToggleResponse))
                     .send();
 
                 self.enabled = new_enabled;
@@ -183,8 +183,8 @@ impl MumbleStatus {
                 .props()
                 .ws
                 .request()
-                .body(api::GetMumbleStatusRequest)
-                .on_packet(ctx.link().callback(Msg::GetMumbleStatus))
+                .body(api::GetRemoteStatusRequest)
+                .on_packet(ctx.link().callback(Msg::GetRemoteStatus))
                 .send();
         }
     }

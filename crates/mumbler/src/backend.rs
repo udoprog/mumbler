@@ -133,6 +133,7 @@ struct Inner {
     paths: Paths,
     client_state: Mutex<ClientState>,
     client_notify: Notify,
+    client_restart_notify: Notify,
     mumblelink_state: Mutex<MumblelinkState>,
     mumblelink_notify: Notify,
     images: RwLock<Images>,
@@ -190,6 +191,7 @@ impl Backend {
                     images: HashMap::new(),
                 }),
                 client_notify: Notify::new(),
+                client_restart_notify: Notify::new(),
                 mumblelink_state: Mutex::new(MumblelinkState {
                     transform: Transform::origin(),
                     restart: false,
@@ -301,6 +303,16 @@ impl Backend {
         let mut state = self.inner.mumblelink_state.lock().await;
         state.restart = true;
         self.inner.mumblelink_notify.notify_one();
+    }
+
+    /// Signal the remote client to restart (re-read server config from DB).
+    pub(crate) fn restart_client(&self) {
+        self.inner.client_restart_notify.notify_one();
+    }
+
+    /// Wait for a client restart signal.
+    pub(crate) async fn client_restart_wait(&self) {
+        self.inner.client_restart_notify.notified().await;
     }
 
     /// Set whether mumblelink is enabled.

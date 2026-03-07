@@ -18,7 +18,7 @@ pub mod mumblelink;
 use core::pin::pin;
 use std::net::SocketAddr;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use tokio::net::TcpListener;
 
 use self::web::default_bind;
@@ -34,9 +34,8 @@ pub async fn run(b: Backend, bundle: bool, bind: &str) -> Result<()> {
     tokio::select! {
         result = future.as_mut() => {
             result?;
-            tracing::info!("web shut down gracefully");
         }
     }
 
-    Ok(())
+    bail!("web exited unexpectedly");
 }

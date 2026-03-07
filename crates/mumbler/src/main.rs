@@ -1,14 +1,11 @@
-use core::pin::pin;
-use core::time::Duration;
 use std::env;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use directories_next::ProjectDirs;
 use mumbler::{Backend, Database, Paths, client, mumblelink};
 use tokio::runtime::Builder;
-use tokio::time;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
@@ -89,49 +86,12 @@ pub fn main() -> Result<()> {
     runtime.block_on(async move {
         let b = Backend::new(c, paths).await?;
 
-        let mut mumblelink = pin!(mumblelink::run(b.clone()));
-        let mut mumblelink_reconnect = pin!(time::sleep(Duration::from_secs(0)));
-        let mut mumblelink_setup = true;
-        let mut client = pin!(client::run(b.clone(), &opts.connect));
-        let mut client_reconnect = pin!(time::sleep(Duration::from_secs(0)));
-        let mut client_setup = true;
-        let mut mumbler = pin!(mumbler::run(b.clone(), !opts.dev, &opts.bind));
+        tokio::try_join!(
+            client::managed(b.clone(), &opts.connect),
+            mumblelink::managed(b.clone()),
+            mumbler::run(b, !opts.dev, &opts.bind),
+        )?;
 
-        loop {
-            tokio::select! {
-                result = client.as_mut(), if client_setup => {
-                    if let Err(error) = result {
-                        tracing::error!(%error, "client errored");
-                    }
-
-                    client_setup = false;
-                    client_reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(5));
-                    tracing::info!("shutting down client, trying to reconnect in 5s");
-                },
-                _ = client_reconnect.as_mut(), if !client_setup => {
-                    client.set(client::run(b.clone(), &opts.connect));
-                    client_reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(0));
-                    client_setup = true;
-                }
-                result = mumblelink.as_mut(), if mumblelink_setup => {
-                    if let Err(error) = result {
-                        tracing::error!(%error, "mumblelink errored");
-                    }
-
-                    tracing::info!("shutting down mumblelink, restarting in 5s");
-                    mumblelink_reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(5));
-                    mumblelink_setup = false;
-                },
-                _ = mumblelink_reconnect.as_mut(), if !mumblelink_setup => {
-                    mumblelink.set(mumblelink::run(b.clone()));
-                    mumblelink_reconnect.as_mut().reset(time::Instant::now() + Duration::from_secs(0));
-                    mumblelink_setup = true;
-                }
-                result = mumbler.as_mut() => {
-                    result.context("mumbler")?;
-                    bail!("mumbler exited, shutting down");
-                }
-            }
-        }
+        Ok(())
     })
 }

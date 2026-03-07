@@ -164,7 +164,7 @@ async fn handle_peer(
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn run(b: Backend, connect: &str) -> Result<()> {
+pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
     let port;
 
     let host = if let Some((host, port_s)) = connect.rsplit_once(':') {
@@ -172,7 +172,7 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
         host
     } else {
         port = 44114u16;
-        connect
+        connect.as_str()
     };
 
     let player;
@@ -262,6 +262,69 @@ pub async fn run(b: Backend, connect: &str) -> Result<()> {
             }
             _ = pong_timeout.as_mut(), if last_ping.is_some() => {
                 bail!("pong timeout");
+            }
+        }
+    }
+}
+
+/// Runs and automatically reconnects the remote client.
+///
+/// Reads `remote/server` and `remote/enabled` from the database via
+/// [`Backend::remote_config`] and re-reads them whenever a restart is
+/// signalled by [`Backend::restart_client`].  The inner [`run`] loop is
+/// restarted on error after a 5-second back-off, unless the connection is
+/// disabled.
+pub async fn managed(b: Backend, default_connect: &str) -> Result<()> {
+    let settings = async || -> Result<(String, bool)> {
+        let connect = b
+            .db()
+            .get_config::<String>("remote/server")
+            .await?
+            .unwrap_or_else(|| default_connect.to_string());
+
+        let enabled = b
+            .db()
+            .get_config::<bool>("remote/enabled")
+            .await?
+            .unwrap_or(true);
+
+        Ok((connect, enabled))
+    };
+
+    let (mut connect, mut enabled) = settings().await?;
+
+    let mut conn_future = pin!(run(b.clone(), connect.clone()));
+    let mut reconnect = pin!(time::sleep(Duration::from_secs(0)));
+    let mut active = enabled;
+
+    loop {
+        tokio::select! {
+            result = conn_future.as_mut(), if active => {
+                if let Err(error) = result {
+                    tracing::error!(%error, "client errored");
+                }
+
+                active = false;
+                reconnect.as_mut().reset(Instant::now() + Duration::from_secs(5));
+                tracing::info!("client disconnected, reconnecting in 5s");
+            }
+            _ = reconnect.as_mut(), if !active && enabled => {
+                conn_future.set(run(b.clone(), connect.clone()));
+                reconnect.as_mut().reset(Instant::now() + Duration::from_secs(0));
+                active = true;
+            }
+            () = b.client_restart_wait() => {
+                (connect, enabled) = settings().await?;
+
+                tracing::info!(%connect, %enabled, "Remote client config updated");
+
+                if enabled {
+                    conn_future.set(run(b.clone(), connect.clone()));
+                    reconnect.as_mut().reset(Instant::now() + Duration::from_secs(0));
+                    active = true;
+                } else {
+                    active = false;
+                }
             }
         }
     }

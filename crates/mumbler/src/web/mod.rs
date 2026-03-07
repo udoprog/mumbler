@@ -206,12 +206,14 @@ async fn upload_image(
 async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
     let images = backend.db().list_images().await?;
     let state = backend.client_state().await;
+    let remote_server = backend.db().get_config::<String>("remote/server").await?;
 
     Ok(api::ListSettingsResponse {
         selected: state.player.image,
         images,
         color: state.player.color,
         name: state.player.name.clone(),
+        remote_server,
     })
 }
 
@@ -296,4 +298,56 @@ async fn get_mumble_status(
         .await?
         .unwrap_or(false);
     Ok(api::GetMumbleStatusResponse { enabled })
+}
+
+async fn get_remote_status(
+    backend: &Backend,
+    _request: api::GetRemoteStatusRequest,
+) -> Result<api::GetRemoteStatusResponse> {
+    let enabled = backend
+        .db()
+        .get_config::<bool>("remote/enabled")
+        .await?
+        .unwrap_or(true);
+    let server = backend
+        .db()
+        .get_config::<String>("remote/server")
+        .await?
+        .unwrap_or_else(|| "127.0.0.1:44114".to_string());
+    Ok(api::GetRemoteStatusResponse { enabled, server })
+}
+
+async fn remote_restart(
+    backend: &Backend,
+    _request: api::RemoteRestartRequest,
+) -> Result<api::RemoteRestartResponse> {
+    backend.restart_client();
+    Ok(api::RemoteRestartResponse)
+}
+
+async fn remote_toggle(
+    backend: &Backend,
+    request: api::RemoteToggleRequest,
+) -> Result<api::RemoteToggleResponse> {
+    backend
+        .db()
+        .set_config("remote/enabled", request.enabled)
+        .await?;
+    backend.restart_client();
+    Ok(api::RemoteToggleResponse {
+        enabled: request.enabled,
+    })
+}
+
+async fn set_remote_server(
+    backend: &Backend,
+    request: api::SetRemoteServerRequest,
+) -> Result<api::SetRemoteServerResponse> {
+    let server = request.server;
+    backend
+        .db()
+        .set_config("remote/server", server.clone())
+        .await?;
+    backend.restart_client();
+    Ok(api::SetRemoteServerResponse { server })
 }
