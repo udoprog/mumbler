@@ -11,7 +11,7 @@ use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::backend::RemoteAvatarEvent;
 use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
-use crate::remote::{Client, Peer};
+use crate::remote::{Client, Peer, REMOTE_PORT};
 
 const COMPONENT: &str = "remote-client";
 
@@ -123,14 +123,14 @@ async fn handle_peer(
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
+pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let port;
 
     let host = if let Some((host, port_s)) = connect.rsplit_once(':') {
         port = port_s.parse::<u16>().context("invalid port number")?;
         host
     } else {
-        port = 44114u16;
+        port = REMOTE_PORT;
         connect.as_str()
     };
 
@@ -139,8 +139,9 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
         remote.player.clone()
     };
 
-    tracing::info!(?host, ?port, "Connecting to mumbler-server");
+    tracing::info!(?host, ?port, ?tls, "Connecting to mumbler-server");
 
+    // TODO: use `tls` when establishing a TLS-wrapped connection.
     let client = Client::connect((host, port))
         .await
         .with_context(|| anyhow!("Connecting to {host}:{port}"))?;
@@ -233,7 +234,7 @@ pub(crate) async fn run(b: Backend, connect: String) -> Result<()> {
 /// restarted on error after a 5-second back-off, unless the connection is
 /// disabled.
 pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
-    let settings = async || -> Result<(Option<String>, bool)> {
+    let settings = async || -> Result<(Option<String>, bool, bool)> {
         let connect = b
             .db()
             .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
@@ -248,12 +249,18 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
             .await?
             .unwrap_or(true);
 
-        Ok((connect, enabled))
+        let tls = b
+            .db()
+            .get::<bool>(Id::GLOBAL, Key::REMOTE_TLS)
+            .await?
+            .unwrap_or(false);
+
+        Ok((connect, enabled, tls))
     };
 
-    let (mut connect, mut enabled) = settings().await?;
+    let (mut connect, mut enabled, mut tls) = settings().await?;
 
-    let build = async |connect: Option<&str>, enabled: bool| {
+    let build = async |connect: Option<&str>, enabled: bool, tls: bool| {
         {
             let mut remote = b.client_state().await;
             remote.peers.clear();
@@ -265,7 +272,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
             if let Some(connect) = &connect {
                 tracing::info!("Restarting");
                 b.notify_info(COMPONENT, "Restarting");
-                Fuse::new(run(b.clone(), connect.to_string()))
+                Fuse::new(run(b.clone(), connect.to_string(), tls))
             } else {
                 tracing::info!("Enabled, but no server configured");
                 b.notify_info(COMPONENT, "Enabled, but no server configured");
@@ -278,7 +285,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
         }
     };
 
-    let mut future = pin!(build(connect.as_deref(), enabled).await);
+    let mut future = pin!(build(connect.as_deref(), enabled, tls).await);
     let mut reconnect = pin!(Fuse::empty());
 
     loop {
@@ -297,12 +304,12 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
             }
             _ = reconnect.as_mut() => {
                 b.notify_info(COMPONENT, "Reconnecting to server");
-                future.set(build(connect.as_deref(), enabled).await);
+                future.set(build(connect.as_deref(), enabled, tls).await);
             }
             () = b.client_restart_wait() => {
-                (connect, enabled) = settings().await?;
+                (connect, enabled, tls) = settings().await?;
                 reconnect.set(Fuse::empty());
-                future.set(build(connect.as_deref(), enabled).await);
+                future.set(build(connect.as_deref(), enabled, tls).await);
             }
         }
     }

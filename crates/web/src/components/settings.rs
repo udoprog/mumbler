@@ -30,6 +30,7 @@ pub(crate) enum Msg {
     UpdateName(Option<String>),
     UpdateNameResult(Result<Packet<api::UpdateName>, ws::Error>),
     ServerChanged(Event),
+    TlsToggled(Event),
     SetRemoteServer(String),
     SetRemoteServerResult(Result<Packet<api::SetRemoteServer>, ws::Error>),
     ImageLoaded(ImageMessage),
@@ -63,6 +64,7 @@ pub(crate) struct Settings {
     _select_color: ws::Request,
     _update_name: ws::Request,
     remote_server: String,
+    remote_server_tls: bool,
     set_remote_server: ws::Request,
 }
 
@@ -110,6 +112,7 @@ impl Component for Settings {
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
             remote_server: String::new(),
+            remote_server_tls: false,
             set_remote_server: ws::Request::new(),
         };
 
@@ -242,6 +245,17 @@ impl Component for Settings {
                             disabled={is_remote_pending}
                             />
 
+                        <label class="checkbox-label">
+                            <input
+                                id="remote-server-tls"
+                                type="checkbox"
+                                checked={self.remote_server_tls}
+                                onchange={ctx.link().callback(Msg::TlsToggled)}
+                                disabled={is_remote_pending}
+                                />
+                            {" Use TLS"}
+                        </label>
+
                         if is_remote_pending {
                             <div class="loading">{"Saving ..."}</div>
                         }
@@ -365,6 +379,7 @@ impl Settings {
                 self.images = response.images;
                 self.name = response.name;
                 self.remote_server = response.remote_server.unwrap_or_default();
+                self.remote_server_tls = response.remote_server_tls;
                 self.load_preview_image(ctx);
                 Ok(true)
             }
@@ -469,6 +484,18 @@ impl Settings {
                 ctx.link().send_message(Msg::SetRemoteServer(value));
                 Ok(false)
             }
+            Msg::TlsToggled(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                self.remote_server_tls = input.checked();
+                ctx.link()
+                    .send_message(Msg::SetRemoteServer(self.remote_server.clone()));
+                Ok(false)
+            }
             Msg::SetRemoteServer(server) => {
                 let server = server.trim();
                 let server = (!server.is_empty()).then_some(server.to_owned());
@@ -477,7 +504,10 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::SetRemoteServerRequest { server })
+                    .body(api::SetRemoteServerRequest {
+                        server,
+                        tls: self.remote_server_tls,
+                    })
                     .on_packet(ctx.link().callback(Msg::SetRemoteServerResult))
                     .send();
 
@@ -487,6 +517,7 @@ impl Settings {
                 let result = result?;
                 let response = result.decode()?;
                 self.remote_server = response.server.unwrap_or_default();
+                self.remote_server_tls = response.tls;
                 Ok(true)
             }
             Msg::ImageLoaded(msg) => {

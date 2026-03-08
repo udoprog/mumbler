@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mumbler::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
-use mumbler::remote::{Client, Peer};
+use mumbler::remote::{Client, Peer, REMOTE_PORT};
 use tokio::time::{self, Duration, Instant};
 use tracing::Level;
 
@@ -17,7 +17,7 @@ struct Opts {
     #[clap(short, long, default_value = "default")]
     room: String,
     /// The server to connect to.
-    #[clap(default_value = "localhost:44114")]
+    #[clap(default_value = "localhost")]
     connect: String,
 }
 
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
         port = port_s.parse::<u16>().context("invalid port number")?;
         host
     } else {
-        port = 44114u16;
+        port = REMOTE_PORT;
         &opts.connect
     };
 

@@ -6,17 +6,20 @@ use core::time::Duration;
 
 use std::collections::{BTreeSet, HashMap, hash_map};
 use std::io;
+use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::task::Wake;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use api::{Id, Key, Value};
 use bstr::BStr;
 use parking_lot::Mutex;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{self, Sleep};
 
 use crate::remote::api::UpdatePeer;
+use crate::remote::{REMOTE_PORT, REMOTE_TLS_PORT};
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
@@ -81,10 +84,52 @@ impl PeerState {
     }
 }
 
-pub async fn run(bind: &str) -> Result<()> {
-    let listener = TcpListener::bind(bind).await?;
+/// A connector that listens for incoming connections and manages peer state.
+pub struct ConnectorConfig<'a> {
+    /// The address to bind to.
+    pub bind: &'a str,
+    /// Override the default port.
+    pub port: Option<u16>,
+    /// If the connector uses TLS.
+    pub tls: bool,
+    /// Path to TLS certificate in PEM format.
+    pub cert: Option<&'a Path>,
+    /// Path to TLS private key in PEM format.
+    pub key: Option<&'a Path>,
+}
 
-    tracing::info!(addr = ?listener.local_addr()?, "listening");
+struct Connector {
+    listener: TcpListener,
+    tls: bool,
+}
+
+pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
+    let mut connectors: Vec<Connector> = Vec::new();
+
+    for c in configs {
+        let port = match c.port {
+            Some(port) => port,
+            None => {
+                if c.tls {
+                    REMOTE_TLS_PORT
+                } else {
+                    REMOTE_PORT
+                }
+            }
+        };
+
+        let listener = TcpListener::bind((c.bind, port))
+            .await
+            .with_context(|| anyhow!("Binding {}:{port}", c.bind))?;
+        connectors.push(Connector {
+            listener,
+            tls: c.tls,
+        });
+    }
+
+    for connector in connectors.iter() {
+        tracing::info!(addr = ?connector.listener.local_addr()?, "listening");
+    }
 
     let mut peers = HashMap::new();
     let mut wakers = Wakers::new();
@@ -92,9 +137,15 @@ pub async fn run(bind: &str) -> Result<()> {
 
     loop {
         tokio::select! {
-            result = listener.accept() => {
-                let (stream, addr) = result.context("accepting connection")?;
-                let client = Client::from_stream(stream);
+            result = Listen::new(&mut connectors) => {
+                let (i, stream, addr) = result.context("accepting connection")?;
+
+                let Some(connector) = connectors.get(i) else {
+                    tracing::error!(?i, "invalid connector index");
+                    continue;
+                };
+
+                let client = Client::plain(stream);
                 let peer = Peer::new(addr, client);
                 tracing::info!(addr = ?peer.addr(), "Connected");
 
@@ -378,6 +429,34 @@ impl State {
 
             self.poll.insert(joining.id);
         }
+    }
+}
+
+struct Listen<'a> {
+    connectors: &'a mut [Connector],
+}
+
+impl<'a> Listen<'a> {
+    fn new(connectors: &'a mut [Connector]) -> Self {
+        Self { connectors }
+    }
+}
+
+impl Future for Listen<'_> {
+    type Output = io::Result<(usize, TcpStream, SocketAddr)>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        for (i, c) in this.connectors.iter_mut().enumerate() {
+            match c.listener.poll_accept(cx) {
+                Poll::Ready(Ok((stream, addr))) => return Poll::Ready(Ok((i, stream, addr))),
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => continue,
+            }
+        }
+
+        Poll::Pending
     }
 }
 

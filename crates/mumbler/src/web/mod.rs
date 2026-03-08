@@ -206,6 +206,11 @@ async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
         .db()
         .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
         .await?;
+    let remote_server_tls = backend
+        .db()
+        .get::<bool>(Id::GLOBAL, Key::REMOTE_TLS)
+        .await?
+        .unwrap_or(false);
 
     Ok(api::ListSettingsResponse {
         selected: state.player.image,
@@ -213,6 +218,7 @@ async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
         color: state.player.color,
         name: state.player.name.clone(),
         remote_server,
+        remote_server_tls,
     })
 }
 
@@ -325,8 +331,7 @@ async fn get_remote_status(
     let server = backend
         .db()
         .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
-        .await?
-        .unwrap_or_else(|| "127.0.0.1:44114".to_string());
+        .await?;
 
     Ok(api::GetRemoteStatusResponse { enabled, server })
 }
@@ -363,10 +368,15 @@ async fn set_remote_server(
         .db()
         .set_optional(Id::GLOBAL, Key::REMOTE_SERVER, request.server.clone())
         .await?;
+    backend
+        .db()
+        .set(Id::GLOBAL, Key::REMOTE_TLS, request.tls)
+        .await?;
 
     backend.restart_client();
 
     Ok(api::SetRemoteServerResponse {
         server: request.server.clone(),
+        tls: request.tls,
     })
 }

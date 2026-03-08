@@ -47,6 +47,7 @@ keys! {
     REMOTE_SERVER = 6,
     REMOTE_ENABLED = 7,
     WORLD_SCALE = 8,
+    REMOTE_TLS = 11,
     WORLD_ZOOM = 9,
     WORLD_PAN = 10,
     AVATAR_IMAGE_BYTES = 0x1000,

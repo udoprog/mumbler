@@ -7,6 +7,7 @@ use anyhow::Result;
 use musli_core::Encode;
 use musli_core::mode::Binary;
 use musli_web::api::{Broadcast, Event};
+use tokio::io::AsyncRead;
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 const READ_CAP: usize = 4096;
@@ -184,27 +185,79 @@ impl Buf {
     }
 }
 
+enum Stream {
+    Plain(TcpStream),
+}
+
+impl Stream {
+    fn peer_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Self::Plain(stream) => stream.peer_addr(),
+        }
+    }
+
+    #[inline]
+    async fn readable(&self) -> io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.readable().await,
+        }
+    }
+
+    #[inline]
+    fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.try_read(buf),
+        }
+    }
+
+    #[inline]
+    async fn writable(&self) -> io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.writable().await,
+        }
+    }
+
+    #[inline]
+    fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.try_write(buf),
+        }
+    }
+
+    #[inline]
+    fn poll_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self {
+            Self::Plain(stream) => stream.poll_write_ready(cx),
+        }
+    }
+
+    #[inline]
+    fn poll_read_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self {
+            Self::Plain(stream) => stream.poll_read_ready(cx),
+        }
+    }
+}
+
 /// A client connection.
 pub struct Client {
-    stream: TcpStream,
+    stream: Stream,
 }
 
 impl Client {
-    /// Create a client from a TCP stream.
+    /// Construct a client from a TCP stream.
     #[inline]
-    pub(crate) fn from_stream(stream: TcpStream) -> Self {
-        Self { stream }
+    pub(crate) fn plain(stream: TcpStream) -> Self {
+        Self {
+            stream: Stream::Plain(stream),
+        }
     }
 
-    /// Connect a client to the given address.
+    /// Open a plain TCP connection to the given address.
     #[inline]
-    pub async fn connect<A>(addr: A) -> Result<Self>
-    where
-        A: ToSocketAddrs,
-    {
+    pub async fn connect(addr: impl ToSocketAddrs) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
-
-        Ok(Self::from_stream(stream))
+        Ok(Self::plain(stream))
     }
 
     /// Get the socket address of the client.

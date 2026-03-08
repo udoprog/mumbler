@@ -411,8 +411,10 @@ pub struct ListSettingsResponse {
     pub images: Vec<Image>,
     /// The display name of the player's avatar.
     pub name: Option<String>,
-    /// The remote server address (e.g. "127.0.0.1:44114").
+    /// The remote host[:port] combination.
     pub remote_server: Option<String>,
+    /// Whether TLS is enabled for the remote server connection.
+    pub remote_server_tls: bool,
 }
 
 /// Request to select an image for use as the player's avatar.
@@ -523,7 +525,7 @@ pub struct GetRemoteStatusRequest;
 #[musli(crate = musli_core)]
 pub struct GetRemoteStatusResponse {
     pub enabled: bool,
-    pub server: String,
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -550,12 +552,14 @@ pub struct RemoteToggleResponse {
 #[musli(crate = musli_core)]
 pub struct SetRemoteServerRequest {
     pub server: Option<String>,
+    pub tls: bool,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct SetRemoteServerResponse {
     pub server: Option<String>,
+    pub tls: bool,
 }
 
 #[derive(Debug, Encode, Decode)]
