@@ -11,12 +11,14 @@ use web_sys::{
     ResizeObserver, WheelEvent,
 };
 use yew::prelude::*;
+use yew_router::prelude::Link;
 
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::ws;
 
+use super::navigation::Route;
 use super::render::{self, RenderAvatar, ViewTransform};
 
 const ZOOM_FACTOR: f64 = 1.2;
@@ -330,6 +332,14 @@ impl Component for Map {
                 </div>
 
                 {pos}
+
+                if let Some(id) = self.selected.and_then(|i| self.local_objects.get(i)).map(|o| o.id) {
+                    <div class="map-object-controls">
+                        <Link<Route> to={Route::ObjectSettings { id: id.get() }}>
+                            <button class="btn">{"Object Settings"}</button>
+                        </Link<Route>>
+                    </div>
+                }
             </div>
         }
     }
@@ -389,21 +399,21 @@ impl Map {
                     api::RemoteAvatarUpdateBody::Join {
                         peer_id, objects, ..
                     } => {
-                        let local = LocalObject::from_remote(&avatar);
-
-                        if let Some(id) = local.image {
-                            self.images.load(ctx, id);
-                        }
-
                         for object in objects {
+                            let local = LocalObject::from_remote(&object);
+
+                            if let Some(id) = local.image {
+                                self.images.load(ctx, id);
+                            }
+
                             self.remote_avatars.push(PeerObject {
                                 peer_id,
-                                object: LocalObject::from_remote(&object),
+                                object: local,
                             });
                         }
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
-                        self.remote_avatars.retain(|a| a.id != peer_id);
+                        self.remote_avatars.retain(|a| a.peer_id != peer_id);
                     }
                     api::RemoteAvatarUpdateBody::Update {
                         object_id,
@@ -419,7 +429,7 @@ impl Map {
                             if key == Key::AVATAR_IMAGE_ID {
                                 let new = value.as_id();
 
-                                let old = mem::replace(&mut a.image, new);
+                                let old = mem::replace(&mut a.object.image, new);
 
                                 if let Some(old) = old {
                                     self.images.remove(old);
@@ -430,7 +440,7 @@ impl Map {
                                 }
                             }
 
-                            a.update(key, value);
+                            a.object.update(key, value);
                         }
                     }
                 }
@@ -603,13 +613,11 @@ impl Map {
             return;
         }
 
-        let Some(id) = self
-            .selected
-            .and_then(|i| self.local_objects.get(i))
-            .map(|o| o.id)
-        else {
+        let Some(obj) = self.selected.and_then(|i| self.local_objects.get(i)) else {
             return;
         };
+        let id = obj.id;
+        let transform = obj.transform;
 
         self.update_transform_request = ctx
             .props()
@@ -618,7 +626,7 @@ impl Map {
             .body(api::UpdateRequest {
                 id,
                 key: Key::AVATAR_TRANSFORM,
-                value: Value::from(self.local_objects.transform),
+                value: Value::from(transform),
             })
             .on_packet(ctx.link().callback(Msg::TransformUpdated))
             .send();
@@ -629,13 +637,11 @@ impl Map {
             return;
         }
 
-        let Some(id) = self
-            .selected
-            .and_then(|i| self.local_objects.get(i))
-            .map(|o| o.id)
-        else {
+        let Some(obj) = self.selected.and_then(|i| self.local_objects.get(i)) else {
             return;
         };
+        let id = obj.id;
+        let look_at = obj.look_at;
 
         self.update_look_at_request = ctx
             .props()
@@ -644,7 +650,7 @@ impl Map {
             .body(api::UpdateRequest {
                 id,
                 key: Key::AVATAR_LOOK_AT,
-                value: Value::from(self.local_objects.look_at),
+                value: Value::from(look_at),
             })
             .on_packet(ctx.link().callback(Msg::LookAtUpdated))
             .send();
@@ -664,14 +670,15 @@ impl Map {
     }
 
     fn on_mouse_down(&mut self, e: MouseEvent) -> Result<(), Error> {
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
-            return Ok(());
-        };
-
         let needs_redraw = 'out: {
             match e.button() {
                 0 => {
                     let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+                        break 'out false;
+                    };
+
+                    let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i))
+                    else {
                         break 'out false;
                     };
 
@@ -717,10 +724,6 @@ impl Map {
             return Ok(());
         };
 
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
-            return Ok(());
-        };
-
         let v = ViewTransform::new(&canvas, &self.world);
 
         let mut needs_redraw = false;
@@ -738,18 +741,20 @@ impl Map {
         self.mouse_world_pos = Some((mx, my));
 
         if let Some((px, py, shift_key)) = self.start_press {
-            if shift_key {
-                let dist = (mx - px).hypot(my - py);
-                if dist >= ARROW_THRESHOLD {
-                    object.look_at = Some(Vec3::new(mx, 0.0, my));
-                    self.update_look_at = true;
-                    self.look_at(px, py, mx, my);
+            if let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) {
+                if shift_key {
+                    let dist = (mx - px).hypot(my - py);
+                    if dist >= ARROW_THRESHOLD {
+                        object.look_at = Some(Vec3::new(mx, 0.0, my));
+                        self.update_look_at = true;
+                        self.look_at(px, py, mx, my);
+                        needs_redraw = true;
+                    }
+                } else {
+                    // LMB drag: continuously update move target to cursor position.
+                    self.move_target = Some(Vec3::new(mx, 0.0, my));
                     needs_redraw = true;
                 }
-            } else {
-                // LMB drag: continuously update move target to cursor position.
-                self.move_target = Some(Vec3::new(mx, 0.0, my));
-                needs_redraw = true;
             }
         }
 
@@ -847,8 +852,8 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.local_objects.image.into_iter();
-        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
+        let ids = self.local_objects.iter().filter_map(|o| o.image);
+        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.object.image));
 
         for id in ids {
             self.images.load(ctx, id);
@@ -916,8 +921,9 @@ impl Map {
         render::draw_grid(&cx, &t, &self.world.extent, self.world.zoom);
 
         let avatars = || {
-            let avatars = self.remote_avatars.iter().map(RenderAvatar::from_remote);
-            avatars.chain([RenderAvatar::from_player(&self.local_objects)])
+            let remotes = self.remote_avatars.iter().map(|a| RenderAvatar::from_remote(&a.object));
+            let locals = self.local_objects.iter().map(RenderAvatar::from_player);
+            remotes.chain(locals)
         };
 
         for a in avatars() {

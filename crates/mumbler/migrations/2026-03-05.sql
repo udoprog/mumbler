@@ -14,7 +14,7 @@ CREATE TABLE `config` (
 
 -- Token-specific configuration.
 CREATE TABLE `properties` (
-    `id` BLOB PRIMARY KEY,
+    `id` INTEGER NOT NULL,
     `key` INTEGER NOT NULL,
     `value` BLOB NOT NULL,
     PRIMARY KEY (`id`, `key`),
@@ -23,7 +23,7 @@ CREATE TABLE `properties` (
 
 -- List of local objects.
 CREATE TABLE `objects` (
-    `id` BLOB PRIMARY KEY,
+    `id` INTEGER NOT NULL,
     `type` INTEGER NOT NULL,
     PRIMARY KEY (`id`, `type`)
 );

@@ -155,8 +155,10 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
             for object in peer.objects.values() {
                 remote_avatars.push(api::RemotePeerObject {
                     peer_id: *peer_id,
-                    id: object.id,
-                    properties: object.properties.clone(),
+                    object: api::RemoteObject {
+                        id: object.id,
+                        properties: object.properties.clone(),
+                    },
                 });
             }
         }

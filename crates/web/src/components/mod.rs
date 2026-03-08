@@ -6,6 +6,9 @@ pub(crate) mod render;
 mod settings;
 pub(crate) use self::settings::Settings;
 
+mod object_settings;
+pub(crate) use self::object_settings::ObjectSettings;
+
 mod mumble_status;
 pub(crate) use self::mumble_status::MumbleStatus;
 

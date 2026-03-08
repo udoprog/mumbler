@@ -3,12 +3,14 @@ use yew_router::prelude::*;
 
 use crate::log::{self, Severity};
 
-#[derive(Debug, Clone, Copy, PartialEq, Routable)]
+#[derive(Debug, Clone, PartialEq, Routable)]
 pub enum Route {
     #[at("/")]
     Map,
     #[at("/settings")]
     Settings,
+    #[at("/settings/object/:id")]
+    ObjectSettings { id: u64 },
     #[at("/log")]
     Log,
     #[not_found]
