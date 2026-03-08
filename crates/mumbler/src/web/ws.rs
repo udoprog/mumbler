@@ -1,10 +1,11 @@
 use core::pin::pin;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use api::Id;
-use api::Key;
+use api::{Id, Key, Value};
+use async_fuse::Fuse;
 use axum::Extension;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::WebSocketUpgrade;
@@ -12,30 +13,31 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use musli_web::axum08;
 use musli_web::ws;
-use tokio::time::{self, Duration, Instant};
+use tokio::sync::Notify;
+use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
 use crate::backend::BackendEvent;
 use crate::backend::RemoteAvatarEvent;
 
-struct Handler {
+struct Handler<'a> {
     backend: Backend,
-    update_transform: Option<api::Transform>,
-    update_look_at: Option<Option<api::Vec3>>,
+    database_updates: HashMap<Key, Value>,
+    database_updates_notify: &'a Notify,
 }
 
-impl Handler {
-    fn new(backend: Backend) -> Self {
+impl<'a> Handler<'a> {
+    fn new(backend: Backend, database_updates_notify: &'a Notify) -> Self {
         Self {
             backend,
-            update_transform: None,
-            update_look_at: None,
+            database_updates: HashMap::new(),
+            database_updates_notify,
         }
     }
 }
 
-impl ws::Handler for Handler {
+impl ws::Handler for Handler<'_> {
     type Id = api::Request;
     type Response = Result<(), anyhow::Error>;
 
@@ -54,19 +56,20 @@ impl ws::Handler for Handler {
                     .read::<api::UpdateRequest>()
                     .context("missing request")?;
 
-                if request.key == Key::AVATAR_TRANSFORM
-                    && let Some(transform) = request.value.as_transform()
-                {
-                    self.backend.set_mumblelink_transform(transform).await;
+                self.database_updates
+                    .insert(request.key, request.value.clone());
+                self.database_updates_notify.notify_one();
+
+                if request.key == Key::AVATAR_TRANSFORM {
+                    if let Some(transform) = request.value.as_transform() {
+                        self.backend.set_mumblelink_transform(transform).await;
+                    }
                 }
 
                 self.backend
                     .set_client(request.key, request.value.clone())
                     .await;
-                self.backend
-                    .db()
-                    .set_value(Id::GLOBAL, request.key, request.value)
-                    .await?;
+
                 outgoing.write(api::Empty);
             }
             api::Request::UploadImage => {
@@ -177,48 +180,48 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("Connected");
 
-            let mut server = axum08::server(socket, Handler::new(backend.clone()));
-            let mut debounce_timer = pin!(time::sleep(Duration::from_secs(0)));
-            let mut update_transform = None;
-            let mut update_look_at = None;
+            let database_updates_notify = Notify::new();
+            let mut server = axum08::server(socket, Handler::new(backend.clone(), &database_updates_notify));
+            let mut debounce_timer = pin!(Fuse::empty());
+            let mut local_updates = HashMap::new();
 
             loop {
-                if let Some(update) = server.handler_mut().update_transform.take() {
-                    update_transform = Some(update);
-
-                    debounce_timer
-                        .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(1));
-                }
-
-                if let Some(update) = server.handler_mut().update_look_at.take() {
-                    update_look_at = Some(update);
-
-                    debounce_timer
-                        .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(1));
-                }
-
                 let (result, done) = tokio::select! {
                     result = server.run() => {
                         (result.context("Error in server"), true)
                     }
-                    () = debounce_timer.as_mut(), if update_transform.is_some() || update_look_at.is_some() => {
-                        tracing::debug!("Saving transform");
+                    () = database_updates_notify.notified() => {
+                        let updates = &mut server.handler_mut().database_updates;
 
-                        let mut result = async || {
-                            if let Some(transform) = update_transform.take() {
-                                backend.db().set(Id::GLOBAL, Key::AVATAR_TRANSFORM, transform).await.context("saving avatar transform")?;
-                            }
+                        if updates.is_empty() {
+                            continue;
+                        }
 
-                            if let Some(look_at) = update_look_at.take() {
-                                backend.db().set_optional(Id::GLOBAL, Key::AVATAR_LOOK_AT, look_at).await.context("saving avatar look_at")?;
+                        let was_empty = local_updates.is_empty();
+
+                        for (key, value) in updates.drain() {
+                            local_updates.insert(key, value);
+                        }
+
+                        if was_empty {
+                            debounce_timer
+                                .set(Fuse::new(time::sleep(Duration::from_secs(1))));
+                        }
+
+                        continue;
+                    }
+                    () = debounce_timer.as_mut() => {
+                        tracing::debug!("Saving updates");
+
+                        let result = async {
+                            for (key, value) in local_updates.drain() {
+                                backend.db().set_value(Id::GLOBAL, key, value).await?;
                             }
 
                             Ok(())
                         };
 
-                        (result().await, false)
+                        (result.await, false)
                     }
                     event = events.recv() => {
                         let event = match event {

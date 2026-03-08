@@ -9,8 +9,6 @@ use tokio::runtime::Builder;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
-const DEFUALT_FILTER: &str = "info";
-
 #[derive(Parser)]
 struct Opts {
     /// Enable debug logging.
@@ -48,9 +46,7 @@ pub fn main() -> Result<()> {
 
     let builder = EnvFilter::builder().with_default_directive(default_level.into());
 
-    let mut env_filter = builder
-        .parse(DEFUALT_FILTER)
-        .context("parsing default log filter")?;
+    let mut env_filter = builder.parse("").context("parsing default log filter")?;
 
     if let Ok(log) = env::var("MUMBLER_LOG") {
         env_filter = env_filter.add_directive(log.parse().context("parsing MUMBLER_LOG")?);
