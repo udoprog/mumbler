@@ -351,3 +351,35 @@ input[type="search"] {
     color: var(--text-color-muted);
     font-style: italic;
 }
+
+.object-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.object-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+.object-list-item {
+    padding: 0.4em 0.6em;
+    border-radius: $border-radius;
+    cursor: pointer;
+    background-color: var(--background-color);
+    font-size: 0.9em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &:hover {
+        background-color: var(--input-color);
+    }
+
+    &.selected {
+        background-color: var(--info-background-color);
+        color: var(--link-color);
+    }
+}

@@ -88,6 +88,14 @@ impl ws::Handler for Handler<'_> {
                 let response = super::get_settings(&self.backend).await?;
                 outgoing.write(response);
             }
+            api::Request::CreateObject => {
+                _ = incoming
+                    .read::<api::CreateObjectRequest>()
+                    .context("missing request")?;
+
+                let response = super::create_object(&self.backend).await?;
+                outgoing.write(response);
+            }
             api::Request::DeleteImage => {
                 let request = incoming
                     .read::<api::DeleteImageRequest>()

@@ -138,6 +138,8 @@ pub(crate) struct Map {
     _keydown_listener: EventListener,
     /// Keeps the document keyup listener alive.
     _keyup_listener: EventListener,
+    /// In-flight create-object request.
+    _create_object: ws::Request,
 }
 
 pub(crate) enum Msg {
@@ -149,6 +151,7 @@ pub(crate) enum Msg {
     TransformUpdated(Result<Packet<api::Update>, ws::Error>),
     LookAtUpdated(Result<Packet<api::Update>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
+    ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     StateChanged(ws::State),
     Resized,
     ImageLoaded(ImageMessage),
@@ -158,6 +161,8 @@ pub(crate) enum Msg {
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
+    SelectObject(usize),
+    CreateObject,
 }
 
 impl From<ImageMessage> for Msg {
@@ -240,6 +245,7 @@ impl Component for Map {
             mouse_world_pos: None,
             _keydown_listener,
             _keyup_listener,
+            _create_object: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -318,28 +324,53 @@ impl Component for Map {
         }
 
         html! {
-            <div class="rows">
-                <div class="pre">{HELP}</div>
+            <div class="row">
+                <div class="col-10 rows">
+                    <div class="pre">{HELP}</div>
 
-                <div class="map-sizer" ref={self.canvas_sizer.clone()}>
-                    <canvas id="map" ref={self.canvas_ref.clone()}
-                        onmousedown={ctx.link().callback(Msg::MouseDown)}
-                        onmousemove={ctx.link().callback(Msg::MouseMove)}
-                        onmouseup={ctx.link().callback(Msg::MouseUp)}
-                        onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
-                        onwheel={ctx.link().callback(Msg::Wheel)}
-                    ></canvas>
+                    <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                        <canvas id="map" ref={self.canvas_ref.clone()}
+                            onmousedown={ctx.link().callback(Msg::MouseDown)}
+                            onmousemove={ctx.link().callback(Msg::MouseMove)}
+                            onmouseup={ctx.link().callback(Msg::MouseUp)}
+                            onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
+                            onwheel={ctx.link().callback(Msg::Wheel)}
+                        ></canvas>
+                    </div>
+
+                    {pos}
+
+                    if let Some(id) = self.selected.and_then(|i| self.local_objects.get(i)).map(|o| o.id) {
+                        <div class="map-object-controls">
+                            <Link<Route> to={Route::ObjectSettings { id: id.get() }}>
+                                <button class="btn">{"Object Settings"}</button>
+                            </Link<Route>>
+                        </div>
+                    }
                 </div>
 
-                {pos}
-
-                if let Some(id) = self.selected.and_then(|i| self.local_objects.get(i)).map(|o| o.id) {
-                    <div class="map-object-controls">
-                        <Link<Route> to={Route::ObjectSettings { id: id.get() }}>
-                            <button class="btn">{"Object Settings"}</button>
-                        </Link<Route>>
+                <div class="col-2 rows">
+                    <div class="object-list-header">
+                        <strong>{"Objects"}</strong>
+                        <button class="btn sm square" title="Add object"
+                            onclick={ctx.link().callback(|_| Msg::CreateObject)}>
+                            {"+"}
+                        </button>
                     </div>
-                }
+
+                    <div class="object-list">
+                        {for self.local_objects.iter().enumerate().map(|(i, obj)| {
+                            let selected = self.selected == Some(i);
+                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(i));
+                            let classes = classes!("object-list-item", selected.then_some("selected"));
+                            let label = obj.name.clone()
+                                .unwrap_or_else(|| format!("Object {}", i + 1));
+                            html! {
+                                <div class={classes} onclick={on_click}>{label}</div>
+                            }
+                        })}
+                    </div>
+                </div>
             </div>
         }
     }
@@ -510,6 +541,35 @@ impl Map {
             Msg::KeyUp(e) => {
                 self.on_key_up(e)?;
                 Ok(false)
+            }
+            Msg::SelectObject(i) => {
+                self.selected = Some(i);
+                Ok(true)
+            }
+            Msg::CreateObject => {
+                self._create_object = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::CreateObjectRequest)
+                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
+                    .send();
+                Ok(false)
+            }
+            Msg::ObjectCreated(result) => {
+                let result = result?;
+                let response = result.decode()?;
+                let object = LocalObject {
+                    id: response.id,
+                    transform: api::Transform::origin(),
+                    look_at: None,
+                    image: None,
+                    color: None,
+                    name: None,
+                };
+                self.local_objects.push(object);
+                self.selected = Some(self.local_objects.len() - 1);
+                Ok(true)
             }
         }
     }

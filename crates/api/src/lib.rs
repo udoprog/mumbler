@@ -355,6 +355,19 @@ pub struct ListSettingsResponse {
     pub remote_server_tls: bool,
 }
 
+/// Request to create a new local object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct CreateObjectRequest;
+
+/// Response returned after creating a new object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct CreateObjectResponse {
+    /// The newly created object ID.
+    pub id: Id,
+}
+
 /// Request to delete a stored image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -507,6 +520,13 @@ api::define! {
     impl Endpoint for ListSettings {
         impl Request for ListSettingsRequest;
         type Response<'de> = ListSettingsResponse;
+    }
+
+    pub type CreateObject;
+
+    impl Endpoint for CreateObject {
+        impl Request for CreateObjectRequest;
+        type Response<'de> = CreateObjectResponse;
     }
 
     pub type DeleteImage;

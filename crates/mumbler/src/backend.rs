@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Id, Key, PeerId, RemoteObject, Transform, Value};
+use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -254,6 +254,22 @@ impl Backend {
     /// Wait for a client restart signal.
     pub(crate) async fn client_restart_wait(&self) {
         self.inner.client_restart_notify.notified().await;
+    }
+
+    /// Create a new local object, persisting it to the database and inserting
+    /// it into the in-memory client state.  Returns the new object's ID.
+    pub(crate) async fn create_object(&self) -> Result<Id> {
+        let id = Id::new(rand::random());
+        self.db().insert_object(id, Type::AVATAR).await?;
+        let mut state = self.inner.client_state.lock().await;
+        state.objects.insert(
+            id,
+            LocalObject {
+                properties: std::collections::HashMap::new(),
+                changed: std::collections::HashSet::new(),
+            },
+        );
+        Ok(id)
     }
 
     /// Get a reference to the database.
