@@ -16,6 +16,7 @@ pub(crate) struct RenderAvatar<'a> {
     pub(crate) color: api::Color,
     pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
+    pub(crate) selected: bool,
 }
 
 impl<'a> RenderAvatar<'a> {
@@ -27,6 +28,7 @@ impl<'a> RenderAvatar<'a> {
             color: a.color.unwrap_or_else(api::Color::neutral),
             name: a.name.as_deref(),
             player: true,
+            selected: false,
         }
     }
 
@@ -38,6 +40,7 @@ impl<'a> RenderAvatar<'a> {
             color: a.color.unwrap_or_else(api::Color::neutral),
             name: a.name.as_deref(),
             player: false,
+            selected: false,
         }
     }
 }
@@ -177,6 +180,14 @@ pub(crate) fn draw_avatar_token(
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
     let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
+
+    if a.selected {
+        cx.set_stroke_style_str("#ffffff");
+        cx.set_line_width(token_radius * 0.18);
+        cx.begin_path();
+        cx.arc(x, y, token_radius * 1.22, 0.0, TAU)?;
+        cx.stroke();
+    }
 
     let image_drawn = 'draw: {
         let Some(id) = a.image else {

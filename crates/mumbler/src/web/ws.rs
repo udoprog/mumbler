@@ -61,7 +61,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.database_updates_notify.notify_one();
 
-                if request.key == Key::AVATAR_TRANSFORM {
+                if request.key == Key::TRANSFORM {
                     if let Some(transform) = request.value.as_transform() {
                         self.backend.set_mumblelink_transform(transform).await;
                     }
@@ -80,12 +80,20 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(super::upload_image(&self.backend, request).await?);
             }
-            api::Request::ListSettings => {
+            api::Request::GetSettings => {
                 _ = incoming
-                    .read::<api::ListSettingsRequest>()
+                    .read::<api::GetSettingsRequest>()
                     .context("missing request")?;
 
                 let response = super::get_settings(&self.backend).await?;
+                outgoing.write(response);
+            }
+            api::Request::GetObjectSettings => {
+                let request = incoming
+                    .read::<api::GetObjectSettingsRequest>()
+                    .context("missing request")?;
+
+                let response = super::get_object_settings(&self.backend, request).await?;
                 outgoing.write(response);
             }
             api::Request::CreateObject => {
@@ -94,6 +102,14 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
 
                 let response = super::create_object(&self.backend).await?;
+                outgoing.write(response);
+            }
+            api::Request::DeleteObject => {
+                let request = incoming
+                    .read::<api::DeleteObjectRequest>()
+                    .context("missing request")?;
+
+                let response = super::do_delete_object(&self.backend, request).await?;
                 outgoing.write(response);
             }
             api::Request::DeleteImage => {
@@ -258,6 +274,8 @@ pub(super) async fn entry(
                                     RemoteAvatarEvent::Join { peer_id, objects } => api::RemoteAvatarUpdateBody::Join { peer_id, objects },
                                     RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
                                     RemoteAvatarEvent::Update { peer_id, object_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, object_id, key, value },
+                                    RemoteAvatarEvent::ObjectAdded { peer_id, object } => api::RemoteAvatarUpdateBody::ObjectAdded { peer_id, object },
+                                    RemoteAvatarEvent::ObjectRemoved { peer_id, object_id } => api::RemoteAvatarUpdateBody::ObjectRemoved { peer_id, object_id },
                                 };
 
                                 server.broadcast(body).context("send broadcast")

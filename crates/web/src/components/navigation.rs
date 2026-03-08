@@ -1,3 +1,4 @@
+use api::Id;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -10,7 +11,7 @@ pub enum Route {
     #[at("/settings")]
     Settings,
     #[at("/settings/object/:id")]
-    ObjectSettings { id: u64 },
+    ObjectSettings { id: Id },
     #[at("/log")]
     Log,
     #[not_found]

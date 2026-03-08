@@ -118,7 +118,7 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
         Route::Map => html!(<components::Map ws={ws.clone()} />),
         Route::Settings => html!(<components::Settings ws={ws.clone()} />),
         Route::ObjectSettings { id } => {
-            html!(<components::ObjectSettings ws={ws.clone()} id={api::Id::new(id)} />)
+            html!(<components::ObjectSettings ws={ws.clone()} {id} />)
         }
         Route::Log => html!(<components::Log />),
         Route::NotFound => {

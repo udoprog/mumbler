@@ -2,7 +2,22 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Id, Transform, Vec3};
+use crate::{Color, Id, Pan, Transform, Vec3};
+
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
+#[musli(crate = musli_core)]
+#[non_exhaustive]
+pub enum ValueType {
+    Id,
+    String,
+    Float,
+    Pan,
+    Transform,
+    Vec3,
+    Color,
+    Bytes,
+    Boolean,
+}
 
 #[derive(Clone, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
@@ -128,11 +143,14 @@ impl fmt::Debug for Value {
 #[non_exhaustive]
 pub enum ValueKind {
     Id(Id),
+    Float(f32),
+    Boolean(bool),
     String(String),
     Bytes(Vec<u8>),
     Transform(Transform),
     Color(Color),
     Vec3(Vec3),
+    Pan(Pan),
     None,
 }
 
@@ -141,6 +159,24 @@ impl From<Id> for Value {
     fn from(value: Id) -> Self {
         Self {
             kind: ValueKind::Id(value),
+        }
+    }
+}
+
+impl From<f32> for Value {
+    #[inline]
+    fn from(value: f32) -> Self {
+        Self {
+            kind: ValueKind::Float(value),
+        }
+    }
+}
+
+impl From<bool> for Value {
+    #[inline]
+    fn from(value: bool) -> Self {
+        Self {
+            kind: ValueKind::Boolean(value),
         }
     }
 }
@@ -186,6 +222,15 @@ impl From<Vec3> for Value {
     fn from(value: Vec3) -> Self {
         Self {
             kind: ValueKind::Vec3(value),
+        }
+    }
+}
+
+impl From<Pan> for Value {
+    #[inline]
+    fn from(value: Pan) -> Self {
+        Self {
+            kind: ValueKind::Pan(value),
         }
     }
 }

@@ -5,12 +5,12 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Id, Image, Key, Type, Value, ValueKind};
+use api::{Color, Id, Image, Key, Pan, Transform, Type, Value, ValueKind, Vec3};
 use jiff::Timestamp;
-use musli::Encode;
 use musli::alloc::Global;
 use musli::de::DecodeOwned;
 use musli::mode::Binary;
+use musli::{Encode, descriptive};
 use relative_path::{RelativePath, RelativePathBuf};
 use rust_embed::RustEmbed;
 use sqll::{OpenOptions, SendStatement};
@@ -217,7 +217,7 @@ impl Database {
             inner.get_config.bind((key,))?;
 
             if let Some(row) = inner.get_config.next::<&[u8]>()? {
-                let value = musli::descriptive::from_slice::<T>(row)?;
+                let value = descriptive::from_slice::<T>(row)?;
                 return Ok(Some(value));
             }
 
@@ -245,7 +245,7 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            musli::descriptive::encode(&mut inner.scratch, &value)?;
+            descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
                 set_config,
@@ -285,7 +285,7 @@ impl Database {
             inner.get_property.bind((id, key))?;
 
             if let Some(row) = inner.get_property.next::<&[u8]>()? {
-                let value = musli::descriptive::from_slice::<T>(row)?;
+                let value = descriptive::from_slice::<T>(row)?;
                 return Ok(Some(value));
             }
 
@@ -348,7 +348,7 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            musli::descriptive::encode(&mut inner.scratch, &value)?;
+            descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
                 set_property,
@@ -424,8 +424,32 @@ impl Database {
 
             let mut properties = Vec::new();
 
-            while let Some((key, value)) = inner.list_properties.next::<(Key, Vec<u8>)>()? {
-                let value = musli::descriptive::from_slice(&value)?;
+            while let Some((key, value)) = inner.list_properties.next::<(Key, &[u8])>()? {
+                let Some(ty) = key.ty() else {
+                    continue;
+                };
+
+                let value = match ty {
+                    api::ValueType::Id => Value::from(descriptive::from_slice::<Id>(&value)?),
+                    api::ValueType::String => {
+                        Value::from(descriptive::from_slice::<String>(&value)?)
+                    }
+                    api::ValueType::Float => Value::from(descriptive::from_slice::<f32>(&value)?),
+                    api::ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(&value)?),
+                    api::ValueType::Transform => {
+                        Value::from(descriptive::from_slice::<Transform>(&value)?)
+                    }
+                    api::ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(&value)?),
+                    api::ValueType::Color => Value::from(descriptive::from_slice::<Color>(&value)?),
+                    api::ValueType::Bytes => {
+                        Value::from(descriptive::from_slice::<Vec<u8>>(&value)?)
+                    }
+                    api::ValueType::Boolean => {
+                        Value::from(descriptive::from_slice::<bool>(&value)?)
+                    }
+                    _ => continue,
+                };
+
                 properties.push((key, value));
             }
 

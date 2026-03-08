@@ -1,17 +1,19 @@
+use core::error::Error;
 #[cfg(feature = "sqll")]
 use core::ffi::c_int;
 use core::fmt;
+use core::str::FromStr;
 
-use base64::Engine as _;
 use base64::display::Base64Display;
+use base64::engine::general_purpose::{GeneralPurpose, URL_SAFE_NO_PAD};
+use base64::{DecodeSliceError, Engine as _};
 use musli_core::{Decode, Encode};
 use serde_core::{Deserialize, Deserializer, de};
 #[cfg(feature = "sqll")]
 use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 /// The engine used for base64.
-static ENGINE: base64::engine::general_purpose::GeneralPurpose =
-    base64::engine::general_purpose::URL_SAFE_NO_PAD;
+static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
@@ -52,6 +54,67 @@ impl fmt::Debug for Id {
     }
 }
 
+#[derive(Debug)]
+enum IdParseErrorKind {
+    DecodeSliceError(DecodeSliceError),
+    InvalidLength(usize),
+}
+
+/// An error raised by parsing an Id as a string.
+pub struct IdParseError {
+    kind: IdParseErrorKind,
+}
+
+impl fmt::Display for IdParseError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            IdParseErrorKind::DecodeSliceError(err) => write!(f, "base64 decode error: {err}"),
+            IdParseErrorKind::InvalidLength(len) => {
+                write!(f, "invalid length: expected 8 bytes, got {len}")
+            }
+        }
+    }
+}
+
+impl fmt::Debug for IdParseError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl Error for IdParseError {}
+
+impl From<DecodeSliceError> for IdParseError {
+    #[inline]
+    fn from(err: DecodeSliceError) -> Self {
+        Self {
+            kind: IdParseErrorKind::DecodeSliceError(err),
+        }
+    }
+}
+
+impl FromStr for Id {
+    type Err = IdParseError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut dest = [0u8; 8];
+
+        let len = ENGINE.decode_slice(s, &mut dest[..])?;
+
+        if len != 8 {
+            return Err(IdParseError {
+                kind: IdParseErrorKind::InvalidLength(len),
+            });
+        }
+
+        let id = u64::from_be_bytes(dest);
+        Ok(Id::new(id))
+    }
+}
+
 impl<'de> Deserialize<'de> for Id {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -72,20 +135,7 @@ impl<'de> Deserialize<'de> for Id {
             where
                 E: de::Error,
             {
-                let mut dest = [0u8; 8];
-
-                let len = ENGINE
-                    .decode_slice(v, &mut dest[..])
-                    .map_err(de::Error::custom)?;
-
-                if len != 8 {
-                    return Err(de::Error::custom(format!(
-                        "invalid length: expected 8 bytes, got {len}"
-                    )));
-                }
-
-                let id = u64::from_be_bytes(dest);
-                Ok(Id::new(id))
+                v.parse().map_err(de::Error::custom)
             }
         }
 

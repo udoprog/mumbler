@@ -26,6 +26,14 @@ pub(crate) enum RemoteAvatarEvent {
         key: Key,
         value: Value,
     },
+    ObjectAdded {
+        peer_id: PeerId,
+        object: RemoteObject,
+    },
+    ObjectRemoved {
+        peer_id: PeerId,
+        object_id: Id,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +64,10 @@ pub(crate) struct ClientState {
     pub(crate) objects: HashMap<Id, LocalObject>,
     /// Identifiers of objects that have been changed.
     pub(crate) objects_changed: HashSet<Id>,
+    /// Identifiers of objects that have been added.
+    pub(crate) object_added: HashSet<Id>,
+    /// Identifiers of objects that have been deleted.
+    pub(crate) object_deleted: HashSet<Id>,
     /// Remote objects.
     pub(crate) peers: HashMap<PeerId, PeerInfo>,
 }
@@ -114,6 +126,8 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
+        tracing::debug!("Loading objects from database");
+
         let mut objects = HashMap::new();
 
         for id in database.objects(api::Type::AVATAR).await? {
@@ -132,6 +146,8 @@ impl Backend {
             );
         }
 
+        tracing::debug!("Loaded {} objects", objects.len());
+
         Ok(Self {
             inner: Arc::new(Inner {
                 database,
@@ -139,6 +155,8 @@ impl Backend {
                 client_state: Mutex::new(ClientState {
                     objects,
                     objects_changed: HashSet::new(),
+                    object_added: HashSet::new(),
+                    object_deleted: HashSet::new(),
                     peers: HashMap::new(),
                 }),
                 images: RwLock::new(Images {
@@ -265,11 +283,25 @@ impl Backend {
         state.objects.insert(
             id,
             LocalObject {
-                properties: std::collections::HashMap::new(),
-                changed: std::collections::HashSet::new(),
+                properties: HashMap::new(),
+                changed: HashSet::new(),
             },
         );
+        state.object_added.insert(id);
+        self.inner.client_notify.notify_one();
         Ok(id)
+    }
+
+    /// Delete a local object, removing it from the database and in-memory state.
+    pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
+        self.db().delete_object(id, Type::AVATAR).await?;
+        let mut state = self.inner.client_state.lock().await;
+        state.objects.remove(&id);
+        state.objects_changed.remove(&id);
+        state.object_added.remove(&id);
+        state.object_deleted.insert(id);
+        self.inner.client_notify.notify_one();
+        Ok(())
     }
 
     /// Get a reference to the database.

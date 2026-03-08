@@ -15,7 +15,10 @@ use musli_web::api::{ErrorMessage, MessageId};
 
 use crate::remote::api::{JoinBodyRef, UpdatePeerRef, UpdatedPeerRef};
 
-use super::api::{ConnectBody, Header, LeaveBody, PingBody, PongBody};
+use super::api::{
+    AddObjectBody, ConnectBody, Header, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PingBody,
+    PongBody, RemoveObjectBody,
+};
 use super::{Buf, Client, Scratch};
 
 const MAX_MESSAGE: usize = 1024 * 1024;
@@ -187,6 +190,35 @@ impl Peer {
             key,
             value,
         })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Send a request to add a new object.
+    pub fn add_object(&mut self, object: RemoteObject) -> Result<()> {
+        self.scratch.send(AddObjectBody { object })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Send a request to remove an object.
+    pub fn remove_object(&mut self, object_id: Id) -> Result<()> {
+        self.scratch.send(RemoveObjectBody { object_id })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Broadcast that a peer has added an object.
+    pub fn object_added(&mut self, peer_id: PeerId, object: RemoteObject) -> Result<()> {
+        self.scratch.send(ObjectAddedBody { peer_id, object })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Broadcast that a peer has removed an object.
+    pub fn object_removed(&mut self, peer_id: PeerId, object_id: Id) -> Result<()> {
+        self.scratch
+            .send(ObjectRemovedBody { peer_id, object_id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

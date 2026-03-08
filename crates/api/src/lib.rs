@@ -11,7 +11,7 @@ mod config;
 pub use config::Key;
 
 mod value;
-pub use self::value::{Value, ValueKind};
+pub use self::value::{Value, ValueKind, ValueType};
 
 use core::fmt;
 use std::collections::HashMap;
@@ -329,7 +329,7 @@ pub struct InitializeMapEvent {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct ListSettingsRequest;
+pub struct GetSettingsRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -344,7 +344,7 @@ pub struct Image {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct ListSettingsResponse {
+pub struct GetSettingsResponse {
     /// List of objects.
     pub objects: Vec<RemoteObject>,
     /// List of image identifiers currently stored in the database.
@@ -353,6 +353,23 @@ pub struct ListSettingsResponse {
     pub remote_server: Option<String>,
     /// Whether TLS is enabled for the remote server connection.
     pub remote_server_tls: bool,
+}
+
+/// Request to fetch settings for a single object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetObjectSettingsRequest {
+    pub id: Id,
+}
+
+/// Response containing settings for a single object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct GetObjectSettingsResponse {
+    /// The object, if it exists.
+    pub object: Option<RemoteObject>,
+    /// List of image identifiers currently stored in the database.
+    pub images: Vec<Image>,
 }
 
 /// Request to create a new local object.
@@ -367,6 +384,18 @@ pub struct CreateObjectResponse {
     /// The newly created object ID.
     pub id: Id,
 }
+
+/// Request to delete a local object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct DeleteObjectRequest {
+    pub id: Id,
+}
+
+/// Response after deleting an object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct DeleteObjectResponse;
 
 /// Request to delete a stored image.
 #[derive(Debug, Encode, Decode)]
@@ -491,6 +520,14 @@ pub enum RemoteAvatarUpdateBody {
         key: Key,
         value: Value,
     },
+    ObjectAdded {
+        peer_id: PeerId,
+        object: RemoteObject,
+    },
+    ObjectRemoved {
+        peer_id: PeerId,
+        object_id: Id,
+    },
 }
 
 api::define! {
@@ -515,11 +552,18 @@ api::define! {
         type Response<'de> = UploadImageResponse;
     }
 
-    pub type ListSettings;
+    pub type GetSettings;
 
-    impl Endpoint for ListSettings {
-        impl Request for ListSettingsRequest;
-        type Response<'de> = ListSettingsResponse;
+    impl Endpoint for GetSettings {
+        impl Request for GetSettingsRequest;
+        type Response<'de> = GetSettingsResponse;
+    }
+
+    pub type GetObjectSettings;
+
+    impl Endpoint for GetObjectSettings {
+        impl Request for GetObjectSettingsRequest;
+        type Response<'de> = GetObjectSettingsResponse;
     }
 
     pub type CreateObject;
@@ -527,6 +571,13 @@ api::define! {
     impl Endpoint for CreateObject {
         impl Request for CreateObjectRequest;
         type Response<'de> = CreateObjectResponse;
+    }
+
+    pub type DeleteObject;
+
+    impl Endpoint for DeleteObject {
+        impl Request for DeleteObjectRequest;
+        type Response<'de> = DeleteObjectResponse;
     }
 
     pub type DeleteImage;

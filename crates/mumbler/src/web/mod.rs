@@ -199,7 +199,7 @@ async fn upload_image(
     Ok(api::UploadImageResponse { id })
 }
 
-async fn get_settings(backend: &Backend) -> Result<api::ListSettingsResponse> {
+async fn get_settings(backend: &Backend) -> Result<api::GetSettingsResponse> {
     let mut objects = Vec::new();
 
     {
@@ -223,7 +223,7 @@ async fn get_settings(backend: &Backend) -> Result<api::ListSettingsResponse> {
         .await?
         .unwrap_or(false);
 
-    Ok(api::ListSettingsResponse {
+    Ok(api::GetSettingsResponse {
         objects,
         images,
         remote_server,
@@ -231,9 +231,34 @@ async fn get_settings(backend: &Backend) -> Result<api::ListSettingsResponse> {
     })
 }
 
+async fn get_object_settings(
+    backend: &Backend,
+    request: api::GetObjectSettingsRequest,
+) -> Result<api::GetObjectSettingsResponse> {
+    let object = {
+        let state = backend.client_state().await;
+        state.objects.get(&request.id).map(|o| api::RemoteObject {
+            id: request.id,
+            properties: o.properties.clone(),
+        })
+    };
+
+    let images = backend.db().list_images().await?;
+
+    Ok(api::GetObjectSettingsResponse { object, images })
+}
+
 async fn create_object(backend: &Backend) -> Result<api::CreateObjectResponse> {
     let id = backend.create_object().await?;
     Ok(api::CreateObjectResponse { id })
+}
+
+async fn do_delete_object(
+    backend: &Backend,
+    request: api::DeleteObjectRequest,
+) -> Result<api::DeleteObjectResponse> {
+    backend.delete_object(request.id).await?;
+    Ok(api::DeleteObjectResponse)
 }
 
 async fn delete_image(

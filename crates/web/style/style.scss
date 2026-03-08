@@ -365,14 +365,14 @@ input[type="search"] {
 }
 
 .object-list-item {
-    padding: 0.4em 0.6em;
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    padding: 0.25em 0.4em;
     border-radius: $border-radius;
     cursor: pointer;
     background-color: var(--background-color);
     font-size: 0.9em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 
     &:hover {
         background-color: var(--input-color);
@@ -381,5 +381,23 @@ input[type="search"] {
     &.selected {
         background-color: var(--info-background-color);
         color: var(--link-color);
+    }
+
+    .object-list-label {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+
+    .object-list-action {
+        flex-shrink: 0;
+        opacity: 0;
+        transition: opacity 0.1s;
+    }
+
+    &:hover .object-list-action {
+        opacity: 1;
     }
 }

@@ -1,5 +1,7 @@
 use core::mem;
 
+use std::collections::{HashMap, HashSet};
+
 use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Value, Vec3, World};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
@@ -39,6 +41,7 @@ pub(crate) struct LocalObject {
     pub(crate) image: Option<Id>,
     pub(crate) color: Option<Color>,
     pub(crate) name: Option<String>,
+    pub(crate) move_target: Option<Vec3>,
 }
 
 impl LocalObject {
@@ -47,43 +50,44 @@ impl LocalObject {
             id: remote.id,
             transform: remote
                 .properties
-                .get(&Key::AVATAR_TRANSFORM)
+                .get(&Key::TRANSFORM)
                 .and_then(|v| v.as_transform())
                 .unwrap_or_else(Transform::origin),
             look_at: remote
                 .properties
-                .get(&Key::AVATAR_LOOK_AT)
+                .get(&Key::LOOK_AT)
                 .and_then(|v| v.as_vec3()),
             image: remote
                 .properties
-                .get(&Key::AVATAR_IMAGE_ID)
+                .get(&Key::IMAGE_ID)
                 .and_then(|v| v.as_id()),
             color: remote
                 .properties
-                .get(&Key::AVATAR_COLOR)
+                .get(&Key::COLOR)
                 .and_then(|v| v.as_color()),
             name: remote
                 .properties
-                .get(&Key::AVATAR_NAME)
+                .get(&Key::NAME)
                 .and_then(|v| v.as_string().map(str::to_owned)),
+            move_target: None,
         }
     }
 
     fn update(&mut self, key: Key, value: Value) {
         match key {
-            Key::AVATAR_TRANSFORM => {
+            Key::TRANSFORM => {
                 self.transform = value.as_transform().unwrap_or_else(Transform::origin);
             }
-            Key::AVATAR_LOOK_AT => {
+            Key::LOOK_AT => {
                 self.look_at = value.as_vec3();
             }
-            Key::AVATAR_IMAGE_ID => {
+            Key::IMAGE_ID => {
                 self.image = value.as_id();
             }
-            Key::AVATAR_COLOR => {
+            Key::COLOR => {
                 self.color = value.as_color();
             }
-            Key::AVATAR_NAME => {
+            Key::NAME => {
                 self.name = value.into_string();
             }
             _ => {}
@@ -93,8 +97,10 @@ impl LocalObject {
 
 pub(crate) struct Map {
     _initialize: ws::Request,
-    update_transform_request: ws::Request,
-    update_look_at_request: ws::Request,
+    /// Per-object in-flight transform update requests.
+    transform_requests: HashMap<Id, ws::Request>,
+    /// Per-object in-flight look-at update requests.
+    look_at_requests: HashMap<Id, ws::Request>,
     _update_world: ws::Request,
     _state_change: ws::StateListener,
     _remote_avatar_listener: ws::Listener,
@@ -105,16 +111,16 @@ pub(crate) struct Map {
     canvas_ref: NodeRef,
     /// World configuration.
     world: World,
-    /// List of local avatars that need to be updated remotely.
-    update_transform: bool,
-    /// Update what the player is looking at.
-    update_look_at: bool,
+    /// Object IDs whose transforms need to be sent to the server.
+    update_transform_ids: HashSet<Id>,
+    /// Object IDs whose look-at needs to be sent to the server.
+    update_look_at_ids: HashSet<Id>,
     /// Whether world settings need to be updated.
     update_world: bool,
     /// The selected object.
-    selected: Option<usize>,
+    selected: Option<Id>,
     /// The list of local objects.
-    local_objects: Vec<LocalObject>,
+    local_objects: HashMap<Id, LocalObject>,
     /// The list of remote objects.
     remote_avatars: Vec<PeerObject>,
     /// Mouse position at the start of a middle-mouse drag.
@@ -128,10 +134,8 @@ pub(crate) struct Map {
     /// Loaded avatar images, keyed by image id.
     /// The closure must be kept alive alongside the element for the onload callback to fire.
     images: Images<Self>,
-    /// Target position for interpolated movement.
-    move_target: Option<Vec3>,
     /// Animation interval for smooth movement.
-    _animation_interval: Option<Interval>,
+    animation_interval: Option<Interval>,
     /// Current world-space mouse position while cursor is over the canvas.
     mouse_world_pos: Option<(f32, f32)>,
     /// Keeps the document keydown listener alive.
@@ -140,10 +144,13 @@ pub(crate) struct Map {
     _keyup_listener: EventListener,
     /// In-flight create-object request.
     _create_object: ws::Request,
+    /// In-flight delete-object request.
+    _delete_object: ws::Request,
+    /// Index of the object pending delete confirmation.
+    confirm_delete: Option<Id>,
 }
 
 pub(crate) enum Msg {
-    LogUpdate(log::Log),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
@@ -154,21 +161,26 @@ pub(crate) enum Msg {
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     StateChanged(ws::State),
     Resized,
-    ImageLoaded(ImageMessage),
+    ImageMessage(ImageMessage),
     MouseDown(MouseEvent),
     MouseMove(MouseEvent),
     MouseUp(MouseEvent),
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
-    SelectObject(usize),
+    SelectObject(Id),
     CreateObject,
+    ConfirmDelete(Id),
+    CancelDelete,
+    DeleteObject(Id),
+    ObjectDeleted(Id, Result<Packet<api::DeleteObject>, ws::Error>),
+    SetLog(log::Log),
 }
 
 impl From<ImageMessage> for Msg {
     #[inline]
     fn from(message: ImageMessage) -> Self {
-        Msg::ImageLoaded(message)
+        Msg::ImageMessage(message)
     }
 }
 
@@ -184,7 +196,7 @@ impl Component for Map {
     fn create(ctx: &Context<Self>) -> Self {
         let (log, _log_handle) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::LogUpdate))
+            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
             .expect("ErrorLog context not found");
 
         let (state, _state_change) = ctx
@@ -218,8 +230,8 @@ impl Component for Map {
 
         let mut this = Self {
             _initialize: ws::Request::new(),
-            update_transform_request: ws::Request::new(),
-            update_look_at_request: ws::Request::new(),
+            transform_requests: HashMap::new(),
+            look_at_requests: HashMap::new(),
             _update_world: ws::Request::new(),
             _remote_avatar_listener: remote_avatar_listener,
             _state_change,
@@ -230,22 +242,23 @@ impl Component for Map {
             canvas_ref: NodeRef::default(),
             world: api::World::zero(),
             selected: None,
-            local_objects: Vec::new(),
+            local_objects: HashMap::new(),
             remote_avatars: Vec::new(),
-            update_transform: false,
-            update_look_at: false,
+            update_transform_ids: HashSet::new(),
+            update_look_at_ids: HashSet::new(),
             update_world: false,
             pan_anchor: None,
             start_press: None,
             arrow_target: None,
             _resize_observer: None,
             images: Images::new(),
-            move_target: None,
-            _animation_interval: None,
+            animation_interval: None,
             mouse_world_pos: None,
             _keydown_listener,
             _keyup_listener,
             _create_object: ws::Request::new(),
+            _delete_object: ws::Request::new(),
+            confirm_delete: None,
         };
 
         this.refresh(ctx);
@@ -281,14 +294,12 @@ impl Component for Map {
             }
         };
 
-        if self.update_transform {
-            self.send_transform_update(ctx);
-            self.update_transform = false;
+        if !self.update_transform_ids.is_empty() {
+            self.send_transform_updates(ctx);
         }
 
-        if self.update_look_at {
-            self.send_look_at_update(ctx);
-            self.update_look_at = false;
+        if !self.update_look_at_ids.is_empty() {
+            self.send_look_at_updates(ctx);
         }
 
         if self.update_world {
@@ -296,14 +307,16 @@ impl Component for Map {
             self.update_world = false;
         }
 
-        if self._animation_interval.is_none() && self.move_target.is_some() {
+        if self.animation_interval.is_none()
+            && self.local_objects.values().any(|o| o.move_target.is_some())
+        {
             let link = ctx.link().clone();
 
             let interval = Interval::new(1000 / ANIMATION_FPS, move || {
                 link.send_message(Msg::AnimationFrame);
             });
 
-            self._animation_interval = Some(interval);
+            self.animation_interval = Some(interval);
         }
 
         changed
@@ -312,7 +325,7 @@ impl Component for Map {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let pos;
 
-        if let Some(object) = self.selected.and_then(|i| self.local_objects.get(i)) {
+        if let Some(object) = self.selected.and_then(|id| self.local_objects.get(&id)) {
             let p = object.transform.position;
             let f = object.transform.front;
 
@@ -339,14 +352,6 @@ impl Component for Map {
                     </div>
 
                     {pos}
-
-                    if let Some(id) = self.selected.and_then(|i| self.local_objects.get(i)).map(|o| o.id) {
-                        <div class="map-object-controls">
-                            <Link<Route> to={Route::ObjectSettings { id: id.get() }}>
-                                <button class="btn">{"Object Settings"}</button>
-                            </Link<Route>>
-                        </div>
-                    }
                 </div>
 
                 <div class="col-2 rows">
@@ -359,14 +364,47 @@ impl Component for Map {
                     </div>
 
                     <div class="object-list">
-                        {for self.local_objects.iter().enumerate().map(|(i, obj)| {
-                            let selected = self.selected == Some(i);
-                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(i));
+                        {for self.local_objects.values().map(|object| {
+                            let object_id = object.id;
+
+                            let selected = self.selected == Some(object_id);
+                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(object_id));
                             let classes = classes!("object-list-item", selected.then_some("selected"));
-                            let label = obj.name.clone()
-                                .unwrap_or_else(|| format!("Object {}", i + 1));
-                            html! {
-                                <div class={classes} onclick={on_click}>{label}</div>
+                            let label = object.name.as_deref().unwrap_or("object");
+
+                            if self.confirm_delete == Some(object_id) {
+                                html! {
+                                    <div class={classes}>
+                                        <span class="object-list-label">{"Delete?"}</span>
+                                        <button class="btn sm square danger" title="Confirm delete"
+                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
+                                            <span class="icon x-mark" />
+                                        </button>
+                                        <button class="btn sm square" title="Cancel"
+                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                            <span class="icon check" />
+                                        </button>
+                                    </div>
+                                }
+                            } else {
+                                html! {
+                                    <div class={classes} onclick={on_click}>
+                                        <span class="object-list-label">{label}</span>
+                                        <Link<Route> to={Route::ObjectSettings { id: object_id }}>
+                                            <button class="btn sm square object-list-action" title="Object settings"
+                                                onclick={|e: MouseEvent| e.stop_propagation()}>
+                                                <span class="icon cog" />
+                                            </button>
+                                        </Link<Route>>
+                                        <button class="btn sm square danger object-list-action" title="Delete object"
+                                            onclick={ctx.link().callback(move |e: MouseEvent| {
+                                                e.stop_propagation();
+                                                Msg::ConfirmDelete(object_id)
+                                            })}>
+                                            <span class="icon x-mark" />
+                                        </button>
+                                    </div>
+                                }
                             }
                         })}
                     </div>
@@ -391,7 +429,7 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::LogUpdate(log) => {
+            Msg::SetLog(log) => {
                 self.log = log;
                 Ok(false)
             }
@@ -402,7 +440,11 @@ impl Map {
                 tracing::debug!(?body, "Initialize");
 
                 self.world = body.world;
-                self.local_objects = body.objects.iter().map(LocalObject::from_remote).collect();
+                self.local_objects = body
+                    .objects
+                    .iter()
+                    .map(|object| (object.id, LocalObject::from_remote(object)))
+                    .collect();
 
                 self.remote_avatars = body
                     .remote_avatars
@@ -457,7 +499,7 @@ impl Map {
                             .iter_mut()
                             .find(|a| a.peer_id == peer_id && a.object.id == object_id)
                         {
-                            if key == Key::AVATAR_IMAGE_ID {
+                            if key == Key::IMAGE_ID {
                                 let new = value.as_id();
 
                                 let old = mem::replace(&mut a.object.image, new);
@@ -472,6 +514,31 @@ impl Map {
                             }
 
                             a.object.update(key, value);
+                        }
+                    }
+                    api::RemoteAvatarUpdateBody::ObjectAdded { peer_id, object } => {
+                        let local = LocalObject::from_remote(&object);
+
+                        if let Some(id) = local.image {
+                            self.images.load(ctx, id);
+                        }
+
+                        self.remote_avatars.push(PeerObject {
+                            peer_id,
+                            object: local,
+                        });
+                    }
+                    api::RemoteAvatarUpdateBody::ObjectRemoved { peer_id, object_id } => {
+                        if let Some(pos) = self
+                            .remote_avatars
+                            .iter()
+                            .position(|a| a.peer_id == peer_id && a.object.id == object_id)
+                        {
+                            let removed = self.remote_avatars.remove(pos);
+
+                            if let Some(id) = removed.object.image {
+                                self.images.remove(id);
+                            }
                         }
                     }
                 }
@@ -504,7 +571,7 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::ImageLoaded(msg) => {
+            Msg::ImageMessage(msg) => {
                 self.images.update(msg);
                 self.redraw()?;
                 Ok(false)
@@ -544,6 +611,7 @@ impl Map {
             }
             Msg::SelectObject(i) => {
                 self.selected = Some(i);
+                self.confirm_delete = None;
                 Ok(true)
             }
             Msg::CreateObject => {
@@ -559,6 +627,7 @@ impl Map {
             Msg::ObjectCreated(result) => {
                 let result = result?;
                 let response = result.decode()?;
+
                 let object = LocalObject {
                     id: response.id,
                     transform: api::Transform::origin(),
@@ -566,9 +635,43 @@ impl Map {
                     image: None,
                     color: None,
                     name: None,
+                    move_target: None,
                 };
-                self.local_objects.push(object);
-                self.selected = Some(self.local_objects.len() - 1);
+
+                self.selected = Some(object.id);
+                self.local_objects.insert(object.id, object);
+                Ok(true)
+            }
+            Msg::ConfirmDelete(id) => {
+                self.confirm_delete = Some(id);
+                Ok(true)
+            }
+            Msg::CancelDelete => {
+                self.confirm_delete = None;
+                Ok(true)
+            }
+            Msg::DeleteObject(id) => {
+                self._delete_object = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::DeleteObjectRequest { id })
+                    .on_packet(ctx.link().callback(move |r| Msg::ObjectDeleted(id, r)))
+                    .send();
+
+                self.confirm_delete = None;
+                Ok(false)
+            }
+            Msg::ObjectDeleted(id, result) => {
+                let result = result?;
+                _ = result.decode()?;
+
+                self.local_objects.remove(&id);
+
+                if self.selected == Some(id) {
+                    self.selected = None;
+                }
+
                 Ok(true)
             }
         }
@@ -583,12 +686,13 @@ impl Map {
             return Ok(());
         };
 
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+        let Some(object) = self.selected.and_then(|id| self.local_objects.get_mut(&id)) else {
             return Ok(());
         };
 
+        let id = object.id;
         object.look_at = None;
-        self.update_look_at = true;
+        self.update_look_at_ids.insert(id);
         self.start_press = None;
         self.arrow_target = None;
         self.redraw()?;
@@ -604,116 +708,130 @@ impl Map {
             return Ok(());
         };
 
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+        let Some(object) = self.selected.and_then(|id| self.local_objects.get_mut(&id)) else {
             return Ok(());
         };
 
         let (px, py) = (object.transform.position.x, object.transform.position.z);
-
+        let obj_id = object.id;
         self.start_press = Some((px, py, true));
         object.look_at = Some(Vec3::new(mx, 0.0, my));
-        self.update_look_at = true;
-
         self.look_at(px, py, mx, my);
+        self.update_look_at_ids.insert(obj_id);
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
-            return;
-        };
+        let selected = self.selected;
 
-        let p = object.transform.position;
+        for object in self.local_objects.values_mut() {
+            let p = object.transform.position;
 
-        'done: {
-            let Some(target) = self.move_target else {
-                break 'done;
+            'move_done: {
+                let Some(target) = object.move_target else {
+                    break 'move_done;
+                };
+
+                let dx = target.x - p.x;
+                let dz = target.z - p.z;
+                let distance = (dx * dx + dz * dz).sqrt();
+
+                if distance < 0.01 {
+                    object.transform.position = target;
+                    object.move_target = None;
+                    self.update_transform_ids.insert(object.id);
+                    break 'move_done;
+                }
+
+                let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
+                let move_distance = step.min(distance);
+                let ratio = move_distance / distance;
+
+                object.transform.position.x += dx * ratio;
+                object.transform.position.z += dz * ratio;
+
+                // Face the movement direction unless a look_at target is active.
+                if object.look_at.is_none() {
+                    let angle_rad = dz.atan2(dx);
+                    object.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+                }
+
+                self.update_transform_ids.insert(object.id);
             };
 
-            let dx = target.x - p.x;
-            let dz = target.z - p.z;
-            let distance = (dx * dx + dz * dz).sqrt();
+            'look_done: {
+                let Some(target) = object.look_at else {
+                    break 'look_done;
+                };
 
-            if distance < 0.01 {
-                object.transform.position = target;
-                self.move_target = None;
-                self._animation_interval = None;
-                self.update_transform = true;
-                break 'done;
-            }
+                if selected == Some(object.id) {
+                    self.arrow_target = Some((target.x, target.z));
+                }
 
-            let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
-            let move_distance = step.min(distance);
-            let ratio = move_distance / distance;
-
-            object.transform.position.x += dx * ratio;
-            object.transform.position.z += dz * ratio;
-
-            // Face the movement direction unless a look_at target is active.
-            if object.look_at.is_none() {
-                let angle_rad = dz.atan2(dx);
+                let angle_rad = (target.z - p.z).atan2(target.x - p.x);
                 object.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
-            }
+                self.update_transform_ids.insert(object.id);
+            };
+        }
 
-            self.update_transform = true;
-        };
+        if self.local_objects.values().all(|o| o.move_target.is_none()) {
+            self.animation_interval = None;
+        }
+    }
 
-        'done: {
-            let Some(target) = object.look_at else {
-                break 'done;
+    fn send_transform_updates(&mut self, ctx: &Context<Self>) {
+        if !matches!(self.state, ws::State::Open) {
+            self.update_transform_ids.clear();
+            return;
+        }
+
+        for id in self.update_transform_ids.drain() {
+            let Some(object) = self.local_objects.get(&id) else {
+                continue;
             };
 
-            self.look_at(p.x, p.z, target.x, target.z);
-        };
+            let req = ctx
+                .props()
+                .ws
+                .request()
+                .body(api::UpdateRequest {
+                    id,
+                    key: Key::TRANSFORM,
+                    value: Value::from(object.transform),
+                })
+                .on_packet(ctx.link().callback(Msg::TransformUpdated))
+                .send();
+
+            self.transform_requests.insert(id, req);
+        }
     }
 
-    fn send_transform_update(&mut self, ctx: &Context<Self>) {
+    fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
         if !matches!(self.state, ws::State::Open) {
+            self.update_look_at_ids.clear();
             return;
         }
 
-        let Some(obj) = self.selected.and_then(|i| self.local_objects.get(i)) else {
-            return;
-        };
-        let id = obj.id;
-        let transform = obj.transform;
+        for id in self.update_look_at_ids.drain() {
+            let Some(object) = self.local_objects.get(&id) else {
+                continue;
+            };
 
-        self.update_transform_request = ctx
-            .props()
-            .ws
-            .request()
-            .body(api::UpdateRequest {
-                id,
-                key: Key::AVATAR_TRANSFORM,
-                value: Value::from(transform),
-            })
-            .on_packet(ctx.link().callback(Msg::TransformUpdated))
-            .send();
-    }
+            let req = ctx
+                .props()
+                .ws
+                .request()
+                .body(api::UpdateRequest {
+                    id,
+                    key: Key::LOOK_AT,
+                    value: Value::from(object.look_at),
+                })
+                .on_packet(ctx.link().callback(Msg::LookAtUpdated))
+                .send();
 
-    fn send_look_at_update(&mut self, ctx: &Context<Self>) {
-        if !matches!(self.state, ws::State::Open) {
-            return;
+            self.look_at_requests.insert(id, req);
         }
-
-        let Some(obj) = self.selected.and_then(|i| self.local_objects.get(i)) else {
-            return;
-        };
-        let id = obj.id;
-        let look_at = obj.look_at;
-
-        self.update_look_at_request = ctx
-            .props()
-            .ws
-            .request()
-            .body(api::UpdateRequest {
-                id,
-                key: Key::AVATAR_LOOK_AT,
-                value: Value::from(look_at),
-            })
-            .on_packet(ctx.link().callback(Msg::LookAtUpdated))
-            .send();
     }
 
     fn send_world_updates(&mut self, ctx: &Context<Self>) {
@@ -737,7 +855,7 @@ impl Map {
                         break 'out false;
                     };
 
-                    let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i))
+                    let Some(object) = self.selected.and_then(|id| self.local_objects.get_mut(&id))
                     else {
                         break 'out false;
                     };
@@ -749,16 +867,16 @@ impl Map {
                     let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
                     let (ex, ey) = t.canvas_to_world(ex, ey);
 
+                    let obj_id = object.id;
                     if e.shift_key() {
                         let (px, py) = (object.transform.position.x, object.transform.position.z);
                         self.start_press = Some((px, py, true));
-
                         object.look_at = Some(Vec3::new(ex, 0.0, ey));
                         self.look_at(px, py, ex, ey);
-                        self.update_look_at = true;
+                        self.update_look_at_ids.insert(obj_id);
                     } else {
                         self.start_press = Some((ex, ey, false));
-                        self.move_target = Some(Vec3::new(ex, 0.0, ey));
+                        object.move_target = Some(Vec3::new(ex, 0.0, ey));
                     }
 
                     true
@@ -801,18 +919,17 @@ impl Map {
         self.mouse_world_pos = Some((mx, my));
 
         if let Some((px, py, shift_key)) = self.start_press {
-            if let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) {
+            if let Some(object) = self.selected.and_then(|id| self.local_objects.get_mut(&id)) {
                 if shift_key {
                     let dist = (mx - px).hypot(my - py);
                     if dist >= ARROW_THRESHOLD {
+                        self.update_look_at_ids.insert(object.id);
                         object.look_at = Some(Vec3::new(mx, 0.0, my));
-                        self.update_look_at = true;
                         self.look_at(px, py, mx, my);
                         needs_redraw = true;
                     }
                 } else {
-                    // LMB drag: continuously update move target to cursor position.
-                    self.move_target = Some(Vec3::new(mx, 0.0, my));
+                    object.move_target = Some(Vec3::new(mx, 0.0, my));
                     needs_redraw = true;
                 }
             }
@@ -826,16 +943,17 @@ impl Map {
     }
 
     fn look_at(&mut self, px: f32, py: f32, mx: f32, my: f32) {
-        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+        let Some(object) = self.selected.and_then(|id| self.local_objects.get_mut(&id)) else {
             return;
         };
 
+        let id = object.id;
         self.arrow_target = Some((mx, my));
         let angle_rad = (my - py).atan2(mx - px);
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
         object.transform.front = Vec3::new(dir_x, 0.0, dir_z);
-        self.update_transform = true;
+        self.update_transform_ids.insert(id);
     }
 
     fn on_mouse_up(&mut self, e: MouseEvent) -> Result<(), Error> {
@@ -912,7 +1030,7 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.local_objects.iter().filter_map(|o| o.image);
+        let ids = self.local_objects.values().filter_map(|o| o.image);
         let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.object.image));
 
         for id in ids {
@@ -980,9 +1098,20 @@ impl Map {
 
         render::draw_grid(&cx, &t, &self.world.extent, self.world.zoom);
 
+        let selected = self.selected;
+
         let avatars = || {
-            let remotes = self.remote_avatars.iter().map(|a| RenderAvatar::from_remote(&a.object));
-            let locals = self.local_objects.iter().map(RenderAvatar::from_player);
+            let remotes = self
+                .remote_avatars
+                .iter()
+                .map(|a| RenderAvatar::from_remote(&a.object));
+
+            let locals = self.local_objects.values().map(move |a| {
+                let mut avatar = RenderAvatar::from_player(a);
+                avatar.selected = selected == Some(a.id);
+                avatar
+            });
+
             remotes.chain(locals)
         };
 

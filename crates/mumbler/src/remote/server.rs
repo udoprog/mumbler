@@ -19,7 +19,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::UpdatePeer;
+use crate::remote::api::{AddObjectBody, RemoveObjectBody, UpdatePeer};
 use crate::remote::{REMOTE_PORT, REMOTE_TLS_PORT};
 use crate::tls;
 
@@ -388,6 +388,31 @@ impl State {
                                 &event.value,
                             )
                         },
+                        &self.rooms,
+                        peers,
+                    );
+                }
+                Event::AddObject => {
+                    let event = body.decode::<AddObjectBody>()?;
+                    tracing::debug!(id = ?event.object.id, "AddObject");
+
+                    let object = event.object.clone();
+                    this.objects.insert(object.id, object);
+
+                    this.send_to_room(
+                        |peer| peer.object_added(this.peer_id, event.object.clone()),
+                        &self.rooms,
+                        peers,
+                    );
+                }
+                Event::RemoveObject => {
+                    let event = body.decode::<RemoveObjectBody>()?;
+                    tracing::debug!(id = ?event.object_id, "RemoveObject");
+
+                    this.objects.remove(&event.object_id);
+
+                    this.send_to_room(
+                        |peer| peer.object_removed(this.peer_id, event.object_id),
                         &self.rooms,
                         peers,
                     );

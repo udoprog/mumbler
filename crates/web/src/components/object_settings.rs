@@ -19,7 +19,7 @@ pub(crate) enum Msg {
     AvatarImageClear(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    ListSettings(Result<Packet<api::ListSettings>, ws::Error>),
+    GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     SelectImage(api::Id),
     SelectImageResult(Result<Packet<api::Update>, ws::Error>),
     DeleteImage(api::Id),
@@ -31,7 +31,7 @@ pub(crate) enum Msg {
     UpdateName(Option<String>),
     UpdateNameResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
-    ContextUpdate(log::Log),
+    SetLog(log::Log),
 }
 
 #[derive(Properties, PartialEq)]
@@ -77,7 +77,7 @@ impl Component for ObjectSettings {
     fn create(ctx: &Context<Self>) -> Self {
         let (log, _log_handle) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::ContextUpdate))
+            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
             .expect("ErrorLog context not found");
 
         let (state, _state_change) = ctx
@@ -246,8 +246,8 @@ impl ObjectSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::ListSettingsRequest)
-                .on_packet(ctx.link().callback(Msg::ListSettings))
+                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                 .send();
         } else {
             self._list_settings = ws::Request::new();
@@ -333,25 +333,17 @@ impl ObjectSettings {
                 self.refresh(ctx);
                 Ok(false)
             }
-            Msg::ListSettings(result) => {
+            Msg::GetObjectSettings(result) => {
                 let result = result?;
                 let response = result.decode()?;
                 self.images = response.images;
 
-                // Load settings for this specific object from the objects list.
-                let id = ctx.props().id;
-                if let Some(obj) = response.objects.iter().find(|o| o.id == id) {
-                    self.selected = obj
-                        .properties
-                        .get(&Key::AVATAR_IMAGE_ID)
-                        .and_then(|v| v.as_id());
-                    self.color = obj
-                        .properties
-                        .get(&Key::AVATAR_COLOR)
-                        .and_then(|v| v.as_color());
+                if let Some(obj) = response.object {
+                    self.selected = obj.properties.get(&Key::IMAGE_ID).and_then(|v| v.as_id());
+                    self.color = obj.properties.get(&Key::COLOR).and_then(|v| v.as_color());
                     self.name = obj
                         .properties
-                        .get(&Key::AVATAR_NAME)
+                        .get(&Key::NAME)
                         .and_then(|v| v.as_string().map(str::to_owned));
                 }
 
@@ -365,13 +357,14 @@ impl ObjectSettings {
                     .request()
                     .body(api::UpdateRequest {
                         id: ctx.props().id,
-                        key: Key::AVATAR_IMAGE_ID,
+                        key: Key::IMAGE_ID,
                         value: Value::from(id),
                     })
                     .on_packet(ctx.link().callback(Msg::SelectImageResult))
                     .send();
 
                 self.selected = Some(id);
+                self.load_preview_image(ctx);
                 Ok(true)
             }
             Msg::SelectImageResult(result) => {
@@ -414,7 +407,7 @@ impl ObjectSettings {
                     .request()
                     .body(api::UpdateRequest {
                         id: ctx.props().id,
-                        key: Key::AVATAR_COLOR,
+                        key: Key::COLOR,
                         value: Value::from(color),
                     })
                     .on_packet(ctx.link().callback(Msg::SelectColorResult))
@@ -447,7 +440,7 @@ impl ObjectSettings {
                     .request()
                     .body(api::UpdateRequest {
                         id: ctx.props().id,
-                        key: Key::AVATAR_NAME,
+                        key: Key::NAME,
                         value: Value::from(name.clone()),
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateNameResult))
@@ -465,7 +458,7 @@ impl ObjectSettings {
                 self.preview_images.update(msg);
                 Ok(true)
             }
-            Msg::ContextUpdate(log) => {
+            Msg::SetLog(log) => {
                 self.log = log;
                 Ok(false)
             }
@@ -498,6 +491,7 @@ impl ObjectSettings {
             color: self.color.unwrap_or_else(Color::neutral),
             name: self.name.as_deref(),
             player: true,
+            selected: false,
         };
 
         render::draw_avatar_preview(&cx, &canvas, &avatar, |id| {

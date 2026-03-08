@@ -125,6 +125,42 @@ pub struct UpdatedPeerRef<'a> {
     pub value: &'a Value,
 }
 
+/// A request to add an object. Sent by the client to the server.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct AddObjectBody {
+    /// The object being added.
+    pub object: RemoteObject,
+}
+
+/// Broadcast by the server when a peer adds an object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct ObjectAddedBody {
+    /// The peer that added the object.
+    pub peer_id: PeerId,
+    /// The object that was added.
+    pub object: RemoteObject,
+}
+
+/// A request to remove an object. Sent by the client to the server.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RemoveObjectBody {
+    /// The id of the object being removed.
+    pub object_id: Id,
+}
+
+/// Broadcast by the server when a peer removes an object.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct ObjectRemovedBody {
+    /// The peer that removed the object.
+    pub peer_id: PeerId,
+    /// The id of the object that was removed.
+    pub object_id: Id,
+}
+
 api::define! {
     pub type Connect;
 
@@ -169,5 +205,29 @@ api::define! {
     impl Broadcast for Updated {
         impl Event for UpdatedPeer;
         impl Event for UpdatedPeerRef<'_>;
+    }
+
+    pub type AddObject;
+
+    impl Broadcast for AddObject {
+        impl Event for AddObjectBody;
+    }
+
+    pub type ObjectAdded;
+
+    impl Broadcast for ObjectAdded {
+        impl Event for ObjectAddedBody;
+    }
+
+    pub type RemoveObject;
+
+    impl Broadcast for RemoveObject {
+        impl Event for RemoveObjectBody;
+    }
+
+    pub type ObjectRemoved;
+
+    impl Broadcast for ObjectRemoved {
+        impl Event for ObjectRemovedBody;
     }
 }

@@ -11,7 +11,9 @@ use tokio::time::{self, Instant, Sleep};
 use crate::Backend;
 use crate::backend::RemoteAvatarEvent;
 use crate::backend::{BackendEvent, ClientState};
-use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
+use crate::remote::api::{
+    Event, JoinBody, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PongBody, UpdatedPeer,
+};
 use crate::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
 
 const COMPONENT: &str = "remote-client";
@@ -45,13 +47,12 @@ async fn handle_peer(
                 for mut o in body.objects {
                     if let Some(image) = o
                         .properties
-                        .remove(&Key::AVATAR_IMAGE_BYTES)
+                        .remove(&Key::IMAGE_BYTES)
                         .and_then(|v| v.into_bytes())
                     {
                         let mut images = b.images().await;
                         let image = images.store(image);
-                        o.properties
-                            .insert(Key::AVATAR_IMAGE_ID, Value::from(image));
+                        o.properties.insert(Key::IMAGE_ID, Value::from(image));
                     }
 
                     peer.objects.insert(o.id, o);
@@ -90,7 +91,7 @@ async fn handle_peer(
                 };
 
                 let (key, value) = match body.key {
-                    Key::AVATAR_IMAGE_BYTES => {
+                    Key::IMAGE_BYTES => {
                         let Some(bytes) = body.value.into_bytes() else {
                             continue;
                         };
@@ -99,15 +100,14 @@ async fn handle_peer(
 
                         let image = images.store(bytes);
 
-                        if let Some(old) = object
-                            .properties
-                            .insert(Key::AVATAR_IMAGE_ID, Value::from(image))
+                        if let Some(old) =
+                            object.properties.insert(Key::IMAGE_ID, Value::from(image))
                             && let Some(id) = old.as_id()
                         {
                             images.remove(id);
                         }
 
-                        (Key::AVATAR_IMAGE_ID, Value::from(image))
+                        (Key::IMAGE_ID, Value::from(image))
                     }
                     key => {
                         object.properties.insert(key, body.value.clone());
@@ -121,6 +121,57 @@ async fn handle_peer(
                     key,
                     value,
                 }));
+            }
+            Event::ObjectAdded => {
+                let body = body.decode::<ObjectAddedBody>()?;
+                tracing::debug!(?id, ?body.peer_id, object_id = ?body.object.id, "ObjectAdded");
+
+                let mut remote = b.client_state().await;
+
+                let peer = remote.peers.entry(body.peer_id).or_default();
+
+                let mut object = body.object.clone();
+
+                if let Some(image) = object
+                    .properties
+                    .remove(&Key::IMAGE_BYTES)
+                    .and_then(|v| v.into_bytes())
+                {
+                    let mut images = b.images().await;
+                    let image = images.store(image);
+                    object.properties.insert(Key::IMAGE_ID, Value::from(image));
+                }
+
+                peer.objects.insert(object.id, object.clone());
+
+                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::ObjectAdded {
+                    peer_id: body.peer_id,
+                    object,
+                }));
+            }
+            Event::ObjectRemoved => {
+                let body = body.decode::<ObjectRemovedBody>()?;
+                tracing::debug!(?id, ?body.peer_id, ?body.object_id, "ObjectRemoved");
+
+                {
+                    let mut remote = b.client_state().await;
+
+                    if let Some(peer) = remote.peers.get_mut(&body.peer_id) {
+                        if let Some(old) = peer.objects.remove(&body.object_id)
+                            && let Some(image_id) =
+                                old.properties.get(&Key::IMAGE_ID).and_then(|v| v.as_id())
+                        {
+                            b.images().await.remove(image_id);
+                        }
+                    }
+                }
+
+                b.broadcast(BackendEvent::RemoteAvatar(
+                    RemoteAvatarEvent::ObjectRemoved {
+                        peer_id: body.peer_id,
+                        object_id: body.object_id,
+                    },
+                ));
             }
             id => {
                 tracing::debug!(?id, body = body.len(), "Unknown event");
@@ -176,7 +227,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
         for (key, value) in &object.properties {
             let (key, value) = match *key {
-                Key::AVATAR_IMAGE_ID => {
+                Key::IMAGE_ID => {
                     let Some(image) = value.as_id() else {
                         continue;
                     };
@@ -185,7 +236,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         continue;
                     };
 
-                    (Key::AVATAR_IMAGE_BYTES, Value::from(bytes))
+                    (Key::IMAGE_BYTES, Value::from(bytes))
                 }
                 key => (key, value.clone()),
             };
@@ -206,7 +257,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut()).await?;
             }
             () = wait.as_mut() => {
-                let ClientState { objects, objects_changed, .. } = &mut *b.client_state().await;
+                let ClientState { objects, objects_changed, object_added, object_deleted, .. } = &mut *b.client_state().await;
 
                 for id in objects_changed.drain() {
                     let Some(object) = objects.get_mut(&id) else {
@@ -221,20 +272,53 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         let owned;
 
                         let (key, value) = match key {
-                            Key::AVATAR_IMAGE_ID => {
+                            Key::IMAGE_ID => {
                                 let Some(image) = value.as_id() else {
                                     continue;
                                 };
 
                                 let bytes = b.db().get_image_data(image).await?;
                                 owned = Value::from(bytes);
-                                (Key::AVATAR_IMAGE_BYTES, &owned)
+                                (Key::IMAGE_BYTES, &owned)
                             }
                             _ => (key, value),
                         };
 
                         peer.update_peer(id, key, value)?;
                     }
+                }
+
+                for id in object_added.drain() {
+                    let Some(object) = objects.get(&id) else {
+                        continue;
+                    };
+
+                    let mut properties = std::collections::HashMap::new();
+
+                    for (key, value) in &object.properties {
+                        let (key, value) = match *key {
+                            Key::IMAGE_ID => {
+                                let Some(image) = value.as_id() else {
+                                    continue;
+                                };
+
+                                let Some(bytes) = b.db().get_image_data(image).await? else {
+                                    continue;
+                                };
+
+                                (Key::IMAGE_BYTES, Value::from(bytes))
+                            }
+                            key => (key, value.clone()),
+                        };
+
+                        properties.insert(key, value);
+                    }
+
+                    peer.add_object(RemoteObject { id, properties })?;
+                }
+
+                for id in object_deleted.drain() {
+                    peer.remove_object(id)?;
                 }
 
                 wait.set(b.client_wait());

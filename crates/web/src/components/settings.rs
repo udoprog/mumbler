@@ -13,7 +13,7 @@ pub(crate) enum Msg {
     TlsToggled(Event),
     SetRemoteServer(String),
     SetRemoteServerResult(Result<Packet<api::SetRemoteServer>, ws::Error>),
-    ListSettings(Result<Packet<api::ListSettings>, ws::Error>),
+    ListSettings(Result<Packet<api::GetSettings>, ws::Error>),
     ContextUpdate(log::Log),
 }
 
@@ -121,7 +121,7 @@ impl Settings {
                 .props()
                 .ws
                 .request()
-                .body(api::ListSettingsRequest)
+                .body(api::GetSettingsRequest)
                 .on_packet(ctx.link().callback(Msg::ListSettings))
                 .send();
         } else {
