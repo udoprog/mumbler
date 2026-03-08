@@ -19,15 +19,22 @@ struct Opts {
     /// The server to connect to.
     #[clap(default_value = "localhost")]
     connect: String,
+    /// Enable debug logging.
+    #[clap(long)]
+    debug: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
-        .init();
+    let level = if opts.debug {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+
+    tracing_subscriber::fmt().with_max_level(level).init();
 
     let port;
 
@@ -59,6 +66,8 @@ async fn main() -> Result<()> {
                 result?;
 
                 while let Some((event, body)) = peer.handle::<Event>()? {
+                    tracing::debug!(?event, "Received event");
+
                     match event {
                         Event::Pong => {
                             let pong = body.decode::<PongBody>()?;
@@ -70,15 +79,15 @@ async fn main() -> Result<()> {
                         },
                         Event::Join => {
                             let event = body.decode::<JoinBody>()?;
-                            tracing::debug!(?event, "join");
+                            tracing::debug!(?event, "Join");
                         }
                         Event::Leave => {
                             let event = body.decode::<LeaveBody>()?;
-                            tracing::debug!(?event, "leave");
+                            tracing::debug!(?event, "Leave");
                         }
                         Event::Updated => {
                             let event = body.decode::<UpdatedPeer>()?;
-                            tracing::debug!(?event.id, ?event.key, ?event.value, "updated");
+                            tracing::debug!(?event.id, ?event.key, ?event.value, "Updated");
                         }
                         event => {
                             tracing::debug!(?event);

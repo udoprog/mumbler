@@ -4,7 +4,7 @@ edition = "2024"
 publish = false
 
 [features]
-default = []
+default = ["tls"]
 bundle = []
 tls = ["dep:tokio-rustls"]
 

@@ -28,7 +28,7 @@ struct PeerState {
     /// The unique identifier of this peer.
     id: Id,
     /// The peer state.
-    peer: Peer,
+    peer: Pin<Box<Peer>>,
     /// If this timeout is reached, the peer is disconnected.
     ///
     /// The timeout is reset every time a ping is received.
@@ -43,7 +43,7 @@ impl PeerState {
     fn new(peer: Peer) -> Self {
         Self {
             id: Id::new(rand::random()),
-            peer,
+            peer: Box::pin(peer),
             timeout: Box::pin(time::sleep(Duration::from_secs(5))),
             values: HashMap::new(),
             room: None,
@@ -80,7 +80,7 @@ impl PeerState {
             return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, "ping timeout")));
         }
 
-        self.peer.poll(cx)
+        self.peer.as_mut().poll(cx)
     }
 }
 
@@ -128,7 +128,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
     }
 
     for connector in connectors.iter() {
-        tracing::info!(addr = ?connector.listener.local_addr()?, "listening");
+        tracing::info!(addr = ?connector.listener.local_addr()?, "Listening");
     }
 
     let mut peers = HashMap::new();
@@ -140,7 +140,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
             result = Listen::new(&mut connectors) => {
                 let (i, stream, addr) = result.context("accepting connection")?;
 
-                let Some(connector) = connectors.get(i) else {
+                let Some(..) = connectors.get(i) else {
                     tracing::error!(?i, "invalid connector index");
                     continue;
                 };
@@ -162,12 +162,12 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
 
                 let remove = 'out: {
                     if let Err(error) = result {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored, disconnecting");
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored");
                         break 'out true;
                     }
 
                     if let Err(error) = state.handle(&mut peer, &mut peers).await {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored, disconnecting");
+                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored");
                         break 'out true;
                     }
 
@@ -297,14 +297,16 @@ impl State {
             match message {
                 Event::Ping => {
                     let ping = body.decode::<PingBody>()?;
+
                     this.timeout
                         .as_mut()
                         .reset(time::Instant::now() + Duration::from_secs(5));
+
                     this.peer.pong(ping.payload)?;
                 }
                 Event::Connect => {
                     let connect = body.decode::<ConnectBody>()?;
-                    tracing::debug!(connect.version, connect.room = ?BStr::new(&connect.room), "connect");
+                    tracing::debug!(connect.version, connect.room = ?BStr::new(&connect.room), "Connect");
 
                     if let Some(old_room) = this.room.replace(connect.room.clone()) {
                         self.leave_room(&old_room, this.id, peers);
@@ -320,7 +322,7 @@ impl State {
                 }
                 Event::Update => {
                     let event = body.decode::<UpdatePeer>()?;
-                    tracing::debug!(?event.key, ?event.value, "update");
+                    tracing::debug!(?event.key, ?event.value, "Update");
 
                     this.send_to_room(
                         |peer| peer.updated_peer(this.id, event.key, &event.value),
@@ -410,7 +412,7 @@ impl State {
             room.members.push(joining.id);
         }
 
-        tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
+        tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "Connecting room");
 
         for id in room.members.iter() {
             let Some(other) = peers.get(id) else {

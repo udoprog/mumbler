@@ -24,19 +24,28 @@ struct Opts {
     /// Path to TLS private key in PEM format.
     #[clap(long, short = 'k')]
     key: Option<PathBuf>,
+    /// Enable debug logging.
+    #[clap(long)]
+    debug: bool,
 }
 
 fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    let builder = EnvFilter::builder().with_default_directive(LevelFilter::INFO.into());
+    let (level, default_filter) = if opts.debug {
+        (LevelFilter::DEBUG, "")
+    } else {
+        (LevelFilter::INFO, DEFUALT_FILTER)
+    };
+
+    let builder = EnvFilter::builder().with_default_directive(level.into());
     let env_filter;
 
     if let Ok(log) = env::var("MUMBLER_SERVER_LOG") {
         env_filter = builder.parse(log).context("parsing MUMBLER_SERVER_LOG")?;
     } else {
         env_filter = builder
-            .parse(DEFUALT_FILTER)
+            .parse(default_filter)
             .context("parsing default log filter")?;
     }
 

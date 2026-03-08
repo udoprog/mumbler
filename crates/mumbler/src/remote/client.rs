@@ -1,5 +1,6 @@
 use core::net::SocketAddr;
-use core::task::{Context, Poll};
+use core::pin::Pin;
+use core::task::{Context, Poll, ready};
 
 use std::io;
 
@@ -7,8 +8,10 @@ use anyhow::Result;
 use musli_core::Encode;
 use musli_core::mode::Binary;
 use musli_web::api::{Broadcast, Event};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpStream, ToSocketAddrs};
+#[cfg(feature = "tls")]
+use tokio_rustls::TlsStream;
 
 const READ_CAP: usize = 4096;
 const MAX_CAPACITY: usize = 10 * 1024 * 1024;
@@ -100,7 +103,7 @@ impl Buf {
             return None;
         };
 
-        self.advance(N);
+        self.advance_read(N);
         Some(buf)
     }
 
@@ -112,7 +115,7 @@ impl Buf {
         }
 
         let range = self.read..self.read + len;
-        self.advance(len);
+        self.advance_read(len);
         self.data.get(range)
     }
 
@@ -125,16 +128,18 @@ impl Buf {
     /// Write data to the buffer.
     #[inline]
     pub fn write_bytes(&mut self, data: &[u8]) {
-        if self.write + data.len() > self.data.len() {
-            self.data.resize(self.write + data.len(), 0);
+        let next = self.write.checked_add(data.len()).expect("write overflow");
+
+        if next > self.data.len() {
+            self.data.resize(next, 0);
         }
 
-        let Some(bytes) = self.data.get_mut(self.write..self.write + data.len()) else {
+        let Some(bytes) = self.data.get_mut(self.write..next) else {
             return;
         };
 
         bytes.copy_from_slice(data);
-        self.write += data.len();
+        self.write = next;
     }
 
     /// Get the unread portion of the buffer.
@@ -173,10 +178,14 @@ impl Buf {
         self.data.capacity()
     }
 
+    pub fn advance(&mut self, n: usize) {
+        self.write = self.write.checked_add(n).expect("write overflow");
+    }
+
     /// Advance the read position by `n` bytes.
     #[inline]
-    pub fn advance(&mut self, n: usize) {
-        self.read += n;
+    pub fn advance_read(&mut self, n: usize) {
+        self.read = self.read.checked_add(n).expect("read overflow");
 
         if self.read >= self.write {
             self.read = 0;
@@ -185,57 +194,150 @@ impl Buf {
     }
 }
 
-enum Stream {
+#[derive(Debug)]
+enum StreamState {
+    Idle,
+    /// The stream is currently flushing data.
+    Flush,
+}
+
+struct Stream {
+    kind: StreamKind,
+    state: StreamState,
+}
+
+enum StreamKind {
     Plain(TcpStream),
+    #[cfg(feature = "tls")]
+    Tls(TlsStream<TcpStream>),
+}
+
+enum StreamKindProjected<'a> {
+    Plain(Pin<&'a mut TcpStream>),
+    #[cfg(feature = "tls")]
+    Tls(Pin<&'a mut TlsStream<TcpStream>>),
 }
 
 impl Stream {
     fn peer_addr(&self) -> io::Result<SocketAddr> {
-        match self {
-            Self::Plain(stream) => stream.peer_addr(),
+        match &self.kind {
+            StreamKind::Plain(stream) => stream.peer_addr(),
+            #[cfg(feature = "tls")]
+            StreamKind::Tls(stream) => stream.get_ref().0.peer_addr(),
         }
     }
 
     #[inline]
-    async fn readable(&self) -> io::Result<()> {
-        match self {
-            Self::Plain(stream) => stream.readable().await,
+    fn project(self: Pin<&mut Self>) -> (StreamKindProjected<'_>, &mut StreamState) {
+        unsafe {
+            let this = self.get_unchecked_mut();
+
+            let kind = match &mut this.kind {
+                StreamKind::Plain(stream) => StreamKindProjected::Plain(Pin::new_unchecked(stream)),
+                #[cfg(feature = "tls")]
+                StreamKind::Tls(stream) => StreamKindProjected::Tls(Pin::new_unchecked(stream)),
+            };
+
+            (kind, &mut this.state)
         }
     }
 
     #[inline]
-    fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            Self::Plain(stream) => stream.try_read(buf),
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut Buf,
+    ) -> Poll<io::Result<()>> {
+        fn handle_read(
+            cx: &mut Context<'_>,
+            stream: Pin<&mut dyn AsyncRead>,
+            buf: &mut Buf,
+        ) -> Poll<io::Result<()>> {
+            let Some(bytes) = buf.write_buf() else {
+                return Poll::Ready(Err(io::Error::other("receive buffer capacity exceeded")));
+            };
+
+            tracing::trace!(bytes = bytes.len(), "Polling read");
+
+            let mut b = ReadBuf::new(bytes);
+            let result = ready!(stream.poll_read(cx, &mut b));
+
+            if let Err(e) = result {
+                return Poll::Ready(Err(e));
+            }
+
+            let filled = b.filled().len();
+
+            if filled == 0 {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed",
+                )));
+            }
+
+            buf.advance(filled);
+            Poll::Ready(Ok(()))
         }
+
+        let (kind, _) = self.project();
+
+        let stream: Pin<&mut dyn AsyncRead> = match kind {
+            StreamKindProjected::Plain(stream) => stream,
+            #[cfg(feature = "tls")]
+            StreamKindProjected::Tls(stream) => stream,
+        };
+
+        handle_read(cx, stream, buf)
     }
 
     #[inline]
-    async fn writable(&self) -> io::Result<()> {
-        match self {
-            Self::Plain(stream) => stream.writable().await,
-        }
-    }
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut Buf,
+    ) -> Poll<io::Result<()>> {
+        fn handle_write(
+            cx: &mut Context<'_>,
+            mut stream: Pin<&mut dyn AsyncWrite>,
+            buf: &mut Buf,
+            state: &mut StreamState,
+        ) -> Poll<io::Result<()>> {
+            while buf.has_remaining() || matches!(state, StreamState::Flush) {
+                tracing::trace!(remaining = buf.remaining(), ?state, "Polling write");
 
-    #[inline]
-    fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Plain(stream) => stream.try_write(buf),
-        }
-    }
+                match state {
+                    StreamState::Idle => {
+                        match ready!(stream.as_mut().poll_write(cx, buf.read_buf())) {
+                            Ok(n) => {
+                                tracing::trace!(written = n, "Written to stream");
+                                buf.advance_read(n);
+                                *state = StreamState::Flush;
+                            }
+                            Err(e) => return Poll::Ready(Err(e)),
+                        }
+                    }
+                    StreamState::Flush => {
+                        if let Err(e) = ready!(stream.as_mut().poll_flush(cx)) {
+                            return Poll::Ready(Err(e));
+                        }
 
-    #[inline]
-    fn poll_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self {
-            Self::Plain(stream) => stream.poll_write_ready(cx),
-        }
-    }
+                        *state = StreamState::Idle;
+                    }
+                }
+            }
 
-    #[inline]
-    fn poll_read_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self {
-            Self::Plain(stream) => stream.poll_read_ready(cx),
+            Poll::Ready(Ok(()))
         }
+
+        let (kind, state) = self.project();
+
+        let stream: Pin<&mut dyn AsyncWrite> = match kind {
+            StreamKindProjected::Plain(stream) => stream,
+            #[cfg(feature = "tls")]
+            StreamKindProjected::Tls(stream) => stream,
+        };
+
+        handle_write(cx, stream, buf, state)
     }
 }
 
@@ -245,11 +347,30 @@ pub struct Client {
 }
 
 impl Client {
+    fn project(self: Pin<&mut Self>) -> Pin<&mut Stream> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
+    }
+
     /// Construct a client from a TCP stream.
     #[inline]
     pub(crate) fn plain(stream: TcpStream) -> Self {
         Self {
-            stream: Stream::Plain(stream),
+            stream: Stream {
+                kind: StreamKind::Plain(stream),
+                state: StreamState::Idle,
+            },
+        }
+    }
+
+    /// Construct a client from a TLS stream.
+    #[inline]
+    #[cfg(feature = "tls")]
+    pub(crate) fn tls(stream: TlsStream<TcpStream>) -> Self {
+        Self {
+            stream: Stream {
+                kind: StreamKind::Tls(stream),
+                state: StreamState::Idle,
+            },
         }
     }
 
@@ -266,66 +387,23 @@ impl Client {
         self.stream.peer_addr()
     }
 
-    /// Wait until the client is readable.
-    #[inline]
-    pub async fn readable(&self) -> io::Result<()> {
-        self.stream.readable().await
-    }
-
     /// Read data from server into buffer.
     #[inline]
-    pub fn try_read(&self, buf: &mut Buf) -> io::Result<()> {
-        loop {
-            let Some(bytes) = buf.write_buf() else {
-                return Err(io::Error::other("receive buffer capacity exceeded"));
-            };
-
-            match self.stream.try_read(bytes) {
-                Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-                Ok(n) => {
-                    buf.write += n;
-
-                    if buf.remaining() > READ_CAP {
-                        return Ok(());
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    /// Wait until the client is writable.
-    #[inline]
-    pub async fn writable(&self) -> io::Result<()> {
-        self.stream.writable().await
-    }
-
-    /// Write data from the buffer.
-    #[inline]
-    pub fn try_write(&self, buf: &mut Buf) -> io::Result<()> {
-        while buf.has_remaining() {
-            match self.stream.try_write(buf.read_buf()) {
-                Ok(n) => {
-                    buf.advance(n);
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(())
+    pub fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut Buf,
+    ) -> Poll<io::Result<()>> {
+        self.project().poll_read(cx, buf)
     }
 
     /// Poll the client for write readiness.
     #[inline]
-    pub fn poll_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.stream.poll_write_ready(cx)
-    }
-
-    /// Poll the client for read readiness.
-    #[inline]
-    pub fn poll_read_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.stream.poll_read_ready(cx)
+    pub fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut Buf,
+    ) -> Poll<io::Result<()>> {
+        self.project().poll_write(cx, buf)
     }
 }

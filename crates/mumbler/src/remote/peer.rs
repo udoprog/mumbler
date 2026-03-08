@@ -209,37 +209,37 @@ impl Future for ReadyFuture<'_> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().peer.poll(cx)
+        Pin::new(&mut *self.get_mut().peer).poll(cx)
     }
 }
 
-impl Unpin for ReadyFuture<'_> {}
-
 impl Peer {
-    /// Polls the peer for readiness.
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if self.write.has_remaining()
-            && let Poll::Ready(result) = self.client.poll_write_ready(cx)
-        {
-            if let Err(e) = result {
-                return Poll::Ready(Err(e));
-            };
+    fn project(self: Pin<&mut Self>) -> (Pin<&mut Client>, &mut Buf, &mut Buf) {
+        unsafe {
+            let this = self.get_unchecked_mut();
+            (
+                Pin::new_unchecked(&mut this.client),
+                &mut this.write,
+                &mut this.read,
+            )
+        }
+    }
 
-            if let Err(e) = self.client.try_write(&mut self.write) {
-                return Poll::Ready(Err(e));
-            };
+    /// Polls the peer for readiness.
+    pub fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let (mut client, write, read) = self.project();
+
+        let write_result = client.as_mut().poll_write(cx, write);
+        let read_result = client.as_mut().poll_read(cx, read);
+
+        // We ignore `Ok(())`, since it just means that there is nothing in the
+        // write buffer at the moment.
+        if let Poll::Ready(Err(e)) = write_result {
+            return Poll::Ready(Err(e));
         }
 
-        if let Poll::Ready(result) = self.client.poll_read_ready(cx) {
-            if let Err(e) = result {
-                return Poll::Ready(Err(e));
-            };
-
-            if let Err(e) = self.client.try_read(&mut self.read) {
-                return Poll::Ready(Err(e));
-            };
-
-            return Poll::Ready(Ok(()));
+        if let Poll::Ready(result) = read_result {
+            return Poll::Ready(result);
         }
 
         Poll::Pending
