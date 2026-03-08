@@ -66,7 +66,7 @@ impl Component for RemoteStatus {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("remote::update", &error);
+                self.log.error("remote::update", error);
                 false
             }
         }

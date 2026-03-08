@@ -6,6 +6,13 @@ pub struct Error {
     error: anyhow::Error,
 }
 
+impl Error {
+    #[inline]
+    pub(crate) fn into_inner(self) -> anyhow::Error {
+        self.error
+    }
+}
+
 impl fmt::Display for Error {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

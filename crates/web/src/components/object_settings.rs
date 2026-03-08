@@ -116,7 +116,7 @@ impl Component for ObjectSettings {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("object_settings::update", &error);
+                self.log.error("object_settings::update", error);
                 true
             }
         }

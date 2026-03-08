@@ -73,7 +73,7 @@ impl Component for App {
         match msg {
             Msg::Error(error) => {
                 self.log
-                    .error(COMPONENT, format_args!("Websocket error: {error:#}"));
+                    .error_message(COMPONENT, format_args!("Websocket error: {error:#}"));
                 false
             }
             Msg::StateChanged(state) => {
@@ -86,11 +86,13 @@ impl Component for App {
                         self.log.info(component, message);
                     }
                     Ok(api::ServerNotificationBody::Error { component, message }) => {
-                        self.log.error(component, message);
+                        self.log.error_message(component, message);
                     }
                     Err(error) => {
-                        self.log
-                            .error(COMPONENT, format_args!("Notification error: {error:#}"));
+                        self.log.error_message(
+                            COMPONENT,
+                            format_args!("Notification error: {error:#}"),
+                        );
                     }
                 }
 

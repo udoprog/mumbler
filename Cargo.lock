@@ -1720,9 +1720,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab17d5feaf18223f1e3db03d8469622b5ec13f39cff9ef8e39b7d20e532db055"
+checksum = "7d147840b22e8e6edfdcafa134d21b9b5b6fa4a98d3b7e82471577522627f0c2"
 dependencies = [
  "axum",
  "axum-core",
@@ -1742,9 +1742,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web-macros"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2afdc8d9d0650ed9f403cee342d52200e78e88ce7b0c1e9103306a73e8cf772"
+checksum = "6e05eada44036e3caa37a5b4a25051d5fdae86db68f57c2dd2c79c40e7dd6308"
 dependencies = [
  "proc-macro2",
  "quote",

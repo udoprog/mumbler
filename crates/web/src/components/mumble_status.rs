@@ -66,7 +66,7 @@ impl Component for MumbleStatus {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("mumble::update", &error);
+                self.log.error("mumble::update", error);
                 false
             }
         }

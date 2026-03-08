@@ -69,7 +69,7 @@ impl Component for Settings {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("settings::update", &error);
+                self.log.error("settings::update", error);
                 true
             }
         }

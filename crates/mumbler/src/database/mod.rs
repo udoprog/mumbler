@@ -477,7 +477,8 @@ impl Database {
                     continue;
                 };
 
-                let value = value_from_blob(ty, value)?;
+                let value =
+                    value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
                 properties.push((key, value));
             }
 

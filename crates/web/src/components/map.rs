@@ -396,7 +396,7 @@ impl Component for Map {
         let changed = match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("map::update", &error);
+                self.log.error("map::update", error);
                 false
             }
         };

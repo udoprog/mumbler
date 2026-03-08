@@ -50,6 +50,9 @@ impl ws::Handler for Handler<'_> {
     ) -> Self::Response {
         match id {
             api::Request::InitializeMap => {
+                _ = incoming
+                    .read::<api::InitializeMapRequest>()
+                    .context("missing request")?;
                 outgoing.write(super::initialize_map(&self.backend).await?);
             }
             api::Request::Update => {

@@ -9,6 +9,8 @@ use slab::Slab;
 use web_sys::js_sys::Date;
 use yew::Callback;
 
+use crate::error::Error;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Info,
@@ -124,12 +126,27 @@ impl Log {
         self.notify_listeners();
     }
 
-    #[allow(unused)]
     pub(crate) fn info(&self, component: impl fmt::Display, message: impl fmt::Display) {
         self.log(component, message, Severity::Info);
     }
 
-    pub(crate) fn error(&self, component: impl fmt::Display, error: impl fmt::Display) {
+    pub(crate) fn error(&self, component: impl fmt::Display, error: Error) {
+        let error = error.into_inner();
+
+        let mut message = String::new();
+
+        for cause in error.chain() {
+            if !message.is_empty() {
+                message.push_str("\nCaused by:\n");
+            }
+
+            message.push_str(&format!("{cause:#}"));
+        }
+
+        self.log(component, message, Severity::Error);
+    }
+
+    pub(crate) fn error_message(&self, component: impl fmt::Display, error: impl fmt::Display) {
         self.log(component, error, Severity::Error);
     }
 

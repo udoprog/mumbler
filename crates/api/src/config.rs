@@ -40,6 +40,15 @@ macro_rules! keys {
             }
         }
 
+        impl fmt::Display for Key {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self.raw {
+                    $($value => write!(f, stringify!($name))),*,
+                    _ => write!(f, "UNKNOWN({})", self.raw),
+                }
+            }
+        }
+
         impl fmt::Debug for Key {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.raw {
@@ -61,7 +70,7 @@ keys! {
     REMOTE_SERVER: String = 6,
     REMOTE_ENABLED: Boolean = 7,
     WORLD_SCALE: Float = 8,
-    REMOTE_TLS: String = 11,
+    REMOTE_TLS: Boolean = 11,
     WORLD_ZOOM: Float = 9,
     WORLD_PAN: Pan = 10,
     WORLD_EXTENT: Extent = 12,
