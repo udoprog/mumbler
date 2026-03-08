@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
+use api::LocalUpdateBody;
 use api::{Id, Key, Value};
 use async_fuse::Fuse;
 use axum::Extension;
@@ -17,10 +18,7 @@ use tokio::sync::Notify;
 use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
-use crate::backend::Backend;
-use crate::backend::BackendEvent;
-use crate::backend::LocalUpdateEvent;
-use crate::backend::RemoteUpdateEvent;
+use crate::backend::{Backend, BackendEvent, LocalUpdateEvent, RemoteUpdateEvent};
 
 struct Handler<'a> {
     sender_id: Id,
@@ -81,10 +79,12 @@ impl ws::Handler for Handler<'_> {
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
                         sender_id: self.sender_id,
-                        object_id: request.object_id,
-                        key: request.key,
-                        value: request.value,
                         broadcast_self: request.broadcast_self,
+                        body: LocalUpdateBody::Update {
+                            object_id: request.object_id,
+                            key: request.key,
+                            value: request.value,
+                        },
                     }));
 
                 outgoing.write(api::Empty);
@@ -116,8 +116,14 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::CreateObjectRequest>()
                     .context("missing request")?;
 
-                let response = super::create_object(&self.backend).await?;
-                outgoing.write(response);
+                let object = self.backend.create_object().await?;
+                self.backend
+                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
+                        sender_id: self.sender_id,
+                        broadcast_self: true,
+                        body: LocalUpdateBody::Create { object },
+                    }));
+                outgoing.write(api::Empty);
             }
             api::Request::DeleteObject => {
                 let request = incoming
@@ -125,6 +131,14 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
 
                 self.backend.delete_object(request.id).await?;
+                self.backend
+                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
+                        sender_id: self.sender_id,
+                        broadcast_self: true,
+                        body: LocalUpdateBody::Delete {
+                            object_id: request.id,
+                        },
+                    }));
                 outgoing.write(api::Empty);
             }
             api::Request::DeleteImage => {
@@ -253,18 +267,12 @@ pub(super) async fn entry(
                         tracing::debug!(?event, "Backend event");
 
                         let result = match event {
-                            BackendEvent::LocalUpdate(body) => {
-                                if body.sender_id == sender_id && !body.broadcast_self {
+                            BackendEvent::LocalUpdate(event) => {
+                                if event.sender_id == sender_id && !event.broadcast_self {
                                     continue;
                                 }
 
-                                let body = api::LocalUpdateBody {
-                                    object_id: body.object_id,
-                                    key: body.key,
-                                    value: body.value,
-                                };
-
-                                server.broadcast(body).context("send local update")
+                                server.broadcast(event.body).context("send local update")
                             }
                             BackendEvent::RemoteUpdate(body) => {
                                 let body = match body {

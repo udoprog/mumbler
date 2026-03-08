@@ -15,10 +15,8 @@ use super::{Database, Paths};
 #[derive(Debug, Clone)]
 pub(crate) struct LocalUpdateEvent {
     pub(crate) sender_id: Id,
-    pub(crate) object_id: Id,
-    pub(crate) key: Key,
-    pub(crate) value: Value,
     pub(crate) broadcast_self: bool,
+    pub(crate) body: api::LocalUpdateBody,
 }
 
 #[derive(Debug, Clone)]
@@ -307,20 +305,37 @@ impl Backend {
 
     /// Create a new local object, persisting it to the database and inserting
     /// it into the in-memory client state.  Returns the new object's ID.
-    pub(crate) async fn create_object(&self) -> Result<Id> {
+    pub(crate) async fn create_object(&self) -> Result<RemoteObject> {
         let id = Id::new(rand::random());
+
+        let mut properties = HashMap::new();
+        properties.insert(Key::NAME, Value::from("Anonymous Owlbear".to_string()));
+
         self.db().insert_object(id, Type::AVATAR).await?;
+
+        for (key, value) in &properties {
+            self.db()
+                .set_property_value(id, *key, value.clone())
+                .await?;
+        }
+
         let mut state = self.inner.client_state.lock().await;
+
         state.objects.insert(
             id,
             LocalObject {
-                properties: HashMap::new(),
+                properties: properties.clone(),
                 changed: HashSet::new(),
             },
         );
+
         state.object_added.insert(id);
         self.inner.client_notify.notify_one();
-        Ok(id)
+
+        Ok(RemoteObject {
+            id,
+            properties: properties.clone(),
+        })
     }
 
     /// Delete a local object, removing it from the database and in-memory state.

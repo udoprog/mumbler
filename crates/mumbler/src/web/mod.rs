@@ -220,11 +220,6 @@ async fn get_object_settings(
     Ok(api::GetObjectSettingsResponse { object, images })
 }
 
-async fn create_object(backend: &Backend) -> Result<api::CreateObjectResponse> {
-    let id = backend.create_object().await?;
-    Ok(api::CreateObjectResponse { id })
-}
-
 async fn update_config(
     backend: &Backend,
     values: impl IntoIterator<Item = (Key, Value)>,

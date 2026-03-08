@@ -262,7 +262,7 @@ pub(crate) enum Msg {
     ConfirmDelete(Id),
     CancelDelete,
     DeleteObject(Id),
-    ObjectDeleted(Id, Result<Packet<api::DeleteObject>, ws::Error>),
+    ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
     CloseObjectSettings,
     SetMumbleObject(Id),
@@ -476,13 +476,13 @@ impl Component for Map {
                             if self.confirm_delete == Some(object_id) {
                                 html! {
                                     <div class={classes}>
-                                        <span class="object-list-item-label">{"Remove?"}</span>
-                                        <button class="btn sm square danger" title="Confirm delete"
-                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
+                                        <span class="object-list-item-label">{"Confirm removal?"}</span>
+                                        <button class="btn sm square danger" title="Cancel removal"
+                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
                                             <span class="icon x-mark" />
                                         </button>
-                                        <button class="btn sm square" title="Cancel"
-                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                        <button class="btn sm square" title="Confirm removal"
+                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
                                             <span class="icon check" />
                                         </button>
                                     </div>
@@ -620,32 +620,57 @@ impl Map {
             Msg::LocalUpdate(body) => {
                 let body = body?;
 
-                let LocalUpdateBody {
-                    object_id,
-                    key,
-                    value,
-                } = body.decode()?;
+                let body = body.decode()?;
 
-                if let Some(a) = self.objects.get_mut(&object_id) {
-                    if key == Key::IMAGE_ID {
-                        let new = value.as_id();
+                let update = match body {
+                    LocalUpdateBody::Create { object } => {
+                        self.objects
+                            .insert(object.id, LocalObject::from_remote(&object));
 
-                        let old = mem::replace(&mut a.data.image, new);
-
-                        if let Some(new) = new {
-                            self.images.load(ctx, new);
-                        }
-
-                        if let Some(old) = old {
-                            self.images.remove(old);
-                        }
+                        true
                     }
+                    LocalUpdateBody::Delete { object_id } => {
+                        if let Some(removed) = self.objects.remove(&object_id) {
+                            if let Some(id) = removed.data.image {
+                                self.images.remove(id);
+                            }
+                        }
 
-                    a.data.update(key, value);
-                }
+                        if self.selected == Some(object_id) {
+                            self.selected = None;
+                        }
+
+                        true
+                    }
+                    LocalUpdateBody::Update {
+                        object_id,
+                        key,
+                        value,
+                    } => {
+                        if let Some(a) = self.objects.get_mut(&object_id) {
+                            if key == Key::IMAGE_ID {
+                                let new = value.as_id();
+
+                                let old = mem::replace(&mut a.data.image, new);
+
+                                if let Some(new) = new {
+                                    self.images.load(ctx, new);
+                                }
+
+                                if let Some(old) = old {
+                                    self.images.remove(old);
+                                }
+                            }
+
+                            a.data.update(key, value);
+                        }
+
+                        false
+                    }
+                };
 
                 self.redraw()?;
-                Ok(false)
+                Ok(update)
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;
@@ -800,23 +825,7 @@ impl Map {
             }
             Msg::ObjectCreated(result) => {
                 let result = result?;
-                let response = result.decode()?;
-
-                let object = LocalObject {
-                    data: ObjectData {
-                        id: response.id,
-                        transform: api::Transform::origin(),
-                        look_at: None,
-                        image: None,
-                        color: None,
-                        name: None,
-                    },
-                    move_target: None,
-                    arrow_target: None,
-                };
-
-                self.selected = Some(object.data.id);
-                self.objects.insert(object.data.id, object);
+                _ = result.decode()?;
                 Ok(true)
             }
             Msg::ConfirmDelete(id) => {
@@ -833,23 +842,16 @@ impl Map {
                     .ws
                     .request()
                     .body(api::DeleteObjectRequest { id })
-                    .on_packet(ctx.link().callback(move |r| Msg::ObjectDeleted(id, r)))
+                    .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
                 self.confirm_delete = None;
                 Ok(false)
             }
-            Msg::ObjectDeleted(id, result) => {
+            Msg::ObjectDeleted(result) => {
                 let result = result?;
                 _ = result.decode()?;
-
-                self.objects.remove(&id);
-
-                if self.selected == Some(id) {
-                    self.selected = None;
-                }
-
-                Ok(true)
+                Ok(false)
             }
         }
     }

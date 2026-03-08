@@ -349,14 +349,6 @@ pub struct GetObjectSettingsResponse {
 #[musli(crate = musli_core)]
 pub struct CreateObjectRequest;
 
-/// Response returned after creating a new object.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct CreateObjectResponse {
-    /// The newly created object ID.
-    pub id: Id,
-}
-
 /// Request to delete a local object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -424,12 +416,20 @@ pub enum ServerNotificationBody {
     Error { component: String, message: String },
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct LocalUpdateBody {
-    pub object_id: Id,
-    pub key: Key,
-    pub value: Value,
+pub enum LocalUpdateBody {
+    Update {
+        object_id: Id,
+        key: Key,
+        value: Value,
+    },
+    Delete {
+        object_id: Id,
+    },
+    Create {
+        object: RemoteObject,
+    },
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -499,7 +499,7 @@ api::define! {
 
     impl Endpoint for CreateObject {
         impl Request for CreateObjectRequest;
-        type Response<'de> = CreateObjectResponse;
+        type Response<'de> = Empty;
     }
 
     pub type DeleteObject;
