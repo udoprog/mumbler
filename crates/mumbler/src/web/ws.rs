@@ -246,7 +246,7 @@ pub(super) async fn entry(
                             BackendEvent::RemoteAvatar(body) => {
                                 let body = match body {
                                     RemoteAvatarEvent::RemoteLost => api::RemoteAvatarUpdateBody::RemoteLost,
-                                    RemoteAvatarEvent::Join { peer_id, values } => api::RemoteAvatarUpdateBody::Join { peer_id, values },
+                                    RemoteAvatarEvent::Join { peer_id, avatar } => api::RemoteAvatarUpdateBody::Join { peer_id, avatar },
                                     RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
                                     RemoteAvatarEvent::Update { peer_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, key, value },
                                 };

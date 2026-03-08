@@ -306,37 +306,6 @@ pub struct RemoteAvatar {
     pub values: HashMap<Key, Value>,
 }
 
-impl RemoteAvatar {
-    #[inline]
-    pub fn transform(&self) -> Transform {
-        let Some(value) = self.values.get(&Key::AVATAR_TRANSFORM) else {
-            return Transform::origin();
-        };
-
-        value.as_transform().unwrap_or_else(Transform::origin)
-    }
-
-    #[inline]
-    pub fn look_at(&self) -> Option<Vec3> {
-        self.values.get(&Key::AVATAR_LOOK_AT)?.as_vec3()
-    }
-
-    #[inline]
-    pub fn image(&self) -> Option<Id> {
-        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
-    }
-
-    #[inline]
-    pub fn color(&self) -> Option<Color> {
-        self.values.get(&Key::AVATAR_COLOR)?.as_color()
-    }
-
-    #[inline]
-    pub fn name(&self) -> Option<&str> {
-        self.values.get(&Key::AVATAR_NAME)?.as_string()
-    }
-}
-
 #[derive(Default, Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Avatar {
@@ -401,7 +370,7 @@ impl Avatar {
 #[musli(crate = musli_core)]
 pub struct InitializeMapEvent {
     /// The player avatar.
-    pub player: Avatar,
+    pub player: RemoteAvatar,
     /// List of remote avatars.
     pub remote_avatars: Vec<RemoteAvatar>,
     /// The configuration of the world.
@@ -552,7 +521,7 @@ pub enum RemoteAvatarUpdateBody {
     RemoteLost,
     Join {
         peer_id: Id,
-        values: HashMap<Key, Value>,
+        avatar: RemoteAvatar,
     },
     Leave {
         peer_id: Id,

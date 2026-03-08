@@ -1,8 +1,9 @@
 use std::f64::consts::{FRAC_PI_6, TAU};
 
-use api::{Avatar, Extent2, Id, RemoteAvatar, Vec3, World};
+use api::{Extent2, Id, Vec3, World};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
+use crate::components::map::LocalAvatar;
 use crate::error::Error;
 
 const HALF_SPAN: f64 = FRAC_PI_6;
@@ -18,24 +19,24 @@ pub(crate) struct RenderAvatar<'a> {
 }
 
 impl<'a> RenderAvatar<'a> {
-    pub(crate) fn from_player(a: &'a Avatar) -> Self {
+    pub(crate) fn from_player(a: &'a LocalAvatar) -> Self {
         Self {
-            transform: a.transform(),
-            look_at: a.look_at(),
-            image: a.image(),
-            color: a.color().unwrap_or_else(api::Color::neutral),
-            name: a.name(),
+            transform: a.transform,
+            look_at: a.look_at,
+            image: a.image,
+            color: a.color.unwrap_or_else(api::Color::neutral),
+            name: a.name.as_deref(),
             player: true,
         }
     }
 
-    pub(crate) fn from_remote(a: &'a RemoteAvatar) -> Self {
+    pub(crate) fn from_remote(a: &'a LocalAvatar) -> Self {
         Self {
-            transform: a.transform(),
-            look_at: a.look_at(),
-            image: a.image(),
-            color: a.color().unwrap_or_else(api::Color::neutral),
-            name: a.name(),
+            transform: a.transform,
+            look_at: a.look_at,
+            image: a.image,
+            color: a.color.unwrap_or_else(api::Color::neutral),
+            name: a.name.as_deref(),
             player: false,
         }
     }

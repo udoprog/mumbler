@@ -19,6 +19,7 @@ $border-radius2: 8px;
     --heading-color: #7bdea7;
     --link-color: #b3d9ec;
     --link-hover: #eee;
+    --input-color: #2e2e2e;
     --border-color: #333;
     --btn-color: #4caf50;
     --btn-color-disabled: #888;
@@ -317,7 +318,7 @@ input[type="email"],
 input[type="url"],
 input[type="number"],
 input[type="search"] {
-    background-color: var(--control-color);
+    background-color: var(--input-color);
     color: var(--text-color);
     border: 1px solid var(--border-color);
     border-radius: $border-radius;

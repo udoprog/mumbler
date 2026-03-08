@@ -144,7 +144,8 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     {
         let state = b.client_state().await;
 
-        player = api::Avatar {
+        player = api::RemoteAvatar {
+            id: Id::GLOBAL,
             values: state.player.values.clone(),
         };
 

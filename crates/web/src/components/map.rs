@@ -1,4 +1,6 @@
-use api::{Avatar, Key, RemoteAvatar, Value, Vec3, World};
+use core::mem;
+
+use api::{Color, Id, Key, RemoteAvatar, Transform, Value, Vec3, World};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
@@ -23,6 +25,78 @@ const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / Scroll to zoom";
 
+pub(crate) struct LocalAvatar {
+    pub(crate) id: Id,
+    pub(crate) transform: Transform,
+    pub(crate) look_at: Option<Vec3>,
+    pub(crate) image: Option<Id>,
+    pub(crate) color: Option<Color>,
+    pub(crate) name: Option<String>,
+}
+
+impl Default for LocalAvatar {
+    fn default() -> Self {
+        Self {
+            id: Id::GLOBAL,
+            transform: Transform::origin(),
+            look_at: None,
+            image: None,
+            color: None,
+            name: None,
+        }
+    }
+}
+
+impl LocalAvatar {
+    fn from_remote(remote: &RemoteAvatar) -> Self {
+        Self {
+            id: remote.id,
+            transform: remote
+                .values
+                .get(&Key::AVATAR_TRANSFORM)
+                .and_then(|v| v.as_transform())
+                .unwrap_or_else(Transform::origin),
+            look_at: remote
+                .values
+                .get(&Key::AVATAR_LOOK_AT)
+                .and_then(|v| v.as_vec3()),
+            image: remote
+                .values
+                .get(&Key::AVATAR_IMAGE_ID)
+                .and_then(|v| v.as_id()),
+            color: remote
+                .values
+                .get(&Key::AVATAR_COLOR)
+                .and_then(|v| v.as_color()),
+            name: remote
+                .values
+                .get(&Key::AVATAR_NAME)
+                .and_then(|v| v.as_string().map(str::to_owned)),
+        }
+    }
+
+    fn update(&mut self, key: Key, value: Value) {
+        match key {
+            Key::AVATAR_TRANSFORM => {
+                self.transform = value.as_transform().unwrap_or_else(Transform::origin);
+            }
+            Key::AVATAR_LOOK_AT => {
+                self.look_at = value.as_vec3();
+            }
+            Key::AVATAR_IMAGE_ID => {
+                self.image = value.as_id();
+            }
+            Key::AVATAR_COLOR => {
+                self.color = value.as_color();
+            }
+            Key::AVATAR_NAME => {
+                self.name = value.into_string();
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) struct Map {
     _initialize: ws::Request,
     update_transform_request: ws::Request,
@@ -44,9 +118,9 @@ pub(crate) struct Map {
     /// Whether world settings need to be updated.
     update_world: bool,
     /// The player avatar.
-    player: Avatar,
+    player: LocalAvatar,
     /// Avatars in the world and their positions.
-    remote_avatars: Vec<RemoteAvatar>,
+    remote_avatars: Vec<LocalAvatar>,
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
@@ -154,7 +228,7 @@ impl Component for Map {
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             world: api::World::zero(),
-            player: api::Avatar::default(),
+            player: LocalAvatar::default(),
             remote_avatars: Vec::new(),
             update_transform: false,
             update_look_at: false,
@@ -233,8 +307,8 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let p = self.player.transform().position;
-        let f = self.player.transform().front;
+        let p = self.player.transform.position;
+        let f = self.player.transform.front;
 
         let pos = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
         let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
@@ -285,8 +359,12 @@ impl Map {
                 tracing::debug!(?body, "Initialize");
 
                 self.world = body.world;
-                self.player = body.player;
-                self.remote_avatars = body.remote_avatars;
+                self.player = LocalAvatar::from_remote(&body.player);
+                self.remote_avatars = body
+                    .remote_avatars
+                    .iter()
+                    .map(LocalAvatar::from_remote)
+                    .collect();
 
                 self.load_initialize_images(ctx);
                 self.redraw()?;
@@ -302,18 +380,14 @@ impl Map {
                     api::RemoteAvatarUpdateBody::RemoteLost => {
                         self.remote_avatars.clear();
                     }
-                    api::RemoteAvatarUpdateBody::Join { peer_id, values } => {
-                        let a = RemoteAvatar {
-                            id: peer_id,
-                            values: values.clone(),
-                        };
+                    api::RemoteAvatarUpdateBody::Join { avatar, .. } => {
+                        let local = LocalAvatar::from_remote(&avatar);
 
-                        if let Some(id) = values.get(&Key::AVATAR_IMAGE_ID).and_then(|v| v.as_id())
-                        {
+                        if let Some(id) = local.image {
                             self.images.load(ctx, id);
                         }
 
-                        self.remote_avatars.push(a);
+                        self.remote_avatars.push(local);
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
                         self.remote_avatars.retain(|a| a.id != peer_id);
@@ -325,21 +399,20 @@ impl Map {
                     } => {
                         if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
                             if key == Key::AVATAR_IMAGE_ID {
-                                let old = a
-                                    .values
-                                    .insert(Key::AVATAR_IMAGE_ID, value.clone())
-                                    .unwrap_or_default();
+                                let new = value.as_id();
 
-                                if let Some(old) = old.as_id() {
+                                let old = mem::replace(&mut a.image, new);
+
+                                if let Some(old) = old {
                                     self.images.remove(old);
                                 }
 
-                                if let Some(new) = value.as_id() {
+                                if let Some(new) = new {
                                     self.images.load(ctx, new);
                                 }
-                            } else {
-                                a.values.insert(key, value.clone());
                             }
+
+                            a.update(key, value);
                         }
                     }
                 }
@@ -424,7 +497,7 @@ impl Map {
 
         self.start_press = None;
         self.arrow_target = None;
-        self.player.clear_look_at();
+        self.player.look_at = None;
         self.update_look_at = true;
         self.redraw()?;
         Ok(())
@@ -440,20 +513,20 @@ impl Map {
         };
 
         let (px, py) = (
-            self.player.transform().position.x,
-            self.player.transform().position.z,
+            self.player.transform.position.x,
+            self.player.transform.position.z,
         );
 
         self.start_press = Some((px, py, true));
         self.look_at(px, py, mx, my);
-        *self.player.look_at_mut() = Vec3::new(mx, 0.0, my);
+        self.player.look_at = Some(Vec3::new(mx, 0.0, my));
         self.update_look_at = true;
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
-        let p = self.player.transform().position;
+        let p = self.player.transform.position;
 
         'done: {
             let Some(target) = self.move_target else {
@@ -465,7 +538,7 @@ impl Map {
             let distance = (dx * dx + dz * dz).sqrt();
 
             if distance < 0.01 {
-                self.player.transform_mut().position = target;
+                self.player.transform.position = target;
                 self.move_target = None;
                 self._animation_interval = None;
                 self.update_transform = true;
@@ -476,21 +549,20 @@ impl Map {
             let move_distance = step.min(distance);
             let ratio = move_distance / distance;
 
-            self.player.transform_mut().position.x += dx * ratio;
-            self.player.transform_mut().position.z += dz * ratio;
+            self.player.transform.position.x += dx * ratio;
+            self.player.transform.position.z += dz * ratio;
 
             // Face the movement direction unless a look_at target is active.
-            if self.player.look_at().is_none() {
+            if self.player.look_at.is_none() {
                 let angle_rad = dz.atan2(dx);
-                self.player.transform_mut().front =
-                    api::Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+                self.player.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
             }
 
             self.update_transform = true;
         };
 
         'done: {
-            let Some(target) = self.player.look_at() else {
+            let Some(target) = self.player.look_at else {
                 break 'done;
             };
 
@@ -509,7 +581,7 @@ impl Map {
             .request()
             .body(api::UpdateRequest {
                 key: Key::AVATAR_TRANSFORM,
-                value: Value::from(self.player.transform()),
+                value: Value::from(self.player.transform),
             })
             .on_packet(ctx.link().callback(Msg::TransformUpdated))
             .send();
@@ -526,7 +598,7 @@ impl Map {
             .request()
             .body(api::UpdateRequest {
                 key: Key::AVATAR_LOOK_AT,
-                value: Value::from(self.player.look_at()),
+                value: Value::from(self.player.look_at),
             })
             .on_packet(ctx.link().callback(Msg::LookAtUpdated))
             .send();
@@ -562,13 +634,13 @@ impl Map {
 
                     if e.shift_key() {
                         let (px, py) = (
-                            self.player.transform().position.x,
-                            self.player.transform().position.z,
+                            self.player.transform.position.x,
+                            self.player.transform.position.z,
                         );
                         self.start_press = Some((px, py, true));
 
                         self.look_at(px, py, ex, ey);
-                        *self.player.look_at_mut() = Vec3::new(ex, 0.0, ey);
+                        self.player.look_at = Some(Vec3::new(ex, 0.0, ey));
                         self.update_look_at = true;
                     } else {
                         self.start_press = Some((ex, ey, false));
@@ -618,7 +690,7 @@ impl Map {
             if shift_key {
                 let dist = (mx - px).hypot(my - py);
                 if dist >= ARROW_THRESHOLD {
-                    *self.player.look_at_mut() = Vec3::new(mx, 0.0, my);
+                    self.player.look_at = Some(Vec3::new(mx, 0.0, my));
                     self.update_look_at = true;
                     self.look_at(px, py, mx, my);
                     needs_redraw = true;
@@ -642,7 +714,7 @@ impl Map {
         let angle_rad = (my - py).atan2(mx - px);
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
-        self.player.transform_mut().front = api::Vec3::new(dir_x, 0.0, dir_z);
+        self.player.transform.front = Vec3::new(dir_x, 0.0, dir_z);
         self.update_transform = true;
     }
 
@@ -720,8 +792,8 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.player.image().into_iter();
-        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image()));
+        let ids = self.player.image.into_iter();
+        let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image));
 
         for id in ids {
             self.images.load(ctx, id);

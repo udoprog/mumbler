@@ -3,7 +3,7 @@ use core::time::Duration;
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Id, Key, Value};
+use api::{Id, Key, RemoteAvatar, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
@@ -56,7 +56,10 @@ async fn handle_peer(
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
                     peer_id: body.id,
-                    values: body.values,
+                    avatar: RemoteAvatar {
+                        id: body.id,
+                        values: body.values,
+                    },
                 }));
             }
             Event::Leave => {
