@@ -5,7 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Color, Id, Image, Key, Pan, Transform, Type, Value, ValueKind, Vec3};
+use api::{Color, Extent, Id, Image, Key, Pan, Transform, Type, Value, ValueKind, ValueType, Vec3};
 use jiff::Timestamp;
 use musli::alloc::Global;
 use musli::de::DecodeOwned;
@@ -36,6 +36,7 @@ struct Inner {
     get_config: SendStatement,
     set_config: SendStatement,
     delete_config: SendStatement,
+    list_configs: SendStatement,
     insert_object: SendStatement,
     delete_object: SendStatement,
     list_objects_by_type: SendStatement,
@@ -132,6 +133,7 @@ impl Database {
                 get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
                 delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
+                list_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 delete_object: c.prepare("DELETE FROM objects WHERE id = ? AND type = ?")?.into_send()?,
                 list_objects_by_type: c.prepare("SELECT id FROM objects WHERE type = ?")?.into_send()?,
@@ -236,6 +238,47 @@ impl Database {
         } else {
             self.delete_config(key).await
         }
+    }
+
+    /// Set the specified configuration.
+    pub async fn set_config_value(&self, key: Key, value: Value) -> Result<()> {
+        match value.into_kind() {
+            ValueKind::String(string) => {
+                self.set_config(key, string).await?;
+            }
+            ValueKind::Float(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Boolean(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Bytes(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Id(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Transform(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Color(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Vec3(value) => {
+                self.set_config(key, value).await?;
+            }
+            ValueKind::Extent(extent) => {
+                self.set_config(key, extent).await?;
+            }
+            ValueKind::Pan(pan) => {
+                self.set_config(key, pan).await?;
+            }
+            _ => {
+                self.delete_config(key).await?;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn set_config<T>(&self, key: Key, value: T) -> Result<()>
@@ -429,25 +472,8 @@ impl Database {
                     continue;
                 };
 
-                let value = match ty {
-                    api::ValueType::Id => Value::from(descriptive::from_slice::<Id>(&value)?),
-                    api::ValueType::String => {
-                        Value::from(descriptive::from_slice::<String>(&value)?)
-                    }
-                    api::ValueType::Float => Value::from(descriptive::from_slice::<f32>(&value)?),
-                    api::ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(&value)?),
-                    api::ValueType::Transform => {
-                        Value::from(descriptive::from_slice::<Transform>(&value)?)
-                    }
-                    api::ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(&value)?),
-                    api::ValueType::Color => Value::from(descriptive::from_slice::<Color>(&value)?),
-                    api::ValueType::Bytes => {
-                        Value::from(descriptive::from_slice::<Vec<u8>>(&value)?)
-                    }
-                    api::ValueType::Boolean => {
-                        Value::from(descriptive::from_slice::<bool>(&value)?)
-                    }
-                    _ => continue,
+                let Some(value) = value_from_blob(ty, value)? else {
+                    continue;
                 };
 
                 properties.push((key, value));
@@ -458,4 +484,48 @@ impl Database {
 
         task.await?
     }
+
+    pub async fn configs(&self) -> Result<Vec<(Key, Value)>> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.list_configs.reset()?;
+
+            let mut properties = Vec::new();
+
+            while let Some((key, value)) = inner.list_configs.next::<(Key, &[u8])>()? {
+                let Some(ty) = key.ty() else {
+                    continue;
+                };
+
+                let Some(value) = value_from_blob(ty, value)? else {
+                    continue;
+                };
+
+                properties.push((key, value));
+            }
+
+            Ok(properties)
+        });
+
+        task.await?
+    }
+}
+
+fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Option<Value>> {
+    let value = match ty {
+        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
+        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
+        ValueType::Float => Value::from(descriptive::from_slice::<f32>(blog)?),
+        ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
+        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
+        ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
+        ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(blog)?),
+        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
+        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
+        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
+        _ => return Ok(None),
+    };
+
+    Ok(Some(value))
 }

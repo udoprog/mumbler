@@ -2,21 +2,22 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Id, Pan, Transform, Vec3};
+use crate::{Color, Extent, Id, Pan, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
 #[non_exhaustive]
 pub enum ValueType {
-    Id,
+    Boolean,
     String,
     Float,
+    Id,
     Pan,
+    Extent,
     Transform,
     Vec3,
     Color,
     Bytes,
-    Boolean,
 }
 
 #[derive(Clone, Encode, Decode)]
@@ -32,6 +33,13 @@ impl Value {
     }
 
     #[inline]
+    pub fn empty() -> Self {
+        Self {
+            kind: ValueKind::None,
+        }
+    }
+
+    #[inline]
     pub fn as_id(&self) -> Option<Id> {
         match &self.kind {
             ValueKind::Id(id) => Some(*id),
@@ -40,9 +48,41 @@ impl Value {
     }
 
     #[inline]
+    pub fn as_bool(&self) -> Option<bool> {
+        match &self.kind {
+            ValueKind::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn as_string(&self) -> Option<&str> {
         match &self.kind {
             ValueKind::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_float(&self) -> Option<f32> {
+        match &self.kind {
+            ValueKind::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_pan(&self) -> Option<Pan> {
+        match &self.kind {
+            ValueKind::Pan(pan) => Some(*pan),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_extent(&self) -> Option<Extent> {
+        match &self.kind {
+            ValueKind::Extent(extent) => Some(*extent),
             _ => None,
         }
     }
@@ -151,6 +191,7 @@ pub enum ValueKind {
     Color(Color),
     Vec3(Vec3),
     Pan(Pan),
+    Extent(Extent),
     None,
 }
 
@@ -231,6 +272,15 @@ impl From<Pan> for Value {
     fn from(value: Pan) -> Self {
         Self {
             kind: ValueKind::Pan(value),
+        }
+    }
+}
+
+impl From<Extent> for Value {
+    #[inline]
+    fn from(value: Extent) -> Self {
+        Self {
+            kind: ValueKind::Extent(value),
         }
     }
 }

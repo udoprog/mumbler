@@ -92,13 +92,12 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(super::upload_image(&self.backend, request).await?);
             }
-            api::Request::GetSettings => {
+            api::Request::GetConfig => {
                 _ = incoming
-                    .read::<api::GetSettingsRequest>()
+                    .read::<api::GetConfigRequest>()
                     .context("missing request")?;
 
-                let response = super::get_settings(&self.backend).await?;
-                outgoing.write(response);
+                outgoing.write(super::get_config(&self.backend).await?);
             }
             api::Request::GetObjectSettings => {
                 let request = incoming
@@ -121,80 +120,56 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::DeleteObjectRequest>()
                     .context("missing request")?;
 
-                let response = super::do_delete_object(&self.backend, request).await?;
-                outgoing.write(response);
+                self.backend.delete_object(request.id).await?;
+                outgoing.write(api::Empty);
             }
             api::Request::DeleteImage => {
                 let request = incoming
                     .read::<api::DeleteImageRequest>()
                     .context("missing request")?;
 
-                let response = super::delete_image(&self.backend, request).await?;
-                outgoing.write(response);
+                self.backend.db().delete_image(request.id).await?;
+                outgoing.write(api::Empty);
             }
-            api::Request::UpdateWorld => {
+            api::Request::UpdateConfig => {
                 let request = incoming
-                    .read::<api::UpdateWorldRequest>()
+                    .read::<api::UpdateConfigRequest>()
                     .context("missing request")?;
 
-                let response = super::update_world(&self.backend, request).await?;
-                outgoing.write(response);
+                super::update_config(&self.backend, request.values).await?;
+                outgoing.write(api::Empty);
             }
             api::Request::MumbleRestart => {
-                let request = incoming
+                _ = incoming
                     .read::<api::MumbleRestartRequest>()
                     .context("missing request")?;
 
-                let response = super::mumble_restart(&self.backend, request).await?;
-                outgoing.write(response);
-            }
-            api::Request::MumbleToggle => {
-                let request = incoming
-                    .read::<api::MumbleToggleRequest>()
-                    .context("missing request")?;
-
-                let response = super::mumble_toggle(&self.backend, request).await?;
-                outgoing.write(response);
+                self.backend.restart_mumblelink();
+                outgoing.write(api::Empty);
             }
             api::Request::GetMumbleStatus => {
-                let request = incoming
+                _ = incoming
                     .read::<api::GetMumbleStatusRequest>()
                     .context("missing request")?;
 
-                let response = super::get_mumble_status(&self.backend, request).await?;
+                let response = super::get_mumble_status(&self.backend).await?;
                 outgoing.write(response);
             }
             api::Request::GetRemoteStatus => {
-                let request = incoming
+                _ = incoming
                     .read::<api::GetRemoteStatusRequest>()
                     .context("missing request")?;
 
-                let response = super::get_remote_status(&self.backend, request).await?;
+                let response = super::get_remote_status(&self.backend).await?;
                 outgoing.write(response);
             }
             api::Request::RemoteRestart => {
-                let request = incoming
+                _ = incoming
                     .read::<api::RemoteRestartRequest>()
                     .context("missing request")?;
 
-                let response = super::remote_restart(&self.backend, request).await?;
-                outgoing.write(response);
-            }
-            api::Request::RemoteToggle => {
-                let request = incoming
-                    .read::<api::RemoteToggleRequest>()
-                    .context("missing request")?;
-
-                let response = super::remote_toggle(&self.backend, request).await?;
-                outgoing.write(response);
-            }
-            api::Request::SetRemoteServer => {
-                let request = incoming
-                    .read::<api::SetRemoteServerRequest>()
-                    .context("missing request")?;
-
-                let response = super::set_remote_server(&self.backend, request).await?;
-                outgoing.write(response);
+                self.backend.restart_client();
+                outgoing.write(api::Empty);
             }
             api::Request::Unknown(id) => {
                 anyhow::bail!("unknown request type: {id}");

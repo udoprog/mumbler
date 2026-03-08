@@ -60,6 +60,8 @@ keys! {
     REMOTE_TLS: String = 11,
     WORLD_ZOOM: Float = 9,
     WORLD_PAN: Pan = 10,
+    WORLD_EXTENT: Extent = 12,
+    WORLD_TOKEN_RADIUS: Float = 13,
     IMAGE_BYTES: Bytes = 0x1000,
 }
 

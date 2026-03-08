@@ -1,9 +1,9 @@
 use std::f64::consts::{FRAC_PI_6, TAU};
 
-use api::{Extent2, Id, Vec3, World};
+use api::{Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
-use crate::components::map::ObjectData;
+use crate::components::map::{ObjectData, World};
 use crate::error::Error;
 
 const HALF_SPAN: f64 = FRAC_PI_6;
@@ -95,7 +95,7 @@ pub(crate) fn draw_facing_arc(
 pub(crate) fn draw_grid(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
-    extent: &Extent2,
+    extent: &Extent,
     zoom: f32,
 ) {
     const GRID_STEP: f32 = 2.0;

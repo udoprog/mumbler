@@ -3,8 +3,8 @@ use core::mem;
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Id, Key, LocalUpdateBody, PeerId, RemoteObject, RemotePeerObject, Transform, Value,
-    Vec3, World,
+    Color, Config, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
+    Transform, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
@@ -30,6 +30,63 @@ const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / Scroll to zoom";
+
+pub(crate) struct World {
+    pub(crate) zoom: f32,
+    pub(crate) pan: Pan,
+    pub(crate) extent: Extent,
+    pub(crate) token_radius: f32,
+}
+
+impl World {
+    fn from_globals(globals: &Config) -> Self {
+        let mut this = Self::default();
+
+        for (key, value) in &globals.values {
+            this.update(*key, value);
+        }
+
+        this
+    }
+
+    fn update(&mut self, key: Key, value: &Value) {
+        match key {
+            Key::WORLD_SCALE => {
+                self.zoom = value.as_float().unwrap_or(2.0);
+            }
+            Key::WORLD_PAN => {
+                self.pan = value.as_pan().unwrap_or_else(Pan::zero);
+            }
+            Key::WORLD_EXTENT => {
+                self.extent = value.as_extent().unwrap_or_else(Extent::arena);
+            }
+            Key::WORLD_TOKEN_RADIUS => {
+                self.token_radius = value.as_float().unwrap_or(0.5);
+            }
+            _ => {}
+        }
+    }
+
+    fn values(&self) -> Vec<(Key, Value)> {
+        let mut values = Vec::new();
+        values.push((Key::WORLD_SCALE, Value::from(self.zoom)));
+        values.push((Key::WORLD_PAN, Value::from(self.pan)));
+        values.push((Key::WORLD_EXTENT, Value::from(self.extent)));
+        values.push((Key::WORLD_TOKEN_RADIUS, Value::from(self.token_radius)));
+        values
+    }
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            zoom: 10.0,
+            pan: Pan::zero(),
+            extent: Extent::arena(),
+            token_radius: 0.5,
+        }
+    }
+}
 
 pub(crate) struct PeerObject {
     pub(crate) peer_id: PeerId,
@@ -184,7 +241,7 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     TransformUpdated(Result<Packet<api::Update>, ws::Error>),
     LookAtUpdated(Result<Packet<api::Update>, ws::Error>),
-    WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
+    WorldUpdated(Result<Packet<api::UpdateConfig>, ws::Error>),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     StateChanged(ws::State),
     Resized,
@@ -275,7 +332,7 @@ impl Component for Map {
             _log_handle,
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
-            world: api::World::zero(),
+            world: World::default(),
             selected: None,
             objects: HashMap::new(),
             peers: HashMap::new(),
@@ -502,7 +559,7 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.world = body.world;
+                self.world = World::from_globals(&body.globals);
 
                 self.objects = body
                     .objects
@@ -922,9 +979,8 @@ impl Map {
             .props()
             .ws
             .request()
-            .body(api::UpdateWorldRequest {
-                pan: self.world.pan,
-                zoom: self.world.zoom,
+            .body(api::UpdateConfigRequest {
+                values: self.world.values(),
             })
             .on_packet(ctx.link().callback(Msg::WorldUpdated))
             .send();

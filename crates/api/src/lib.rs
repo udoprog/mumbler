@@ -150,14 +150,14 @@ impl Span {
 
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct Extent2 {
+pub struct Extent {
     /// Extent along the x axis.
     pub x: Span,
     /// Extent along the y axis.
     pub y: Span,
 }
 
-impl Extent2 {
+impl Extent {
     /// Returns `true` if the point `(x, y)` lies within the extent.
     #[inline]
     pub fn contains(self, x: f32, y: f32) -> bool {
@@ -165,7 +165,7 @@ impl Extent2 {
     }
 
     /// A zero extent at the origin.
-    pub const fn zero() -> Self {
+    pub const fn arena() -> Self {
         Self {
             x: Span {
                 start: -10.0,
@@ -208,29 +208,11 @@ impl Pan {
     }
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Default, Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct World {
-    /// The zoom level of the map.
-    pub zoom: f32,
-    /// The pan offset in canvas pixels.
-    pub pan: Pan,
-    /// The extent of the world in meters.
-    pub extent: Extent2,
-    /// The radius of a token in meters.
-    pub token_radius: f32,
-}
-
-impl World {
-    /// A world with default settings.
-    pub const fn zero() -> Self {
-        Self {
-            zoom: 2.0,
-            pan: Pan::zero(),
-            extent: Extent2::zero(),
-            token_radius: 0.5,
-        }
-    }
+pub struct Config {
+    /// Global values.
+    pub values: HashMap<Key, Value>,
 }
 
 #[derive(Clone, Copy, Default, Encode, Decode)]
@@ -327,12 +309,12 @@ pub struct RemoteObject {
 pub struct InitializeMapEvent {
     pub objects: Vec<RemoteObject>,
     pub remote_avatars: Vec<RemotePeerObject>,
-    pub world: World,
+    pub globals: Config,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct GetSettingsRequest;
+pub struct GetConfigRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -343,19 +325,6 @@ pub struct Image {
     pub width: u32,
     /// The height of the image in pixels.
     pub height: u32,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct GetSettingsResponse {
-    /// List of objects.
-    pub objects: Vec<RemoteObject>,
-    /// List of image identifiers currently stored in the database.
-    pub images: Vec<Image>,
-    /// The remote host[:port] combination.
-    pub remote_server: Option<String>,
-    /// Whether TLS is enabled for the remote server connection.
-    pub remote_server_tls: bool,
 }
 
 /// Request to fetch settings for a single object.
@@ -395,11 +364,6 @@ pub struct DeleteObjectRequest {
     pub id: Id,
 }
 
-/// Response after deleting an object.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct DeleteObjectResponse;
-
 /// Request to delete a stored image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -407,33 +371,17 @@ pub struct DeleteImageRequest {
     pub id: Id,
 }
 
+/// Request to update config.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct DeleteImageResponse;
-
-/// Request to update world settings (pan and zoom).
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateWorldRequest {
-    pub pan: Pan,
-    pub zoom: f32,
+pub struct UpdateConfigRequest {
+    pub values: Vec<(Key, Value)>,
 }
 
 /// Request to restart the mumble link connection.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct MumbleRestartRequest;
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct MumbleRestartResponse;
-
-/// Request to toggle mumble integration enabled/disabled.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct MumbleToggleRequest {
-    pub enabled: bool,
-}
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -468,36 +416,6 @@ pub struct GetRemoteStatusResponse {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct RemoteRestartRequest;
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct RemoteRestartResponse;
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct RemoteToggleRequest {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct RemoteToggleResponse {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SetRemoteServerRequest {
-    pub server: Option<String>,
-    pub tls: bool,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SetRemoteServerResponse {
-    pub server: Option<String>,
-    pub tls: bool,
-}
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -563,11 +481,11 @@ api::define! {
         type Response<'de> = UploadImageResponse;
     }
 
-    pub type GetSettings;
+    pub type GetConfig;
 
-    impl Endpoint for GetSettings {
-        impl Request for GetSettingsRequest;
-        type Response<'de> = GetSettingsResponse;
+    impl Endpoint for GetConfig {
+        impl Request for GetConfigRequest;
+        type Response<'de> = Config;
     }
 
     pub type GetObjectSettings;
@@ -588,20 +506,20 @@ api::define! {
 
     impl Endpoint for DeleteObject {
         impl Request for DeleteObjectRequest;
-        type Response<'de> = DeleteObjectResponse;
+        type Response<'de> = Empty;
     }
 
     pub type DeleteImage;
 
     impl Endpoint for DeleteImage {
         impl Request for DeleteImageRequest;
-        type Response<'de> = DeleteImageResponse;
+        type Response<'de> = Empty;
     }
 
-    pub type UpdateWorld;
+    pub type UpdateConfig;
 
-    impl Endpoint for UpdateWorld {
-        impl Request for UpdateWorldRequest;
+    impl Endpoint for UpdateConfig {
+        impl Request for UpdateConfigRequest;
         type Response<'de> = Empty;
     }
 
@@ -609,14 +527,7 @@ api::define! {
 
     impl Endpoint for MumbleRestart {
         impl Request for MumbleRestartRequest;
-        type Response<'de> = MumbleRestartResponse;
-    }
-
-    pub type MumbleToggle;
-
-    impl Endpoint for MumbleToggle {
-        impl Request for MumbleToggleRequest;
-        type Response<'de> = MumbleToggleResponse;
+        type Response<'de> = Empty;
     }
 
     pub type GetMumbleStatus;
@@ -637,21 +548,7 @@ api::define! {
 
     impl Endpoint for RemoteRestart {
         impl Request for RemoteRestartRequest;
-        type Response<'de> = RemoteRestartResponse;
-    }
-
-    pub type RemoteToggle;
-
-    impl Endpoint for RemoteToggle {
-        impl Request for RemoteToggleRequest;
-        type Response<'de> = RemoteToggleResponse;
-    }
-
-    pub type SetRemoteServer;
-
-    impl Endpoint for SetRemoteServer {
-        impl Request for SetRemoteServerRequest;
-        type Response<'de> = SetRemoteServerResponse;
+        type Response<'de> = Empty;
     }
 
     pub type LocalUpdate;

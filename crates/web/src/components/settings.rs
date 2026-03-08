@@ -1,3 +1,4 @@
+use api::Key;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -11,9 +12,8 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     ServerChanged(Event),
     TlsToggled(Event),
-    SetRemoteServer(String),
-    SetRemoteServerResult(Result<Packet<api::SetRemoteServer>, ws::Error>),
-    ListSettings(Result<Packet<api::GetSettings>, ws::Error>),
+    UpdateConfig(Result<Packet<api::UpdateConfig>, ws::Error>),
+    GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ContextUpdate(log::Log),
 }
 
@@ -25,9 +25,10 @@ pub(crate) struct Props {
 pub(crate) struct Settings {
     state: ws::State,
     remote_server: String,
+    _remote_server_request: ws::Request,
     remote_server_tls: bool,
-    set_remote_server: ws::Request,
-    _list_settings: ws::Request,
+    _remote_server_tls_request: ws::Request,
+    _get_config_request: ws::Request,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
@@ -51,9 +52,10 @@ impl Component for Settings {
         let mut this = Self {
             state,
             remote_server: String::new(),
+            _remote_server_request: ws::Request::new(),
             remote_server_tls: false,
-            set_remote_server: ws::Request::new(),
-            _list_settings: ws::Request::new(),
+            _remote_server_tls_request: ws::Request::new(),
+            _get_config_request: ws::Request::new(),
             log,
             _log_handle,
             _state_change,
@@ -74,8 +76,6 @@ impl Component for Settings {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let is_remote_pending = self.set_remote_server.is_pending();
-
         html! {
             <div id="content" class="rows">
                 <h2>{"Remote Server"}</h2>
@@ -91,7 +91,6 @@ impl Component for Settings {
                         placeholder="host[:port]"
                         value={self.remote_server.clone()}
                         onchange={ctx.link().callback(Msg::ServerChanged)}
-                        disabled={is_remote_pending}
                         />
 
                     <label class="checkbox-label">
@@ -100,14 +99,9 @@ impl Component for Settings {
                             type="checkbox"
                             checked={self.remote_server_tls}
                             onchange={ctx.link().callback(Msg::TlsToggled)}
-                            disabled={is_remote_pending}
                             />
                         {" Use TLS"}
                     </label>
-
-                    if is_remote_pending {
-                        <div class="loading">{"Saving ..."}</div>
-                    }
                 </section>
             </div>
         }
@@ -117,15 +111,15 @@ impl Component for Settings {
 impl Settings {
     fn refresh(&mut self, ctx: &Context<Self>) {
         if matches!(self.state, ws::State::Open) {
-            self._list_settings = ctx
+            self._get_config_request = ctx
                 .props()
                 .ws
                 .request()
-                .body(api::GetSettingsRequest)
-                .on_packet(ctx.link().callback(Msg::ListSettings))
+                .body(api::GetConfigRequest)
+                .on_packet(ctx.link().callback(Msg::GetConfig))
                 .send();
         } else {
-            self._list_settings = ws::Request::new();
+            self._get_config_request = ws::Request::new();
         }
     }
 
@@ -136,11 +130,20 @@ impl Settings {
                 self.refresh(ctx);
                 Ok(true)
             }
-            Msg::ListSettings(result) => {
-                let result = result?;
-                let response = result.decode()?;
-                self.remote_server = response.remote_server.unwrap_or_default();
-                self.remote_server_tls = response.remote_server_tls;
+            Msg::GetConfig(result) => {
+                let body = result?;
+                let body = body.decode()?;
+                self.remote_server = body
+                    .values
+                    .get(&Key::REMOTE_SERVER)
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_default()
+                    .to_string();
+                self.remote_server_tls = body
+                    .values
+                    .get(&Key::REMOTE_TLS)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or_default();
                 Ok(true)
             }
             Msg::ServerChanged(e) => {
@@ -151,7 +154,26 @@ impl Settings {
                     .map_err(|_| "target is not an input element")?;
 
                 let value = input.value();
-                ctx.link().send_message(Msg::SetRemoteServer(value));
+                let value = value.trim();
+
+                let value = if value.is_empty() {
+                    self.remote_server = String::new();
+                    api::Value::empty()
+                } else {
+                    self.remote_server = value.to_owned();
+                    api::Value::from(self.remote_server.clone())
+                };
+
+                self._remote_server_request = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateConfigRequest {
+                        values: vec![(api::Key::REMOTE_SERVER, value)],
+                    })
+                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
+                    .send();
+
                 Ok(false)
             }
             Msg::TlsToggled(e) => {
@@ -162,32 +184,22 @@ impl Settings {
                     .map_err(|_| "target is not an input element")?;
 
                 self.remote_server_tls = input.checked();
-                ctx.link()
-                    .send_message(Msg::SetRemoteServer(self.remote_server.clone()));
-                Ok(false)
-            }
-            Msg::SetRemoteServer(server) => {
-                let server = server.trim();
-                let server = (!server.is_empty()).then_some(server.to_owned());
 
-                self.set_remote_server = ctx
+                self._remote_server_tls_request = ctx
                     .props()
                     .ws
                     .request()
-                    .body(api::SetRemoteServerRequest {
-                        server,
-                        tls: self.remote_server_tls,
+                    .body(api::UpdateConfigRequest {
+                        values: vec![(api::Key::REMOTE_TLS, self.remote_server_tls.into())],
                     })
-                    .on_packet(ctx.link().callback(Msg::SetRemoteServerResult))
+                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
                     .send();
 
                 Ok(false)
             }
-            Msg::SetRemoteServerResult(result) => {
-                let result = result?;
-                let response = result.decode()?;
-                self.remote_server = response.server.unwrap_or_default();
-                self.remote_server_tls = response.tls;
+            Msg::UpdateConfig(body) => {
+                let body = body?;
+                _ = body.decode()?;
                 Ok(true)
             }
             Msg::ContextUpdate(log) => {

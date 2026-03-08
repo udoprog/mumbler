@@ -11,7 +11,7 @@ pub(crate) enum Msg {
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
-    ToggleResponse(Result<Packet<api::RemoteToggle>, ws::Error>),
+    ToggleResponse(Result<Packet<api::UpdateConfig>, ws::Error>),
     StateChanged(ws::State),
     LogUpdate(log::Log),
 }
@@ -150,8 +150,11 @@ impl RemoteStatus {
                     .props()
                     .ws
                     .request()
-                    .body(api::RemoteToggleRequest {
-                        enabled: new_enabled,
+                    .body(api::UpdateConfigRequest {
+                        values: Vec::from([(
+                            api::Key::REMOTE_ENABLED,
+                            api::Value::from(new_enabled),
+                        )]),
                     })
                     .on_packet(ctx.link().callback(Msg::ToggleResponse))
                     .send();
@@ -161,8 +164,7 @@ impl RemoteStatus {
             }
             Msg::ToggleResponse(result) => {
                 let packet = result?;
-                let response = packet.decode()?;
-                self.enabled = response.enabled;
+                _ = packet.decode()?;
                 Ok(true)
             }
             Msg::StateChanged(state) => {
