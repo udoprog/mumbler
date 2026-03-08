@@ -356,9 +356,10 @@ impl ObjectSettings {
                     .ws
                     .request()
                     .body(api::UpdateRequest {
-                        id: ctx.props().id,
+                        object_id: ctx.props().id,
                         key: Key::IMAGE_ID,
                         value: Value::from(id),
+                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::SelectImageResult))
                     .send();
@@ -406,9 +407,10 @@ impl ObjectSettings {
                     .ws
                     .request()
                     .body(api::UpdateRequest {
-                        id: ctx.props().id,
+                        object_id: ctx.props().id,
                         key: Key::COLOR,
                         value: Value::from(color),
+                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::SelectColorResult))
                     .send();
@@ -439,9 +441,10 @@ impl ObjectSettings {
                     .ws
                     .request()
                     .body(api::UpdateRequest {
-                        id: ctx.props().id,
+                        object_id: ctx.props().id,
                         key: Key::NAME,
                         value: Value::from(name.clone()),
+                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateNameResult))
                     .send();

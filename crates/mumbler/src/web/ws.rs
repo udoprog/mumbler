@@ -19,17 +19,20 @@ use tracing::{Instrument, Level};
 
 use crate::backend::Backend;
 use crate::backend::BackendEvent;
-use crate::backend::RemoteAvatarEvent;
+use crate::backend::LocalUpdateEvent;
+use crate::backend::RemoteUpdateEvent;
 
 struct Handler<'a> {
+    sender_id: Id,
     backend: Backend,
     database_updates: HashMap<(Id, Key), Value>,
     database_updates_notify: &'a Notify,
 }
 
 impl<'a> Handler<'a> {
-    fn new(backend: Backend, database_updates_notify: &'a Notify) -> Self {
+    fn new(sender_id: Id, backend: Backend, database_updates_notify: &'a Notify) -> Self {
         Self {
+            sender_id,
             backend,
             database_updates: HashMap::new(),
             database_updates_notify,
@@ -57,7 +60,7 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
 
                 self.database_updates
-                    .insert((request.id, request.key), request.value.clone());
+                    .insert((request.object_id, request.key), request.value.clone());
 
                 self.database_updates_notify.notify_one();
 
@@ -68,8 +71,17 @@ impl ws::Handler for Handler<'_> {
                 }
 
                 self.backend
-                    .set_client(request.id, request.key, request.value.clone())
+                    .set_client(request.object_id, request.key, request.value.clone())
                     .await;
+
+                self.backend
+                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
+                        sender_id: self.sender_id,
+                        object_id: request.object_id,
+                        key: request.key,
+                        value: request.value,
+                        broadcast_self: request.broadcast_self,
+                    }));
 
                 outgoing.write(api::Empty);
             }
@@ -205,8 +217,10 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("Connected");
 
+            let sender_id = Id::new(rand::random());
+
             let database_updates_notify = Notify::new();
-            let mut server = axum08::server(socket, Handler::new(backend.clone(), &database_updates_notify));
+            let mut server = axum08::server(socket, Handler::new(sender_id, backend.clone(), &database_updates_notify));
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
 
@@ -260,6 +274,31 @@ pub(super) async fn entry(
                         tracing::debug!(?event, "Backend event");
 
                         let result = match event {
+                            BackendEvent::LocalUpdate(body) => {
+                                if body.sender_id == sender_id && !body.broadcast_self {
+                                    continue;
+                                }
+
+                                let body = api::LocalUpdateBody {
+                                    object_id: body.object_id,
+                                    key: body.key,
+                                    value: body.value,
+                                };
+
+                                server.broadcast(body).context("send local update")
+                            }
+                            BackendEvent::RemoteUpdate(body) => {
+                                let body = match body {
+                                    RemoteUpdateEvent::RemoteLost => api::RemoteUpdateBody::RemoteLost,
+                                    RemoteUpdateEvent::Join { peer_id, objects } => api::RemoteUpdateBody::Join { peer_id, objects },
+                                    RemoteUpdateEvent::Leave { peer_id } => api::RemoteUpdateBody::Leave { peer_id },
+                                    RemoteUpdateEvent::Update { peer_id, object_id, key, value } => api::RemoteUpdateBody::Update { peer_id, object_id, key, value },
+                                    RemoteUpdateEvent::ObjectAdded { peer_id, object } => api::RemoteUpdateBody::ObjectAdded { peer_id, object },
+                                    RemoteUpdateEvent::ObjectRemoved { peer_id, object_id } => api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id },
+                                };
+
+                                server.broadcast(body).context("send broadcast")
+                            }
                             BackendEvent::Notification { error, component, message } => {
                                 let body = if error {
                                     api::ServerNotificationBody::Error { component, message }
@@ -267,18 +306,6 @@ pub(super) async fn entry(
                                     api::ServerNotificationBody::Info { component, message }
                                 };
                                 server.broadcast(body).context("send notification")
-                            }
-                            BackendEvent::RemoteAvatar(body) => {
-                                let body = match body {
-                                    RemoteAvatarEvent::RemoteLost => api::RemoteAvatarUpdateBody::RemoteLost,
-                                    RemoteAvatarEvent::Join { peer_id, objects } => api::RemoteAvatarUpdateBody::Join { peer_id, objects },
-                                    RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
-                                    RemoteAvatarEvent::Update { peer_id, object_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, object_id, key, value },
-                                    RemoteAvatarEvent::ObjectAdded { peer_id, object } => api::RemoteAvatarUpdateBody::ObjectAdded { peer_id, object },
-                                    RemoteAvatarEvent::ObjectRemoved { peer_id, object_id } => api::RemoteAvatarUpdateBody::ObjectRemoved { peer_id, object_id },
-                                };
-
-                                server.broadcast(body).context("send broadcast")
                             }
                         };
 

@@ -18,6 +18,7 @@ struct ImageState {
     image: HtmlImageElement,
     load: Option<Closure<dyn FnMut()>>,
     error: Option<Closure<dyn FnMut()>>,
+    users: usize,
 }
 
 /// Collection of images loaded for rendering.
@@ -55,7 +56,13 @@ where
 
     /// Remove a loaded image.
     pub(crate) fn remove(&mut self, id: Id) {
-        self.inner.remove(&id);
+        if let Some(state) = self.inner.get_mut(&id) {
+            state.users = state.users.saturating_sub(1);
+
+            if state.users == 0 {
+                self.inner.remove(&id);
+            }
+        }
     }
 
     /// Clear all loaded images.
@@ -64,7 +71,8 @@ where
     }
 
     pub(crate) fn load(&mut self, ctx: &Context<M>, id: Id) {
-        if self.inner.contains_key(&id) {
+        if let Some(state) = self.inner.get_mut(&id) {
+            state.users = state.users.saturating_add(1);
             return;
         }
 
@@ -126,6 +134,7 @@ where
             image: img,
             load: Some(load),
             error: Some(error),
+            users: 1,
         })
     }
 }

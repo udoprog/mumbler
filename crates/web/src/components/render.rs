@@ -3,7 +3,7 @@ use std::f64::consts::{FRAC_PI_6, TAU};
 use api::{Extent2, Id, Vec3, World};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
-use crate::components::map::LocalObject;
+use crate::components::map::ObjectData;
 use crate::error::Error;
 
 const HALF_SPAN: f64 = FRAC_PI_6;
@@ -20,25 +20,13 @@ pub(crate) struct RenderAvatar<'a> {
 }
 
 impl<'a> RenderAvatar<'a> {
-    pub(crate) fn from_player(a: &'a LocalObject) -> Self {
+    pub(crate) fn from_data(data: &'a ObjectData) -> Self {
         Self {
-            transform: a.transform,
-            look_at: a.look_at,
-            image: a.image,
-            color: a.color.unwrap_or_else(api::Color::neutral),
-            name: a.name.as_deref(),
-            player: true,
-            selected: false,
-        }
-    }
-
-    pub(crate) fn from_remote(a: &'a LocalObject) -> Self {
-        Self {
-            transform: a.transform,
-            look_at: a.look_at,
-            image: a.image,
-            color: a.color.unwrap_or_else(api::Color::neutral),
-            name: a.name.as_deref(),
+            transform: data.transform,
+            look_at: data.look_at,
+            image: data.image,
+            color: data.color.unwrap_or_else(api::Color::neutral),
+            name: data.name.as_deref(),
             player: false,
             selected: false,
         }

@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
-use crate::backend::RemoteAvatarEvent;
+use crate::backend::RemoteUpdateEvent;
 use crate::backend::{BackendEvent, ClientState};
 use crate::remote::api::{
     Event, JoinBody, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PongBody, UpdatedPeer,
@@ -58,7 +58,7 @@ async fn handle_peer(
                     peer.objects.insert(o.id, o);
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateEvent::Join {
                     peer_id: body.peer_id,
                     objects: peer.objects.values().cloned().collect(),
                 }));
@@ -72,7 +72,7 @@ async fn handle_peer(
                     remote.peers.remove(&body.id);
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Leave {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateEvent::Leave {
                     peer_id: body.id,
                 }));
             }
@@ -115,7 +115,7 @@ async fn handle_peer(
                     }
                 };
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateEvent::Update {
                     peer_id: body.peer_id,
                     object_id: body.object_id,
                     key,
@@ -144,7 +144,7 @@ async fn handle_peer(
 
                 peer.objects.insert(object.id, object.clone());
 
-                b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::ObjectAdded {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateEvent::ObjectAdded {
                     peer_id: body.peer_id,
                     object,
                 }));
@@ -166,8 +166,8 @@ async fn handle_peer(
                     }
                 }
 
-                b.broadcast(BackendEvent::RemoteAvatar(
-                    RemoteAvatarEvent::ObjectRemoved {
+                b.broadcast(BackendEvent::RemoteUpdate(
+                    RemoteUpdateEvent::ObjectRemoved {
                         peer_id: body.peer_id,
                         object_id: body.object_id,
                     },
@@ -375,7 +375,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
             let mut remote = b.client_state().await;
             remote.peers.clear();
 
-            b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::RemoteLost));
+            b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateEvent::RemoteLost));
         }
 
         if enabled {

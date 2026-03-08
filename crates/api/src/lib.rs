@@ -100,9 +100,12 @@ pub struct InitializeMapRequest;
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct UpdateRequest {
-    pub id: Id,
+    pub object_id: Id,
     pub key: Key,
     pub value: Value,
+    /// Whether the update should be broadcasted to the current connection.
+    /// Normally this is false, since updates are handled on the frontend.
+    pub broadcast_self: bool,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -505,7 +508,15 @@ pub enum ServerNotificationBody {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub enum RemoteAvatarUpdateBody {
+pub struct LocalUpdateBody {
+    pub object_id: Id,
+    pub key: Key,
+    pub value: Value,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub enum RemoteUpdateBody {
     RemoteLost,
     Join {
         peer_id: PeerId,
@@ -643,10 +654,16 @@ api::define! {
         type Response<'de> = SetRemoteServerResponse;
     }
 
-    pub type RemoteAvatarUpdate;
+    pub type LocalUpdate;
 
-    impl Broadcast for RemoteAvatarUpdate {
-        impl Event for RemoteAvatarUpdateBody;
+    impl Broadcast for LocalUpdate {
+        impl Event for LocalUpdateBody;
+    }
+
+    pub type RemoteUpdate;
+
+    impl Broadcast for RemoteUpdate {
+        impl Event for RemoteUpdateBody;
     }
 
     pub type ServerNotification;

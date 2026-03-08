@@ -11,7 +11,16 @@ use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWrit
 use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
-pub(crate) enum RemoteAvatarEvent {
+pub(crate) struct LocalUpdateEvent {
+    pub(crate) sender_id: Id,
+    pub(crate) object_id: Id,
+    pub(crate) key: Key,
+    pub(crate) value: Value,
+    pub(crate) broadcast_self: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum RemoteUpdateEvent {
     RemoteLost,
     Join {
         peer_id: PeerId,
@@ -38,7 +47,8 @@ pub(crate) enum RemoteAvatarEvent {
 
 #[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
-    RemoteAvatar(RemoteAvatarEvent),
+    LocalUpdate(LocalUpdateEvent),
+    RemoteUpdate(RemoteUpdateEvent),
     Notification {
         error: bool,
         component: String,
