@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mumbler::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
-use mumbler::remote::{Client, Peer, REMOTE_PORT};
+use mumbler::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
+use tokio::net::TcpStream;
 use tokio::time::{self, Duration, Instant};
 use tracing::Level;
 
@@ -22,6 +23,12 @@ struct Opts {
     /// Enable debug logging.
     #[clap(long)]
     debug: bool,
+    /// Use a TLS connection.
+    #[clap(long)]
+    tls: bool,
+    /// Override the TLS server name to expect.
+    #[clap(long)]
+    tls_name: Option<String>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -42,14 +49,28 @@ async fn main() -> Result<()> {
         port = port_s.parse::<u16>().context("invalid port number")?;
         host
     } else {
-        port = REMOTE_PORT;
+        port = if opts.tls {
+            REMOTE_TLS_PORT
+        } else {
+            REMOTE_PORT
+        };
         &opts.connect
     };
 
-    let client = Client::connect((host, port)).await?;
+    let stream = TcpStream::connect((host, port)).await?;
+
+    let client = if opts.tls {
+        let name = opts.tls_name.as_deref().unwrap_or(host);
+        Client::default_tls_connect(stream, name)
+            .await
+            .context("Opening TLS connection")?
+    } else {
+        Client::plain(stream)
+    };
+
     let addr = client.addr()?;
 
-    tracing::info!(?addr, "Connected");
+    tracing::info!(tls = opts.tls, ?addr, "Connected");
 
     let values = HashMap::new();
 

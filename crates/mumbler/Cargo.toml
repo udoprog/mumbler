@@ -6,7 +6,7 @@ publish = false
 [features]
 default = ["tls"]
 bundle = []
-tls = ["dep:tokio-rustls"]
+tls = ["dep:tokio-rustls", "dep:rustls", "tokio/fs", "dep:webpki-roots"]
 
 [dependencies]
 api = { path = "../api", features = ["sqll"] }
@@ -36,6 +36,8 @@ parking_lot = { version = "0.12.5" }
 bstr = { version = "1.3.0", default-features = false }
 async-fuse = "1.0.1"
 tokio-rustls = { version = "0.26.4", optional = true }
+rustls = { version = "0.23.37", optional = true }
+webpki-roots = { version = "1.0.6", optional = true }
 
 [[bin]]
 name = "mumbler-client"

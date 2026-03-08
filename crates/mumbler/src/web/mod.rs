@@ -268,10 +268,7 @@ async fn update_name(
     Ok(api::UpdateNameResponse { name })
 }
 
-async fn update_world(
-    backend: &Backend,
-    request: api::UpdateWorldRequest,
-) -> Result<api::UpdateWorldResponse> {
+async fn update_world(backend: &Backend, request: api::UpdateWorldRequest) -> Result<api::Empty> {
     backend
         .db()
         .set(Id::GLOBAL, Key::WORLD_PAN, request.pan)
@@ -280,7 +277,7 @@ async fn update_world(
         .db()
         .set(Id::GLOBAL, Key::WORLD_ZOOM, request.zoom)
         .await?;
-    Ok(api::UpdateWorldResponse)
+    Ok(api::Empty)
 }
 
 async fn mumble_restart(

@@ -61,14 +61,6 @@ fn main() -> Result<()> {
 
     let mut connectors = Vec::new();
 
-    connectors.push(ConnectorConfig {
-        bind: opts.bind.as_str(),
-        port: None,
-        tls: false,
-        cert: None,
-        key: None,
-    });
-
     if opts.tls {
         connectors.push(ConnectorConfig {
             bind: opts.bind.as_str(),
@@ -76,6 +68,14 @@ fn main() -> Result<()> {
             tls: true,
             cert: opts.cert.as_deref(),
             key: opts.key.as_deref(),
+        });
+    } else {
+        connectors.push(ConnectorConfig {
+            bind: opts.bind.as_str(),
+            port: None,
+            tls: false,
+            cert: None,
+            key: None,
         });
     }
 

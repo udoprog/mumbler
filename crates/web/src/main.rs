@@ -12,6 +12,8 @@ use tracing_wasm::WASMLayerConfigBuilder;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
+const COMPONENT: &str = "app::update";
+
 struct App {
     ws: ws::Service,
     state: ws::State,
@@ -70,7 +72,8 @@ impl Component for App {
     fn update(&mut self, _: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Error(error) => {
-                tracing::error!("Failed to fetch: {error}");
+                self.log
+                    .error(COMPONENT, format_args!("Websocket error: {error:#}"));
                 false
             }
             Msg::StateChanged(state) => {
@@ -80,15 +83,17 @@ impl Component for App {
             Msg::Notification(result) => {
                 match result.and_then(|p| p.decode()) {
                     Ok(api::ServerNotificationBody::Info { component, message }) => {
-                        self.log.log_info(component, message);
+                        self.log.info(component, message);
                     }
                     Ok(api::ServerNotificationBody::Error { component, message }) => {
                         self.log.error(component, message);
                     }
-                    Err(e) => {
-                        tracing::error!("notification decode error: {e}");
+                    Err(error) => {
+                        self.log
+                            .error(COMPONENT, format_args!("Notification error: {error:#}"));
                     }
                 }
+
                 false
             }
         }

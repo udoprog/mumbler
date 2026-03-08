@@ -16,7 +16,7 @@ const UPDATES_PER_SECOND: u64 = 20;
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(b: Backend) -> Result<()> {
-    let mut link = Link::new().context("Creating link")?;
+    let mut link = Link::new().context("creating link")?;
 
     let mut pos = Position::FORWARD;
     pos.position = [0., 0., 0.];
@@ -87,16 +87,21 @@ pub async fn managed(b: Backend) -> Result<()> {
             result = future.as_mut() => {
                 if let Err(error) = result {
                     tracing::error!(%error);
+
+                    for cause in error.chain().skip(1) {
+                        tracing::error!(%cause);
+                    }
+
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 } else {
-                    tracing::info!("mumblelink stopped");
+                    tracing::info!("Mumble Link Stopped");
+                    b.notify_info(COMPONENT, "Mumble Link Stopped");
                 }
 
                 tracing::info!("Reconnecting in 5s");
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
             }
             _ = reconnect.as_mut() => {
-                b.notify_info(COMPONENT, "Reconnecting");
                 future.set(Fuse::new(run(b.clone())));
             }
             () = b.mumblelink_restart_wait() => {

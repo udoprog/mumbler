@@ -125,7 +125,7 @@ impl Log {
     }
 
     #[allow(unused)]
-    pub(crate) fn log_info(&self, component: impl fmt::Display, message: impl fmt::Display) {
+    pub(crate) fn info(&self, component: impl fmt::Display, message: impl fmt::Display) {
         self.log(component, message, Severity::Info);
     }
 

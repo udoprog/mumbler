@@ -59,6 +59,7 @@ impl ws::Handler for Handler {
 
                 let ((), ()) = tokio::join!(fut1, fut2);
                 self.update_transform = Some(request.transform);
+                outgoing.write(api::Empty);
             }
             api::Request::UpdateLookAt => {
                 let request = incoming
@@ -245,12 +246,15 @@ pub(super) async fn entry(
                         (result().await, false)
                     }
                     event = events.recv() => {
-                        let Ok(event) = event else {
-                            tracing::error!("backend event stream error: {event:?}");
-                            break;
+                        let event = match event {
+                            Ok(event) => event,
+                            Err(error) => {
+                                tracing::error!(%error, "Backend event");
+                                break;
+                            }
                         };
 
-                        tracing::debug!(?event, "backend event");
+                        tracing::debug!(?event, "Backend event");
 
                         let result = match event {
                             BackendEvent::Notification { error, component, message } => {
@@ -278,13 +282,10 @@ pub(super) async fn entry(
                 };
 
                 if let Err(error) = result {
-                    tracing::error!("{error}");
+                    tracing::error!(%error);
 
-                    let mut source = error.source();
-
-                    while let Some(cause) = source.take() {
-                        tracing::error!("Caused by: {cause}");
-                        source = cause.source();
+                    for cause in error.chain().skip(1) {
+                        tracing::error!(%cause);
                     }
 
                     break;

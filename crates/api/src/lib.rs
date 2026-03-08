@@ -13,6 +13,10 @@ use std::collections::HashMap;
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct Empty;
+
 /// Represents an RGBA color with 8-bit components.
 #[derive(Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -95,17 +99,9 @@ pub struct UpdateTransformRequest {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateTransformResponse;
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UpdateLookAtRequest {
     pub look_at: Option<Vec3>,
 }
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateLookAtResponse;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -478,10 +474,6 @@ pub struct UpdateWorldRequest {
     pub zoom: f32,
 }
 
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateWorldResponse;
-
 /// Request to restart the mumble link connection.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -600,14 +592,14 @@ api::define! {
 
     impl Endpoint for UpdateTransform {
         impl Request for UpdateTransformRequest;
-        type Response<'de> = UpdateTransformResponse;
+        type Response<'de> = Empty;
     }
 
     pub type UpdateLookAt;
 
     impl Endpoint for UpdateLookAt {
         impl Request for UpdateLookAtRequest;
-        type Response<'de> = UpdateLookAtResponse;
+        type Response<'de> = Empty;
     }
 
     pub type UploadImage;
@@ -656,7 +648,7 @@ api::define! {
 
     impl Endpoint for UpdateWorld {
         impl Request for UpdateWorldRequest;
-        type Response<'de> = UpdateWorldResponse;
+        type Response<'de> = Empty;
     }
 
     pub type MumbleRestart;

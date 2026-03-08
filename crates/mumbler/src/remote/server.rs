@@ -16,13 +16,28 @@ use api::{Id, Key, Value};
 use bstr::BStr;
 use parking_lot::Mutex;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
 use crate::remote::api::UpdatePeer;
 use crate::remote::{REMOTE_PORT, REMOTE_TLS_PORT};
+use crate::tls;
 
 use super::api::{ConnectBody, Event, PingBody};
 use super::{Client, Peer};
+
+#[cfg(feature = "tls")]
+async fn accept_tls(tls_acceptor: tls::TlsAcceptor, stream: TcpStream) -> Result<Client> {
+    let stream = tls_acceptor.accept(stream).await?;
+    Ok(Client::tls(stream.into()))
+}
+
+#[cfg(not(feature = "tls"))]
+async fn accept_tls(tls_acceptor: tls::TlsAcceptor, stream: TcpStream) -> Result<Client> {
+    _ = tls_acceptor;
+    _ = stream;
+    anyhow::bail!("Cannot accept connection, TLS support is not enabled");
+}
 
 struct PeerState {
     /// The unique identifier of this peer.
@@ -68,9 +83,9 @@ impl PeerState {
             }
 
             if let Some(peer) = peers.get_mut(id)
-                && let Err(e) = f(&mut peer.peer)
+                && let Err(error) = f(&mut peer.peer)
             {
-                tracing::error!(?id, ?e, "failed to send update");
+                tracing::error!(?id, ?error, "Sending update");
             }
         }
     }
@@ -100,7 +115,7 @@ pub struct ConnectorConfig<'a> {
 
 struct Connector {
     listener: TcpListener,
-    tls: bool,
+    tls_acceptor: Option<tls::TlsAcceptor>,
 }
 
 pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
@@ -120,34 +135,68 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
 
         let listener = TcpListener::bind((c.bind, port))
             .await
-            .with_context(|| anyhow!("Binding {}:{port}", c.bind))?;
+            .with_context(|| anyhow!("binding {}:{port}", c.bind))?;
+
+        let tls_acceptor = if c.tls {
+            Some(crate::tls::setup_acceptor(c.cert, c.key).await?)
+        } else {
+            None
+        };
+
         connectors.push(Connector {
             listener,
-            tls: c.tls,
+            tls_acceptor,
         });
     }
 
     for connector in connectors.iter() {
-        tracing::info!(addr = ?connector.listener.local_addr()?, "Listening");
+        tracing::info!(tls = connector.tls_acceptor.is_some(), addr = ?connector.listener.local_addr()?, "Listening");
     }
 
     let mut peers = HashMap::new();
     let mut wakers = Wakers::new();
     let mut state = State::new();
+    let mut accepting = JoinSet::new();
 
     loop {
         tokio::select! {
             result = Listen::new(&mut connectors) => {
                 let (i, stream, addr) = result.context("accepting connection")?;
 
-                let Some(..) = connectors.get(i) else {
-                    tracing::error!(?i, "invalid connector index");
+                let Some(connector) = connectors.get(i) else {
                     continue;
                 };
 
-                let client = Client::plain(stream);
+                // There is some extra work that needs to happen for TLS, so we
+                // move it into a separately polled future.
+                if let Some(tls_acceptor) = &connector.tls_acceptor {
+                    let tls_acceptor = tls_acceptor.clone();
+
+                    accepting.spawn_local(async move {
+                        let fut = accept_tls(tls_acceptor, stream);
+                        (addr, fut.await)
+                    });
+                } else {
+                    accepting.spawn_local(async move { (addr, Ok(Client::plain(stream))) });
+                }
+            }
+            client = accepting.join_next(), if !accepting.is_empty() => {
+                let Some(result) = client else {
+                    continue;
+                };
+
+                let (addr, client) = result.context("accept connection task panicked")?;
+
+                let client = match client {
+                    Ok(client) => client,
+                    Err(error) => {
+                        tracing::error!(?error, "Accepting connection failed");
+                        continue;
+                    }
+                };
+
                 let peer = Peer::new(addr, client);
-                tracing::info!(addr = ?peer.addr(), "Connected");
+                tracing::info!(tls = peer.is_tls(), addr = ?peer.addr(), "Connected");
 
                 let peer_state = PeerState::new(peer);
                 let id = peer_state.id;
@@ -162,12 +211,12 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
 
                 let remove = 'out: {
                     if let Err(error) = result {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored");
+                        tracing::error!(addr = ?peer.peer.addr(), %error);
                         break 'out true;
                     }
 
                     if let Err(error) = state.handle(&mut peer, &mut peers).await {
-                        tracing::error!(addr = ?peer.peer.addr(), ?error, "Peer errored");
+                        tracing::error!(addr = ?peer.peer.addr(), %error);
                         break 'out true;
                     }
 
@@ -368,7 +417,7 @@ impl State {
             };
 
             if let Err(e) = peer.peer.leave(leaving_id) {
-                tracing::error!(?id, ?e, "failed to send leave");
+                tracing::error!(?id, ?e, "Failed to send leave");
             } else {
                 self.poll.insert(leaving_id);
             }
@@ -401,8 +450,8 @@ impl State {
                 continue;
             };
 
-            if let Err(e) = peer.peer.join(joining.id, values) {
-                tracing::error!(?id, ?e, "failed to send join");
+            if let Err(error) = peer.peer.join(joining.id, values) {
+                tracing::error!(?id, %error, "Sending join");
             } else {
                 self.poll.insert(joining.id);
             }
@@ -419,13 +468,13 @@ impl State {
                 continue;
             };
 
-            if let Err(e) = joining.peer.join(other.id, &other.values) {
-                tracing::error!(?id, ?e, "failed to send join");
+            if let Err(error) = joining.peer.join(other.id, &other.values) {
+                tracing::error!(?id, %error, "Sending join");
             }
 
             for (key, value) in other.values.iter() {
-                if let Err(e) = joining.peer.updated_peer(other.id, *key, value) {
-                    tracing::error!(?id, ?e, "failed to send peer update");
+                if let Err(error) = joining.peer.updated_peer(other.id, *key, value) {
+                    tracing::error!(?id, %error, "Sending peer update");
                 }
             }
 

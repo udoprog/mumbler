@@ -9,7 +9,7 @@ use musli_core::Encode;
 use musli_core::mode::Binary;
 use musli_web::api::{Broadcast, Event};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 #[cfg(feature = "tls")]
 use tokio_rustls::TlsStream;
 
@@ -347,13 +347,9 @@ pub struct Client {
 }
 
 impl Client {
-    fn project(self: Pin<&mut Self>) -> Pin<&mut Stream> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
-    }
-
     /// Construct a client from a TCP stream.
     #[inline]
-    pub(crate) fn plain(stream: TcpStream) -> Self {
+    pub fn plain(stream: TcpStream) -> Self {
         Self {
             stream: Stream {
                 kind: StreamKind::Plain(stream),
@@ -363,9 +359,9 @@ impl Client {
     }
 
     /// Construct a client from a TLS stream.
-    #[inline]
     #[cfg(feature = "tls")]
-    pub(crate) fn tls(stream: TlsStream<TcpStream>) -> Self {
+    #[inline]
+    pub fn tls(stream: TlsStream<TcpStream>) -> Self {
         Self {
             stream: Stream {
                 kind: StreamKind::Tls(stream),
@@ -374,17 +370,61 @@ impl Client {
         }
     }
 
-    /// Open a plain TCP connection to the given address.
-    #[inline]
-    pub async fn connect(addr: impl ToSocketAddrs) -> Result<Self> {
-        let stream = TcpStream::connect(addr).await?;
-        Ok(Self::plain(stream))
+    /// This is a helper function to perform a complete TLS connection sequence
+    /// over the given stream.
+    ///
+    /// If the `tls` feature is disabled, this will simply raise an error.
+    ///
+    /// The `name` provided is the expected TLS server name and must match the
+    /// name in the server's TLS certificate.
+    ///
+    /// The certificates used will be provided by the `webpki-roots` crate.
+    #[cfg(feature = "tls")]
+    pub async fn default_tls_connect(stream: TcpStream, name: &str) -> Result<Self> {
+        use std::sync::Arc;
+
+        use rustls::pki_types::ServerName;
+        use rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let name = ServerName::try_from(name.to_owned())?;
+
+        let mut root_cert_store = RootCertStore::empty();
+        root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+
+        let connector = TlsConnector::from(Arc::new(config));
+        let stream = connector.connect(name, stream).await?;
+        Ok(Self::tls(stream.into()))
+    }
+
+    #[cfg(not(feature = "tls"))]
+    pub async fn default_tls_connect(stream: TcpStream, name: &str) -> Result<Self> {
+        _ = stream;
+        _ = name;
+        anyhow::bail!("TLS feature is disabled so TLS connections are not supported")
     }
 
     /// Get the socket address of the client.
     #[inline]
     pub fn addr(&self) -> io::Result<SocketAddr> {
         self.stream.peer_addr()
+    }
+
+    /// Returns `true` if the client is connected over TLS.
+    #[inline]
+    #[cfg(feature = "tls")]
+    pub fn is_tls(&self) -> bool {
+        matches!(self.stream.kind, StreamKind::Tls(_))
+    }
+
+    #[inline]
+    #[cfg(not(feature = "tls"))]
+    pub fn is_tls(&self) -> bool {
+        false
     }
 
     /// Read data from server into buffer.
@@ -405,5 +445,9 @@ impl Client {
         buf: &mut Buf,
     ) -> Poll<io::Result<()>> {
         self.project().poll_write(cx, buf)
+    }
+
+    fn project(self: Pin<&mut Self>) -> Pin<&mut Stream> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.stream) }
     }
 }

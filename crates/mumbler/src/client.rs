@@ -5,13 +5,14 @@ use std::collections::HashMap;
 use anyhow::{Context as _, Result, anyhow, bail};
 use api::{Id, Key, Value};
 use async_fuse::Fuse;
+use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::backend::RemoteAvatarEvent;
 use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
-use crate::remote::{Client, Peer, REMOTE_PORT};
+use crate::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
 
 const COMPONENT: &str = "remote-client";
 
@@ -21,12 +22,13 @@ async fn handle_peer(
     last_ping: &mut Option<u64>,
     mut ping_timeout: Pin<&mut Sleep>,
 ) -> Result<()> {
-    while let Some((event, body)) = peer.handle::<Event>()? {
-        match event {
+    while let Some((id, body)) = peer.handle::<Event>()? {
+        match id {
             Event::Pong => {
-                let pong = body.decode::<PongBody>()?;
+                let body = body.decode::<PongBody>()?;
+                tracing::debug!(?id, body.payload);
 
-                if Some(pong.payload) == *last_ping {
+                if Some(body.payload) == *last_ping {
                     *last_ping = None;
                     ping_timeout
                         .as_mut()
@@ -34,57 +36,55 @@ async fn handle_peer(
                 }
             }
             Event::Join => {
-                let mut event = body.decode::<JoinBody>()?;
-                tracing::debug!(?event.id, "join");
+                let mut body = body.decode::<JoinBody>()?;
+                tracing::debug!(?id, ?body.id);
 
-                if let Some(image) = event
+                if let Some(image) = body
                     .values
                     .remove(&Key::AVATAR_IMAGE_BYTES)
                     .and_then(|v| v.into_bytes())
                 {
                     let mut images = b.images().await;
                     let image = images.store(image);
-                    event
-                        .values
-                        .insert(Key::AVATAR_IMAGE_ID, Value::from(image));
+                    body.values.insert(Key::AVATAR_IMAGE_ID, Value::from(image));
                 }
 
                 {
                     let mut remote = b.client_state().await;
-                    remote.peers.entry(event.id).or_default().values = event.values.clone();
+                    remote.peers.entry(body.id).or_default().values = body.values.clone();
                 }
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
-                    peer_id: event.id,
-                    values: event.values,
+                    peer_id: body.id,
+                    values: body.values,
                 }));
             }
             Event::Leave => {
-                let event = body.decode::<LeaveBody>()?;
-                tracing::debug!(?event.id, "leave");
+                let body = body.decode::<LeaveBody>()?;
+                tracing::debug!(?id, ?body.id);
 
                 {
                     let mut remote = b.client_state().await;
-                    remote.peers.remove(&event.id);
+                    remote.peers.remove(&body.id);
                 }
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Leave {
-                    peer_id: event.id,
+                    peer_id: body.id,
                 }));
             }
             Event::Updated => {
-                let event = body.decode::<UpdatedPeer>()?;
-                tracing::debug!(?event.id, ?event.key, ?event.value, "updated");
+                let body = body.decode::<UpdatedPeer>()?;
+                tracing::debug!(?id, ?body.id, ?body.key, ?body.value);
 
                 let mut remote = b.client_state().await;
 
-                let Some(peer) = remote.peers.get_mut(&event.id) else {
+                let Some(peer) = remote.peers.get_mut(&body.id) else {
                     continue;
                 };
 
-                let (key, value) = match event.key {
+                let (key, value) = match body.key {
                     Key::AVATAR_IMAGE_BYTES => {
-                        let Some(bytes) = event.value.into_bytes() else {
+                        let Some(bytes) = body.value.into_bytes() else {
                             continue;
                         };
 
@@ -102,19 +102,19 @@ async fn handle_peer(
                         (Key::AVATAR_IMAGE_ID, Value::from(image))
                     }
                     key => {
-                        peer.values.insert(key, event.value.clone());
-                        (key, event.value)
+                        peer.values.insert(key, body.value.clone());
+                        (key, body.value)
                     }
                 };
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: event.id,
+                    peer_id: body.id,
                     key,
                     value,
                 }));
             }
-            event => {
-                tracing::debug!(?event);
+            id => {
+                tracing::debug!(?id, body = body.len(), "Unknown event");
             }
         }
     }
@@ -130,7 +130,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         port = port_s.parse::<u16>().context("invalid port number")?;
         host
     } else {
-        port = REMOTE_PORT;
+        port = if tls { REMOTE_TLS_PORT } else { REMOTE_PORT };
         connect.as_str()
     };
 
@@ -141,10 +141,15 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
     tracing::info!(?host, ?port, ?tls, "Connecting to mumbler-server");
 
-    // TODO: use `tls` when establishing a TLS-wrapped connection.
-    let client = Client::connect((host, port))
+    let stream = TcpStream::connect((host, port))
         .await
         .with_context(|| anyhow!("Connecting to {host}:{port}"))?;
+
+    let client = if tls {
+        Client::default_tls_connect(stream, host).await?
+    } else {
+        Client::plain(stream)
+    };
 
     let addr = client.addr()?;
 
@@ -293,17 +298,21 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
             result = future.as_mut() => {
                 if let Err(error) = result {
                     tracing::error!(%error);
+
+                    for cause in error.chain().skip(1) {
+                        tracing::error!(%cause);
+                    }
+
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 } else {
-                    tracing::info!("Disconnected");
-                    b.notify_info(COMPONENT, "Disconnected");
+                    tracing::info!("Remote Client Stopped");
+                    b.notify_info(COMPONENT, "Remote Client Stopped");
                 }
 
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
                 tracing::info!("Reconnecting in 5s");
             }
             _ = reconnect.as_mut() => {
-                b.notify_info(COMPONENT, "Reconnecting to server");
                 future.set(build(connect.as_deref(), enabled, tls).await);
             }
             () = b.client_restart_wait() => {

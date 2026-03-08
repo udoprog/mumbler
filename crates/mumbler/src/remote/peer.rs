@@ -54,6 +54,11 @@ impl Peer {
         self.addr
     }
 
+    /// Returns whether the peer is connected over TLS.
+    pub fn is_tls(&self) -> bool {
+        self.client.is_tls()
+    }
+
     /// Read messages from the peer. Returns `Ok(None)` when no more messages
     /// are currently available.
     #[inline]

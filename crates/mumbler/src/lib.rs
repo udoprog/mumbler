@@ -17,6 +17,12 @@ pub mod client;
 
 pub mod mumblelink;
 
+#[cfg(feature = "tls")]
+mod tls;
+#[cfg(not(feature = "tls"))]
+#[path = "tls/disabled.rs"]
+mod tls;
+
 use core::pin::pin;
 use std::net::SocketAddr;
 

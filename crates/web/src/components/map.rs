@@ -75,10 +75,10 @@ pub(crate) enum Msg {
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
+    RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     TransformUpdated(Result<Packet<api::UpdateTransform>, ws::Error>),
     LookAtUpdated(Result<Packet<api::UpdateLookAt>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
-    RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
     StateChanged(ws::State),
     Resized,
     ImageLoaded(ImageMessage),
@@ -279,38 +279,26 @@ impl Map {
                 Ok(false)
             }
             Msg::InitializeMap(result) => {
-                let initialize = result?;
-                let initialize = initialize.decode()?;
+                let body = result?;
+                let body = body.decode()?;
 
-                tracing::debug!(?initialize, "initialize");
+                tracing::debug!(?body, "Initialize");
 
-                self.world = initialize.world;
-                self.player = initialize.player;
-                self.remote_avatars = initialize.remote_avatars;
+                self.world = body.world;
+                self.player = body.player;
+                self.remote_avatars = body.remote_avatars;
 
                 self.load_initialize_images(ctx);
                 self.redraw()?;
                 Ok(true)
             }
-            Msg::TransformUpdated(result) => {
-                result?;
-                Ok(false)
-            }
-            Msg::LookAtUpdated(result) => {
-                result?;
-                Ok(false)
-            }
-            Msg::WorldUpdated(result) => {
-                result?;
-                Ok(false)
-            }
-            Msg::RemoteAvatarUpdate(update) => {
-                let update = update?;
-                let update = update.decode()?;
+            Msg::RemoteAvatarUpdate(body) => {
+                let body = body?;
+                let body = body.decode()?;
 
-                tracing::debug!(?update, "remote avatar update");
+                tracing::debug!(?body, "Remote avatar update");
 
-                match update {
+                match body {
                     api::RemoteAvatarUpdateBody::RemoteLost => {
                         self.remote_avatars.clear();
                     }
@@ -357,6 +345,21 @@ impl Map {
                 }
 
                 self.redraw()?;
+                Ok(false)
+            }
+            Msg::TransformUpdated(body) => {
+                let body = body?;
+                _ = body.decode()?;
+                Ok(false)
+            }
+            Msg::LookAtUpdated(body) => {
+                let body = body?;
+                _ = body.decode()?;
+                Ok(false)
+            }
+            Msg::WorldUpdated(body) => {
+                let body = body?;
+                _ = body.decode()?;
                 Ok(false)
             }
             Msg::StateChanged(state) => {
