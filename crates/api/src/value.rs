@@ -35,7 +35,7 @@ impl Value {
     #[inline]
     pub fn empty() -> Self {
         Self {
-            kind: ValueKind::None,
+            kind: ValueKind::Empty,
         }
     }
 
@@ -166,7 +166,7 @@ impl Default for Value {
     #[inline]
     fn default() -> Self {
         Self {
-            kind: ValueKind::None,
+            kind: ValueKind::Empty,
         }
     }
 }
@@ -180,7 +180,6 @@ impl fmt::Debug for Value {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-#[non_exhaustive]
 pub enum ValueKind {
     Id(Id),
     Float(f32),
@@ -192,7 +191,7 @@ pub enum ValueKind {
     Vec3(Vec3),
     Pan(Pan),
     Extent(Extent),
-    None,
+    Empty,
 }
 
 impl From<Id> for Value {
@@ -294,7 +293,7 @@ where
         match value {
             Some(value) => Self::from(value),
             None => Self {
-                kind: ValueKind::None,
+                kind: ValueKind::Empty,
             },
         }
     }

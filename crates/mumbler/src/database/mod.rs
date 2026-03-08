@@ -17,6 +17,46 @@ use sqll::{OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
 
+macro_rules! value_kind_switch {
+    ($self:expr, $value:expr, ($($args:expr),*), $add:ident, $delete:ident) => {
+        match $value.into_kind() {
+            ValueKind::String(string) => {
+                $self.$add($($args),*, string).await?;
+            }
+            ValueKind::Float(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Boolean(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Bytes(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Id(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Transform(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Color(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Vec3(value) => {
+                $self.$add($($args),*, value).await?;
+            }
+            ValueKind::Extent(extent) => {
+                $self.$add($($args),*, extent).await?;
+            }
+            ValueKind::Pan(pan) => {
+                $self.$add($($args),*, pan).await?;
+            }
+            ValueKind::Empty => {
+                $self.$delete($($args),*).await?;
+            }
+        }
+    };
+}
+
 use crate::Paths;
 
 #[derive(RustEmbed)]
@@ -242,42 +282,7 @@ impl Database {
 
     /// Set the specified configuration.
     pub async fn set_config_value(&self, key: Key, value: Value) -> Result<()> {
-        match value.into_kind() {
-            ValueKind::String(string) => {
-                self.set_config(key, string).await?;
-            }
-            ValueKind::Float(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Boolean(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Bytes(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Id(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Transform(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Color(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Vec3(value) => {
-                self.set_config(key, value).await?;
-            }
-            ValueKind::Extent(extent) => {
-                self.set_config(key, extent).await?;
-            }
-            ValueKind::Pan(pan) => {
-                self.set_config(key, pan).await?;
-            }
-            _ => {
-                self.delete_config(key).await?;
-            }
-        }
-
+        value_kind_switch!(self, value, (key), set_config, delete_config);
         Ok(())
     }
 
@@ -340,30 +345,7 @@ impl Database {
 
     /// Set specific configuration by key, or delete it if the value is unset.
     pub async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
-        match value.into_kind() {
-            ValueKind::String(string) => {
-                self.set_property(id, key, string).await?;
-            }
-            ValueKind::Id(value) => {
-                self.set_property(id, key, value).await?;
-            }
-            ValueKind::Bytes(value) => {
-                self.set_property(id, key, value).await?;
-            }
-            ValueKind::Transform(value) => {
-                self.set_property(id, key, value).await?;
-            }
-            ValueKind::Color(value) => {
-                self.set_property(id, key, value).await?;
-            }
-            ValueKind::Vec3(value) => {
-                self.set_property(id, key, value).await?;
-            }
-            _ => {
-                self.delete_property(id, key).await?;
-            }
-        }
-
+        value_kind_switch!(self, value, (id, key), set_property, delete_property);
         Ok(())
     }
 
