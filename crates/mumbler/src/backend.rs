@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
+use api::Properties;
 use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -59,7 +60,7 @@ pub(crate) enum BackendEvent {
 /// State for the backend.
 #[derive(Debug, Clone)]
 pub(crate) struct LocalObject {
-    pub(crate) properties: HashMap<Key, Value>,
+    pub(crate) properties: Properties,
     pub(crate) changed: HashSet<Key>,
 }
 
@@ -142,16 +143,16 @@ impl Backend {
         let mut objects = HashMap::new();
 
         for id in database.objects(api::Type::AVATAR).await? {
-            let mut values = HashMap::new();
+            let mut properties = Properties::new();
 
             for (key, value) in database.properties(id).await? {
-                values.insert(key, value);
+                properties.insert(key, value);
             }
 
             objects.insert(
                 id,
                 LocalObject {
-                    properties: values,
+                    properties,
                     changed: HashSet::new(),
                 },
             );
@@ -308,15 +309,13 @@ impl Backend {
     pub(crate) async fn create_object(&self) -> Result<RemoteObject> {
         let id = Id::new(rand::random());
 
-        let mut properties = HashMap::new();
+        let mut properties = Properties::new();
         properties.insert(Key::NAME, Value::from("Anonymous Owlbear".to_string()));
 
         self.db().insert_object(id, Type::AVATAR).await?;
 
-        for (key, value) in &properties {
-            self.db()
-                .set_property_value(id, *key, value.clone())
-                .await?;
+        for (key, value) in properties.iter() {
+            self.db().set_property_value(id, key, value.clone()).await?;
         }
 
         let mut state = self.inner.client_state.lock().await;

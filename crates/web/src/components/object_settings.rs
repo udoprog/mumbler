@@ -338,13 +338,14 @@ impl ObjectSettings {
                 let response = result.decode()?;
                 self.images = response.images;
 
-                if let Some(obj) = response.object {
-                    self.selected = obj.properties.get(&Key::IMAGE_ID).and_then(|v| v.as_id());
-                    self.color = obj.properties.get(&Key::COLOR).and_then(|v| v.as_color());
-                    self.name = obj
+                if let Some(object) = response.object {
+                    self.selected = object.properties.get(Key::IMAGE_ID).as_id();
+                    self.color = object.properties.get(Key::COLOR).as_color();
+                    self.name = object
                         .properties
-                        .get(&Key::NAME)
-                        .and_then(|v| v.as_string().map(str::to_owned));
+                        .get(Key::NAME)
+                        .as_string()
+                        .map(str::to_owned)
                 }
 
                 self.load_preview_image(ctx);
@@ -495,6 +496,7 @@ impl ObjectSettings {
             name: self.name.as_deref(),
             player: true,
             selected: false,
+            hidden: false,
         };
 
         render::draw_avatar_preview(&cx, &canvas, &avatar, |id| {

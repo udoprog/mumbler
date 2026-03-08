@@ -3,7 +3,7 @@ use core::mem;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use api::{
-    Color, Config, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
     Transform, Value, Vec3,
 };
 use gloo::events::EventListener;
@@ -30,7 +30,7 @@ const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
-const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / Scroll to zoom";
+const HELP: &str = "Shift to look / Shift + Click to place eye";
 
 pub(crate) struct World {
     pub(crate) zoom: f32,
@@ -40,11 +40,11 @@ pub(crate) struct World {
 }
 
 impl World {
-    fn from_globals(globals: &Config) -> Self {
+    fn from_config(properties: &api::Properties) -> Self {
         let mut this = Self::default();
 
-        for (key, value) in &globals.values {
-            this.update(*key, value);
+        for (key, value) in properties.iter() {
+            this.update(key, value);
         }
 
         this
@@ -135,29 +135,21 @@ impl ObjectData {
             id: remote.id,
             transform: remote
                 .properties
-                .get(&Key::TRANSFORM)
-                .and_then(|v| v.as_transform())
+                .get(Key::TRANSFORM)
+                .as_transform()
                 .unwrap_or_else(Transform::origin),
-            look_at: remote
-                .properties
-                .get(&Key::LOOK_AT)
-                .and_then(|v| v.as_vec3()),
-            image: remote
-                .properties
-                .get(&Key::IMAGE_ID)
-                .and_then(|v| v.as_id()),
-            color: remote
-                .properties
-                .get(&Key::COLOR)
-                .and_then(|v| v.as_color()),
+            look_at: remote.properties.get(Key::LOOK_AT).as_vec3(),
+            image: remote.properties.get(Key::IMAGE_ID).as_id(),
+            color: remote.properties.get(Key::COLOR).as_color(),
             name: remote
                 .properties
-                .get(&Key::NAME)
-                .and_then(|v| v.as_string().map(str::to_owned)),
+                .get(Key::NAME)
+                .as_string()
+                .map(str::to_owned),
             hidden: remote
                 .properties
-                .get(&Key::HIDDEN)
-                .and_then(|v| v.as_bool())
+                .get(Key::HIDDEN)
+                .as_bool()
                 .unwrap_or(false),
         }
     }
@@ -648,12 +640,9 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.world = World::from_globals(&body.globals);
-                self.mumble_object = body
-                    .globals
-                    .values
-                    .get(&Key::MUMBLE_OBJECT)
-                    .and_then(|v| v.as_id());
+                self.world = World::from_config(&body.config);
+
+                self.mumble_object = body.config.get(Key::MUMBLE_OBJECT).as_id();
 
                 self.objects = body
                     .objects

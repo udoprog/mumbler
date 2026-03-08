@@ -208,11 +208,49 @@ impl Pan {
     }
 }
 
-#[derive(Default, Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct Config {
+#[derive(Default, Clone, Debug, Encode, Decode)]
+#[musli(crate = musli_core, transparent)]
+pub struct Properties {
     /// Global values.
-    pub values: HashMap<Key, Value>,
+    values: HashMap<Key, Value>,
+}
+
+impl Properties {
+    /// Construct a new empty set of properties.
+    pub fn new() -> Self {
+        Self {
+            values: HashMap::new(),
+        }
+    }
+
+    /// Iterate over properties.
+    pub fn iter(&self) -> impl Iterator<Item = (Key, &Value)> {
+        self.values.iter().map(|(&k, v)| (k, v))
+    }
+
+    /// Get the value of a property by key.
+    pub fn get(&self, key: Key) -> &Value {
+        static DEFAULT: Value = Value::empty();
+        self.values.get(&key).unwrap_or(&DEFAULT)
+    }
+
+    /// Insert or update a property value by key.
+    pub fn insert(&mut self, key: Key, value: Value) -> Value {
+        let Some(value) = self.values.insert(key, value) else {
+            return Value::empty();
+        };
+
+        value
+    }
+
+    /// Remove a property by key.
+    pub fn remove(&mut self, key: Key) -> Value {
+        let Some(value) = self.values.remove(&key) else {
+            return Value::empty();
+        };
+
+        value
+    }
 }
 
 #[derive(Clone, Copy, Default, Encode, Decode)]
@@ -300,7 +338,7 @@ pub struct RemotePeerObject {
 #[musli(crate = musli_core)]
 pub struct RemoteObject {
     pub id: Id,
-    pub properties: HashMap<Key, Value>,
+    pub properties: Properties,
 }
 
 /// Event emitted when the map is initialized.
@@ -309,7 +347,7 @@ pub struct RemoteObject {
 pub struct InitializeMapEvent {
     pub objects: Vec<RemoteObject>,
     pub remote_avatars: Vec<RemotePeerObject>,
-    pub globals: Config,
+    pub config: Properties,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -485,7 +523,7 @@ api::define! {
 
     impl Endpoint for GetConfig {
         impl Request for GetConfigRequest;
-        type Response<'de> = Config;
+        type Response<'de> = Properties;
     }
 
     pub type GetObjectSettings;

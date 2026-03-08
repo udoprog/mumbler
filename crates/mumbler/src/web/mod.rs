@@ -46,12 +46,11 @@ impl From<anyhow::Error> for WebError {
     }
 }
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use api::{Id, Key, Value};
+use api::{Id, Key, Properties, Value};
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
@@ -165,16 +164,16 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         }
     }
 
-    let mut values = HashMap::new();
+    let mut config = Properties::new();
 
     for (key, value) in b.db().configs().await? {
-        values.insert(key, value);
+        config.insert(key, value);
     }
 
     let ev = api::InitializeMapEvent {
         objects,
         remote_avatars,
-        globals: api::Config { values },
+        config,
     };
 
     Ok(ev)
@@ -193,14 +192,14 @@ async fn upload_image(
     Ok(api::UploadImageResponse { id })
 }
 
-async fn get_config(backend: &Backend) -> Result<api::Config> {
-    let mut values = HashMap::new();
+async fn get_config(backend: &Backend) -> Result<Properties> {
+    let mut properties = Properties::new();
 
     for (key, value) in backend.db().configs().await? {
-        values.insert(key, value);
+        properties.insert(key, value);
     }
 
-    Ok(api::Config { values })
+    Ok(properties)
 }
 
 async fn get_object_settings(

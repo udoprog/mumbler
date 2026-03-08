@@ -454,10 +454,7 @@ impl Database {
                     continue;
                 };
 
-                let Some(value) = value_from_blob(ty, value)? else {
-                    continue;
-                };
-
+                let value = value_from_blob(ty, value)?;
                 properties.push((key, value));
             }
 
@@ -480,10 +477,7 @@ impl Database {
                     continue;
                 };
 
-                let Some(value) = value_from_blob(ty, value)? else {
-                    continue;
-                };
-
+                let value = value_from_blob(ty, value)?;
                 properties.push((key, value));
             }
 
@@ -494,7 +488,7 @@ impl Database {
     }
 }
 
-fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Option<Value>> {
+fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
     let value = match ty {
         ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
@@ -506,8 +500,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Option<Value>> {
         ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
         ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
         ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
-        _ => return Ok(None),
     };
 
-    Ok(Some(value))
+    Ok(value)
 }

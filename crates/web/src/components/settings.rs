@@ -134,16 +134,11 @@ impl Settings {
                 let body = result?;
                 let body = body.decode()?;
                 self.remote_server = body
-                    .values
-                    .get(&Key::REMOTE_SERVER)
-                    .and_then(|v| v.as_string())
+                    .get(Key::REMOTE_SERVER)
+                    .as_string()
                     .unwrap_or_default()
                     .to_string();
-                self.remote_server_tls = body
-                    .values
-                    .get(&Key::REMOTE_TLS)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or_default();
+                self.remote_server_tls = body.get(Key::REMOTE_TLS).as_bool().unwrap_or_default();
                 Ok(true)
             }
             Msg::ServerChanged(e) => {

@@ -1,4 +1,4 @@
-use std::f64::consts::{FRAC_PI_6, TAU};
+use std::f64::consts::{FRAC_PI_6, PI, TAU};
 
 use api::{Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
@@ -17,6 +17,7 @@ pub(crate) struct RenderAvatar<'a> {
     pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
     pub(crate) selected: bool,
+    pub(crate) hidden: bool,
 }
 
 impl<'a> RenderAvatar<'a> {
@@ -29,6 +30,7 @@ impl<'a> RenderAvatar<'a> {
             name: data.name.as_deref(),
             player: false,
             selected: false,
+            hidden: data.hidden,
         }
     }
 }
@@ -171,9 +173,13 @@ pub(crate) fn draw_avatar_token(
 
     if a.selected {
         cx.set_stroke_style_str("#ffffff");
-        cx.set_line_width(token_radius * 0.18);
+        cx.set_line_width(token_radius * 0.08);
         cx.begin_path();
-        cx.arc(x, y, token_radius * 1.22, 0.0, TAU)?;
+        cx.arc(x, y, token_radius * 1.2, -FRAC_PI_6, FRAC_PI_6)?;
+        cx.stroke();
+
+        cx.begin_path();
+        cx.arc(x, y, token_radius * 1.2, PI - FRAC_PI_6, PI + FRAC_PI_6)?;
         cx.stroke();
     }
 
@@ -260,6 +266,58 @@ pub(crate) fn draw_avatar_token(
         cx.set_shadow_blur(0.0);
     }
 
+    if a.hidden {
+        draw_hidden_badge(cx, x, y, token_radius)?;
+    }
+
+    Ok(())
+}
+
+/// Draws a small eye-slash badge at the top-right edge of a token to indicate
+/// the object is hidden from remote peers.
+fn draw_hidden_badge(
+    cx: &CanvasRenderingContext2d,
+    x: f64,
+    y: f64,
+    token_radius: f64,
+) -> Result<(), Error> {
+    let badge_r = token_radius * 0.38;
+    // Position at 45° (top-right edge)
+    let bx = x + token_radius * std::f64::consts::FRAC_1_SQRT_2;
+    let by = y - token_radius * std::f64::consts::FRAC_1_SQRT_2;
+
+    cx.save();
+
+    // Dark pill background
+    cx.set_fill_style_str("rgba(20,20,20,0.85)");
+    cx.begin_path();
+    cx.arc(bx, by, badge_r, 0.0, TAU)?;
+    cx.fill();
+
+    // Eye almond (two arcs meeting at left/right points)
+    let ew = badge_r * 0.75;
+    let eh = badge_r * 0.45;
+    cx.set_stroke_style_str("#e05252");
+    cx.set_line_width(badge_r * 0.22);
+    cx.begin_path();
+    cx.ellipse(bx, by, ew, eh, 0.0, 0.0, TAU)?;
+    cx.stroke();
+
+    // Pupil dot
+    cx.set_fill_style_str("#e05252");
+    cx.begin_path();
+    cx.arc(bx, by, badge_r * 0.18, 0.0, TAU)?;
+    cx.fill();
+
+    // Slash line
+    cx.set_stroke_style_str("#e05252");
+    cx.set_line_width(badge_r * 0.22);
+    cx.begin_path();
+    cx.move_to(bx - ew * 0.85, by + eh * 1.1);
+    cx.line_to(bx + ew * 0.85, by - eh * 1.1);
+    cx.stroke();
+
+    cx.restore();
     Ok(())
 }
 

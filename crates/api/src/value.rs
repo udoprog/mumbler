@@ -6,7 +6,6 @@ use crate::{Color, Extent, Id, Pan, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
-#[non_exhaustive]
 pub enum ValueType {
     Boolean,
     String,
@@ -33,7 +32,7 @@ impl Value {
     }
 
     #[inline]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             kind: ValueKind::Empty,
         }

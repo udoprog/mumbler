@@ -1,9 +1,8 @@
 use core::pin::{Pin, pin};
 use core::time::Duration;
-use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, RemoteObject, Value};
+use api::{Key, Properties, RemoteObject, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
@@ -45,11 +44,7 @@ async fn handle_peer(
                 let peer = remote.peers.entry(body.peer_id).or_default();
 
                 for mut o in body.objects {
-                    if let Some(image) = o
-                        .properties
-                        .remove(&Key::IMAGE_BYTES)
-                        .and_then(|v| v.into_bytes())
-                    {
+                    if let Some(image) = o.properties.remove(Key::IMAGE_BYTES).into_bytes() {
                         let mut images = b.images().await;
                         let image = images.store(image);
                         o.properties.insert(Key::IMAGE_ID, Value::from(image));
@@ -100,9 +95,10 @@ async fn handle_peer(
 
                         let image = images.store(bytes);
 
-                        if let Some(old) =
-                            object.properties.insert(Key::IMAGE_ID, Value::from(image))
-                            && let Some(id) = old.as_id()
+                        if let Some(id) = object
+                            .properties
+                            .insert(Key::IMAGE_ID, Value::from(image))
+                            .as_id()
                         {
                             images.remove(id);
                         }
@@ -132,11 +128,7 @@ async fn handle_peer(
 
                 let mut object = body.object.clone();
 
-                if let Some(image) = object
-                    .properties
-                    .remove(&Key::IMAGE_BYTES)
-                    .and_then(|v| v.into_bytes())
-                {
+                if let Some(image) = object.properties.remove(Key::IMAGE_BYTES).into_bytes() {
                     let mut images = b.images().await;
                     let image = images.store(image);
                     object.properties.insert(Key::IMAGE_ID, Value::from(image));
@@ -158,8 +150,7 @@ async fn handle_peer(
 
                     if let Some(peer) = remote.peers.get_mut(&body.peer_id) {
                         if let Some(old) = peer.objects.remove(&body.object_id)
-                            && let Some(image_id) =
-                                old.properties.get(&Key::IMAGE_ID).and_then(|v| v.as_id())
+                            && let Some(image_id) = old.properties.get(Key::IMAGE_ID).as_id()
                         {
                             b.images().await.remove(image_id);
                         }
@@ -223,11 +214,10 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut objects = Vec::new();
 
     for (id, object) in players {
-        let mut properties = HashMap::new();
+        let mut properties = Properties::new();
 
-        for (key, value) in &object.properties {
-            let (key, value) = match *key {
-                Key::HIDDEN => continue,
+        for (key, value) in object.properties.iter() {
+            let (key, value) = match key {
                 Key::IMAGE_ID => {
                     let Some(image) = value.as_id() else {
                         continue;
@@ -266,9 +256,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                     };
 
                     for key in object.changed.drain() {
-                        let Some(value) = object.properties.get(&key) else {
-                            continue;
-                        };
+                        let value = object.properties.get(key);
 
                         let owned;
 
@@ -294,10 +282,10 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         continue;
                     };
 
-                    let mut properties = std::collections::HashMap::new();
+                    let mut properties = Properties::new();
 
-                    for (key, value) in &object.properties {
-                        let (key, value) = match *key {
+                    for (key, value) in object.properties.iter() {
+                        let (key, value) = match key {
                             Key::IMAGE_ID => {
                                 let Some(image) = value.as_id() else {
                                     continue;
