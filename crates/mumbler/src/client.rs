@@ -227,6 +227,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
         for (key, value) in &object.properties {
             let (key, value) = match *key {
+                Key::HIDDEN => continue,
                 Key::IMAGE_ID => {
                     let Some(image) = value.as_id() else {
                         continue;

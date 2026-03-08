@@ -400,7 +400,7 @@ input[type="search"] {
             opacity: 0;
             transition: opacity 0.1s;
 
-            &.info {
+            &.active {
                 opacity: 1;
             }
         }

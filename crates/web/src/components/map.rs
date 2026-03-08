@@ -126,6 +126,7 @@ pub(crate) struct ObjectData {
     pub(crate) image: Option<Id>,
     pub(crate) color: Option<Color>,
     pub(crate) name: Option<String>,
+    pub(crate) hidden: bool,
 }
 
 impl ObjectData {
@@ -153,6 +154,11 @@ impl ObjectData {
                 .properties
                 .get(&Key::NAME)
                 .and_then(|v| v.as_string().map(str::to_owned)),
+            hidden: remote
+                .properties
+                .get(&Key::HIDDEN)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     }
 
@@ -172,6 +178,9 @@ impl ObjectData {
             }
             Key::NAME => {
                 self.name = value.into_string();
+            }
+            Key::HIDDEN => {
+                self.hidden = value.as_bool().unwrap_or(false);
             }
             _ => {}
         }
@@ -236,6 +245,8 @@ pub(crate) struct Map {
     mumble_object: Option<Id>,
     /// In-flight set-mumble-object request.
     _set_mumble_object: ws::Request,
+    /// In-flight visibility toggle requests, per object.
+    hide_requests: HashMap<Id, ws::Request>,
 }
 
 pub(crate) enum Msg {
@@ -267,6 +278,8 @@ pub(crate) enum Msg {
     CloseObjectSettings,
     SetMumbleObject(Id),
     SetMumbleObjectResult(Result<Packet<api::UpdateConfig>, ws::Error>),
+    ToggleHidden(Id),
+    ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
     SetLog(log::Log),
 }
 
@@ -360,6 +373,7 @@ impl Component for Map {
             open_settings: None,
             mumble_object: None,
             _set_mumble_object: ws::Request::new(),
+            hide_requests: HashMap::new(),
         };
 
         this.refresh(ctx);
@@ -477,17 +491,22 @@ impl Component for Map {
                                 html! {
                                     <div class={classes}>
                                         <span class="object-list-item-label">{"Confirm removal?"}</span>
-                                        <button class="btn sm square danger" title="Cancel removal"
+                                        <button class="btn sm square danger" title="Cancel"
                                             onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                            <span class="icon x-mark" />
+                                            <Icon name="x-mark" />
                                         </button>
-                                        <button class="btn sm square" title="Confirm removal"
+                                        <button class="btn sm square" title="Remove"
                                             onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
-                                            <span class="icon check" />
+                                            <Icon name="check" />
                                         </button>
                                     </div>
                                 }
                             } else {
+                                let is_hidden = o.data.hidden;
+                                let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
+                                let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
+                                let is_mumble = self.mumble_object == Some(object_id);
+
                                 html! {
                                     <div class={classes} onclick={on_click}>
                                         <span class="object-list-item-label">{label}</span>
@@ -496,22 +515,30 @@ impl Component for Map {
                                                 e.stop_propagation();
                                                 Msg::OpenObjectSettings(object_id)
                                             })}>
-                                            <span class="icon cog" />
+                                            <Icon name="cog" />
                                         </button>
                                         <button class="btn sm square danger object-list-item-action" title="Delete object"
                                             onclick={ctx.link().callback(move |e: MouseEvent| {
                                                 e.stop_propagation();
                                                 Msg::ConfirmDelete(object_id)
                                             })}>
-                                            <span class="icon x-mark" />
+                                            <Icon name="x-mark" />
                                         </button>
-                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", (self.mumble_object == Some(object_id)).then_some("info"))}
+                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", is_mumble.then_some("info"), is_mumble.then_some("active"))}
                                             title="Set as MumbleLink source"
                                             onclick={ctx.link().callback(move |e: MouseEvent| {
                                                 e.stop_propagation();
                                                 Msg::SetMumbleObject(object_id)
                                             })}>
-                                            <span class="icon mumble" />
+                                            <Icon name="mumble" />
+                                        </button>
+                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", is_hidden.then_some("danger"), is_hidden.then_some("active"))}
+                                            title={eye_title}
+                                            onclick={ctx.link().callback(move |e: MouseEvent| {
+                                                e.stop_propagation();
+                                                Msg::ToggleHidden(object_id)
+                                            })}>
+                                            <Icon name={eye_icon} />
                                         </button>
                                     </div>
                                 }
@@ -528,7 +555,7 @@ impl Component for Map {
                             <h2>{"Object Settings"}</h2>
                             <button class="btn sm square" title="Close"
                                 onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
-                                <span class="icon x-mark" />
+                                <Icon name="x-mark" />
                             </button>
                         </div>
                         <div class="modal-body">
@@ -579,6 +606,35 @@ impl Map {
                 Ok(true)
             }
             Msg::SetMumbleObjectResult(result) => {
+                result?;
+                Ok(false)
+            }
+            Msg::ToggleHidden(id) => {
+                let Some(object) = self.objects.get_mut(&id) else {
+                    return Ok(false);
+                };
+
+                object.data.hidden = !object.data.hidden;
+                let new_hidden = object.data.hidden;
+
+                let req = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateRequest {
+                        object_id: id,
+                        key: Key::HIDDEN,
+                        value: Value::from(new_hidden),
+                        broadcast_self: false,
+                    })
+                    .on_packet(ctx.link().callback(move |r| Msg::ToggleHiddenResult(id, r)))
+                    .send();
+
+                self.hide_requests.insert(id, req);
+                Ok(true)
+            }
+            Msg::ToggleHiddenResult(id, result) => {
+                self.hide_requests.remove(&id);
                 result?;
                 Ok(false)
             }
@@ -1313,6 +1369,7 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
+                .filter(|a| !a.data.hidden)
                 .map(|a| RenderAvatar::from_data(&a.data));
 
             let locals = self.objects.values().map(move |a| {

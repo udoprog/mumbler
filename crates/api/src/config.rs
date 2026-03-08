@@ -68,6 +68,8 @@ keys! {
     WORLD_TOKEN_RADIUS: Float = 13,
     /// The object which is used for mumble link.
     MUMBLE_OBJECT: Id = 14,
+    /// Whether the object is hidden from remote peers.
+    HIDDEN: Boolean = 15,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }
