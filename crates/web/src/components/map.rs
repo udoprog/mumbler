@@ -1,6 +1,6 @@
 use core::mem;
 
-use api::{Color, Id, Key, RemoteObject, Transform, Value, Vec3, World};
+use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Value, Vec3, World};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
@@ -24,6 +24,11 @@ const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / Scroll to zoom";
+
+pub(crate) struct PeerObject {
+    pub(crate) peer_id: PeerId,
+    pub(crate) object: LocalObject,
+}
 
 pub(crate) struct LocalObject {
     pub(crate) id: Id,
@@ -104,10 +109,12 @@ pub(crate) struct Map {
     update_look_at: bool,
     /// Whether world settings need to be updated.
     update_world: bool,
+    /// The selected object.
+    selected: Option<usize>,
     /// The list of local objects.
     local_objects: Vec<LocalObject>,
     /// The list of remote objects.
-    remote_avatars: Vec<LocalObject>,
+    remote_avatars: Vec<PeerObject>,
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
@@ -215,6 +222,7 @@ impl Component for Map {
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             world: api::World::zero(),
+            selected: None,
             local_objects: Vec::new(),
             remote_avatars: Vec::new(),
             update_transform: false,
@@ -294,11 +302,18 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let p = self.local_objects.transform.position;
-        let f = self.local_objects.transform.front;
+        let pos;
 
-        let pos = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
-        let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
+        if let Some(object) = self.selected.and_then(|i| self.local_objects.get(i)) {
+            let p = object.transform.position;
+            let f = object.transform.front;
+
+            let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
+            let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
+            pos = Some(html!(<div class="pre">{position}{" / "}{front}</div>))
+        } else {
+            pos = None;
+        }
 
         html! {
             <div class="rows">
@@ -314,7 +329,7 @@ impl Component for Map {
                     ></canvas>
                 </div>
 
-                <div class="pre">{pos}{" / "}{front}</div>
+                {pos}
             </div>
         }
     }
@@ -346,11 +361,15 @@ impl Map {
                 tracing::debug!(?body, "Initialize");
 
                 self.world = body.world;
-                self.local_objects = LocalObject::from_remote(&body.player);
+                self.local_objects = body.objects.iter().map(LocalObject::from_remote).collect();
+
                 self.remote_avatars = body
                     .remote_avatars
                     .iter()
-                    .map(LocalObject::from_remote)
+                    .map(|p| PeerObject {
+                        peer_id: p.peer_id,
+                        object: LocalObject::from_remote(&p.object),
+                    })
                     .collect();
 
                 self.load_initialize_images(ctx);
@@ -367,24 +386,36 @@ impl Map {
                     api::RemoteAvatarUpdateBody::RemoteLost => {
                         self.remote_avatars.clear();
                     }
-                    api::RemoteAvatarUpdateBody::Join { avatar, .. } => {
+                    api::RemoteAvatarUpdateBody::Join {
+                        peer_id, objects, ..
+                    } => {
                         let local = LocalObject::from_remote(&avatar);
 
                         if let Some(id) = local.image {
                             self.images.load(ctx, id);
                         }
 
-                        self.remote_avatars.push(local);
+                        for object in objects {
+                            self.remote_avatars.push(PeerObject {
+                                peer_id,
+                                object: LocalObject::from_remote(&object),
+                            });
+                        }
                     }
                     api::RemoteAvatarUpdateBody::Leave { peer_id } => {
                         self.remote_avatars.retain(|a| a.id != peer_id);
                     }
                     api::RemoteAvatarUpdateBody::Update {
+                        object_id,
                         peer_id,
                         key,
                         value,
                     } => {
-                        if let Some(a) = self.remote_avatars.iter_mut().find(|a| a.id == peer_id) {
+                        if let Some(a) = self
+                            .remote_avatars
+                            .iter_mut()
+                            .find(|a| a.peer_id == peer_id && a.object.id == object_id)
+                        {
                             if key == Key::AVATAR_IMAGE_ID {
                                 let new = value.as_id();
 
@@ -482,10 +513,14 @@ impl Map {
             return Ok(());
         };
 
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return Ok(());
+        };
+
+        object.look_at = None;
+        self.update_look_at = true;
         self.start_press = None;
         self.arrow_target = None;
-        self.local_objects.look_at = None;
-        self.update_look_at = true;
         self.redraw()?;
         Ok(())
     }
@@ -499,21 +534,27 @@ impl Map {
             return Ok(());
         };
 
-        let (px, py) = (
-            self.local_objects.transform.position.x,
-            self.local_objects.transform.position.z,
-        );
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return Ok(());
+        };
+
+        let (px, py) = (object.transform.position.x, object.transform.position.z);
 
         self.start_press = Some((px, py, true));
-        self.look_at(px, py, mx, my);
-        self.local_objects.look_at = Some(Vec3::new(mx, 0.0, my));
+        object.look_at = Some(Vec3::new(mx, 0.0, my));
         self.update_look_at = true;
+
+        self.look_at(px, py, mx, my);
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
-        let p = self.local_objects.transform.position;
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return;
+        };
+
+        let p = object.transform.position;
 
         'done: {
             let Some(target) = self.move_target else {
@@ -525,7 +566,7 @@ impl Map {
             let distance = (dx * dx + dz * dz).sqrt();
 
             if distance < 0.01 {
-                self.local_objects.transform.position = target;
+                object.transform.position = target;
                 self.move_target = None;
                 self._animation_interval = None;
                 self.update_transform = true;
@@ -536,21 +577,20 @@ impl Map {
             let move_distance = step.min(distance);
             let ratio = move_distance / distance;
 
-            self.local_objects.transform.position.x += dx * ratio;
-            self.local_objects.transform.position.z += dz * ratio;
+            object.transform.position.x += dx * ratio;
+            object.transform.position.z += dz * ratio;
 
             // Face the movement direction unless a look_at target is active.
-            if self.local_objects.look_at.is_none() {
+            if object.look_at.is_none() {
                 let angle_rad = dz.atan2(dx);
-                self.local_objects.transform.front =
-                    Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+                object.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
             }
 
             self.update_transform = true;
         };
 
         'done: {
-            let Some(target) = self.local_objects.look_at else {
+            let Some(target) = object.look_at else {
                 break 'done;
             };
 
@@ -563,11 +603,20 @@ impl Map {
             return;
         }
 
+        let Some(id) = self
+            .selected
+            .and_then(|i| self.local_objects.get(i))
+            .map(|o| o.id)
+        else {
+            return;
+        };
+
         self.update_transform_request = ctx
             .props()
             .ws
             .request()
             .body(api::UpdateRequest {
+                id,
                 key: Key::AVATAR_TRANSFORM,
                 value: Value::from(self.local_objects.transform),
             })
@@ -580,11 +629,20 @@ impl Map {
             return;
         }
 
+        let Some(id) = self
+            .selected
+            .and_then(|i| self.local_objects.get(i))
+            .map(|o| o.id)
+        else {
+            return;
+        };
+
         self.update_look_at_request = ctx
             .props()
             .ws
             .request()
             .body(api::UpdateRequest {
+                id,
                 key: Key::AVATAR_LOOK_AT,
                 value: Value::from(self.local_objects.look_at),
             })
@@ -606,6 +664,10 @@ impl Map {
     }
 
     fn on_mouse_down(&mut self, e: MouseEvent) -> Result<(), Error> {
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return Ok(());
+        };
+
         let needs_redraw = 'out: {
             match e.button() {
                 0 => {
@@ -621,14 +683,11 @@ impl Map {
                     let (ex, ey) = t.canvas_to_world(ex, ey);
 
                     if e.shift_key() {
-                        let (px, py) = (
-                            self.local_objects.transform.position.x,
-                            self.local_objects.transform.position.z,
-                        );
+                        let (px, py) = (object.transform.position.x, object.transform.position.z);
                         self.start_press = Some((px, py, true));
 
+                        object.look_at = Some(Vec3::new(ex, 0.0, ey));
                         self.look_at(px, py, ex, ey);
-                        self.local_objects.look_at = Some(Vec3::new(ex, 0.0, ey));
                         self.update_look_at = true;
                     } else {
                         self.start_press = Some((ex, ey, false));
@@ -658,6 +717,10 @@ impl Map {
             return Ok(());
         };
 
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return Ok(());
+        };
+
         let v = ViewTransform::new(&canvas, &self.world);
 
         let mut needs_redraw = false;
@@ -678,7 +741,7 @@ impl Map {
             if shift_key {
                 let dist = (mx - px).hypot(my - py);
                 if dist >= ARROW_THRESHOLD {
-                    self.local_objects.look_at = Some(Vec3::new(mx, 0.0, my));
+                    object.look_at = Some(Vec3::new(mx, 0.0, my));
                     self.update_look_at = true;
                     self.look_at(px, py, mx, my);
                     needs_redraw = true;
@@ -698,11 +761,15 @@ impl Map {
     }
 
     fn look_at(&mut self, px: f32, py: f32, mx: f32, my: f32) {
+        let Some(object) = self.selected.and_then(|i| self.local_objects.get_mut(i)) else {
+            return;
+        };
+
         self.arrow_target = Some((mx, my));
         let angle_rad = (my - py).atan2(mx - px);
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
-        self.local_objects.transform.front = Vec3::new(dir_x, 0.0, dir_z);
+        object.transform.front = Vec3::new(dir_x, 0.0, dir_z);
         self.update_transform = true;
     }
 

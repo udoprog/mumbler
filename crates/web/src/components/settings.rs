@@ -1,4 +1,4 @@
-use api::{Color, Key, Value};
+use api::{Color, Id, Key, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -19,7 +19,7 @@ pub(crate) enum Msg {
     AvatarImageClear(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    ListImages(Result<Packet<api::ListSettings>, ws::Error>),
+    ListSettings(Result<Packet<api::ListSettings>, ws::Error>),
     SelectImage(api::Id),
     SelectImageResult(Result<Packet<api::Update>, ws::Error>),
     DeleteImage(api::Id),
@@ -41,6 +41,7 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
+    pub(crate) id: Id,
 }
 
 pub(crate) struct Settings {
@@ -48,6 +49,7 @@ pub(crate) struct Settings {
     selected: Option<api::Id>,
     color: Option<api::Color>,
     name: Option<String>,
+    objects: Vec<api::RemoteObject>,
     images: Vec<api::Image>,
     file: Option<File>,
     preview_url: Option<String>,
@@ -285,7 +287,7 @@ impl Settings {
                 .ws
                 .request()
                 .body(api::ListSettingsRequest)
-                .on_packet(ctx.link().callback(Msg::ListImages))
+                .on_packet(ctx.link().callback(Msg::ListSettings))
                 .send();
         } else {
             self._list_images = ws::Request::new();
@@ -374,7 +376,7 @@ impl Settings {
                 self.refresh(ctx);
                 Ok(false)
             }
-            Msg::ListImages(result) => {
+            Msg::ListSettings(result) => {
                 let result = result?;
                 let response = result.decode()?;
                 self.selected = response.image;
@@ -392,6 +394,7 @@ impl Settings {
                     .ws
                     .request()
                     .body(api::UpdateRequest {
+                        id: ctx.props().id,
                         key: Key::AVATAR_IMAGE_ID,
                         value: Value::from(id),
                     })

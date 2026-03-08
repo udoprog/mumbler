@@ -308,8 +308,7 @@ impl Transform {
 #[musli(crate = musli_core)]
 pub struct RemotePeerObject {
     pub peer_id: PeerId,
-    pub id: Id,
-    pub properties: HashMap<Key, Value>,
+    pub object: RemoteObject,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
