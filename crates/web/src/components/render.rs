@@ -20,11 +20,11 @@ pub(crate) struct RenderAvatar<'a> {
 impl<'a> RenderAvatar<'a> {
     pub(crate) fn from_player(a: &'a Avatar) -> Self {
         Self {
-            transform: a.transform,
-            look_at: a.look_at,
-            image: a.image,
-            color: a.color,
-            name: a.name.as_deref(),
+            transform: a.transform(),
+            look_at: a.look_at(),
+            image: a.image(),
+            color: a.color().unwrap_or_else(api::Color::neutral),
+            name: a.name(),
             player: true,
         }
     }
@@ -34,7 +34,7 @@ impl<'a> RenderAvatar<'a> {
             transform: a.transform(),
             look_at: a.look_at(),
             image: a.image(),
-            color: a.color(),
+            color: a.color().unwrap_or_else(api::Color::neutral),
             name: a.name(),
             player: false,
         }
@@ -360,6 +360,7 @@ pub(crate) fn draw_avatar_preview(
         let angle = (-front.z as f64).atan2(front.x as f64);
         let arc_radius = token_radius * 1.5;
         cx.set_stroke_style_str(&avatar.color.to_css_string());
+
         draw_facing_arc(
             cx,
             center_x,

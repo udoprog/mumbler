@@ -1,3 +1,4 @@
+use api::{Color, Key, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -20,15 +21,15 @@ pub(crate) enum Msg {
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ListImages(Result<Packet<api::ListSettings>, ws::Error>),
     SelectImage(api::Id),
-    SelectImageResult(Result<Packet<api::SelectImage>, ws::Error>),
+    SelectImageResult(Result<Packet<api::Update>, ws::Error>),
     DeleteImage(api::Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     ColorChanged(Event),
     SelectColor(api::Color),
-    SelectColorResult(Result<Packet<api::SelectColor>, ws::Error>),
+    SelectColorResult(Result<Packet<api::Update>, ws::Error>),
     NameChanged(Event),
     UpdateName(Option<String>),
-    UpdateNameResult(Result<Packet<api::UpdateName>, ws::Error>),
+    UpdateNameResult(Result<Packet<api::Update>, ws::Error>),
     ServerChanged(Event),
     TlsToggled(Event),
     SetRemoteServer(String),
@@ -45,7 +46,7 @@ pub(crate) struct Props {
 pub(crate) struct Settings {
     state: ws::State,
     selected: Option<api::Id>,
-    color: api::Color,
+    color: Option<api::Color>,
     name: Option<String>,
     images: Vec<api::Image>,
     file: Option<File>,
@@ -93,7 +94,7 @@ impl Component for Settings {
         let mut this = Self {
             state,
             selected: None,
-            color: api::Color::neutral(),
+            color: None,
             name: None,
             images: Vec::new(),
             file: None,
@@ -173,6 +174,8 @@ impl Component for Settings {
         let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
         let is_remote_pending = self.set_remote_server.is_pending();
 
+        let color = self.color.unwrap_or_else(Color::neutral);
+
         html! {
             <div class="row">
                 <div class="col-8 rows">
@@ -224,7 +227,7 @@ impl Component for Settings {
                         <input
                             id="avatar-color"
                             type="color"
-                            value={self.color.to_css_string()}
+                            value={color.to_css_string()}
                             onchange={ctx.link().callback(Msg::ColorChanged)}
                             />
                     </section>
@@ -374,7 +377,7 @@ impl Settings {
             Msg::ListImages(result) => {
                 let result = result?;
                 let response = result.decode()?;
-                self.selected = response.selected;
+                self.selected = response.image;
                 self.color = response.color;
                 self.images = response.images;
                 self.name = response.name;
@@ -388,18 +391,20 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::SelectImageRequest { id })
+                    .body(api::UpdateRequest {
+                        key: Key::AVATAR_IMAGE_ID,
+                        value: Value::from(id),
+                    })
                     .on_packet(ctx.link().callback(Msg::SelectImageResult))
                     .send();
 
-                Ok(false)
+                self.selected = Some(id);
+                Ok(true)
             }
             Msg::SelectImageResult(result) => {
                 let result = result?;
-                let response = result.decode()?;
-                self.selected = Some(response.id);
-                self.load_preview_image(ctx);
-                Ok(true)
+                _ = result.decode()?;
+                Ok(false)
             }
             Msg::DeleteImage(id) => {
                 self._delete_image = ctx
@@ -434,16 +439,20 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::SelectColorRequest { color })
+                    .body(api::UpdateRequest {
+                        key: Key::AVATAR_COLOR,
+                        value: Value::from(color),
+                    })
                     .on_packet(ctx.link().callback(Msg::SelectColorResult))
                     .send();
-                Ok(false)
+
+                self.color = Some(color);
+                Ok(true)
             }
             Msg::SelectColorResult(result) => {
                 let result = result?;
-                let response = result.decode()?;
-                self.color = response.color;
-                Ok(true)
+                _ = result.decode()?;
+                Ok(false)
             }
             Msg::NameChanged(e) => {
                 let input = e
@@ -462,16 +471,20 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::UpdateNameRequest { name })
+                    .body(api::UpdateRequest {
+                        key: Key::AVATAR_NAME,
+                        value: Value::from(name.clone()),
+                    })
                     .on_packet(ctx.link().callback(Msg::UpdateNameResult))
                     .send();
-                Ok(false)
+
+                self.name = name;
+                Ok(true)
             }
             Msg::UpdateNameResult(result) => {
                 let result = result?;
-                let response = result.decode()?;
-                self.name = response.name;
-                Ok(true)
+                _ = result.decode()?;
+                Ok(false)
             }
             Msg::ServerChanged(e) => {
                 let input = e
@@ -554,7 +567,7 @@ impl Settings {
             transform: api::Transform::origin(),
             look_at: None,
             image: self.selected,
-            color: self.color,
+            color: self.color.unwrap_or_else(Color::neutral),
             name: self.name.as_deref(),
             player: true,
         };

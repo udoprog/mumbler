@@ -49,26 +49,25 @@ impl ws::Handler for Handler {
             api::Request::InitializeMap => {
                 outgoing.write(super::initialize_map(&self.backend).await?);
             }
-            api::Request::UpdateTransform => {
+            api::Request::Update => {
                 let request = incoming
-                    .read::<api::UpdateTransformRequest>()
+                    .read::<api::UpdateRequest>()
                     .context("missing request")?;
 
-                let fut1 = self.backend.set_client_transform(request.transform);
-                let fut2 = self.backend.set_mumblelink_transform(request.transform);
+                if request.key == Key::AVATAR_TRANSFORM
+                    && let Some(transform) = request.value.as_transform()
+                {
+                    self.backend.set_mumblelink_transform(transform).await;
+                }
 
-                let ((), ()) = tokio::join!(fut1, fut2);
-                self.update_transform = Some(request.transform);
+                self.backend
+                    .set_client(request.key, request.value.clone())
+                    .await;
+                self.backend
+                    .db()
+                    .set_value(Id::GLOBAL, request.key, request.value)
+                    .await?;
                 outgoing.write(api::Empty);
-            }
-            api::Request::UpdateLookAt => {
-                let request = incoming
-                    .read::<api::UpdateLookAtRequest>()
-                    .context("missing request")?;
-
-                self.backend.set_client_look_at(request.look_at).await;
-
-                self.update_look_at = Some(request.look_at);
             }
             api::Request::UploadImage => {
                 let request = incoming
@@ -85,36 +84,12 @@ impl ws::Handler for Handler {
                 let response = super::list_images(&self.backend).await?;
                 outgoing.write(response);
             }
-            api::Request::SelectImage => {
-                let request = incoming
-                    .read::<api::SelectImageRequest>()
-                    .context("missing request")?;
-
-                let response = super::select_image(&self.backend, request).await?;
-                outgoing.write(response);
-            }
             api::Request::DeleteImage => {
                 let request = incoming
                     .read::<api::DeleteImageRequest>()
                     .context("missing request")?;
 
                 let response = super::delete_image(&self.backend, request).await?;
-                outgoing.write(response);
-            }
-            api::Request::SelectColor => {
-                let request = incoming
-                    .read::<api::SelectColorRequest>()
-                    .context("missing request")?;
-
-                let response = super::select_color(&self.backend, request).await?;
-                outgoing.write(response);
-            }
-            api::Request::UpdateName => {
-                let request = incoming
-                    .read::<api::UpdateNameRequest>()
-                    .context("missing request")?;
-
-                let response = super::update_name(&self.backend, request).await?;
                 outgoing.write(response);
             }
             api::Request::UpdateWorld => {

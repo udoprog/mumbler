@@ -1,4 +1,4 @@
-use api::{Avatar, Key, RemoteAvatar, Vec3, World};
+use api::{Avatar, Key, RemoteAvatar, Value, Vec3, World};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
@@ -25,8 +25,8 @@ const HELP: &str = "LMB to move (drag to update) / Shift to look / MMB to pan / 
 
 pub(crate) struct Map {
     _initialize: ws::Request,
-    _update_transform: ws::Request,
-    _update_look_at: ws::Request,
+    update_transform_request: ws::Request,
+    update_look_at_request: ws::Request,
     _update_world: ws::Request,
     _state_change: ws::StateListener,
     _remote_avatar_listener: ws::Listener,
@@ -76,8 +76,8 @@ pub(crate) enum Msg {
     KeyUp(KeyboardEvent),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     RemoteAvatarUpdate(Result<Packet<api::RemoteAvatarUpdate>, ws::Error>),
-    TransformUpdated(Result<Packet<api::UpdateTransform>, ws::Error>),
-    LookAtUpdated(Result<Packet<api::UpdateLookAt>, ws::Error>),
+    TransformUpdated(Result<Packet<api::Update>, ws::Error>),
+    LookAtUpdated(Result<Packet<api::Update>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateWorld>, ws::Error>),
     StateChanged(ws::State),
     Resized,
@@ -143,8 +143,8 @@ impl Component for Map {
 
         let mut this = Self {
             _initialize: ws::Request::new(),
-            _update_transform: ws::Request::new(),
-            _update_look_at: ws::Request::new(),
+            update_transform_request: ws::Request::new(),
+            update_look_at_request: ws::Request::new(),
             _update_world: ws::Request::new(),
             _remote_avatar_listener: remote_avatar_listener,
             _state_change,
@@ -154,7 +154,7 @@ impl Component for Map {
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             world: api::World::zero(),
-            player: api::Avatar::zero(),
+            player: api::Avatar::default(),
             remote_avatars: Vec::new(),
             update_transform: false,
             update_look_at: false,
@@ -233,8 +233,8 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let p = self.player.transform.position;
-        let f = self.player.transform.front;
+        let p = self.player.transform().position;
+        let f = self.player.transform().front;
 
         let pos = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
         let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
@@ -424,7 +424,7 @@ impl Map {
 
         self.start_press = None;
         self.arrow_target = None;
-        self.player.look_at = None;
+        self.player.clear_look_at();
         self.update_look_at = true;
         self.redraw()?;
         Ok(())
@@ -440,20 +440,20 @@ impl Map {
         };
 
         let (px, py) = (
-            self.player.transform.position.x,
-            self.player.transform.position.z,
+            self.player.transform().position.x,
+            self.player.transform().position.z,
         );
 
         self.start_press = Some((px, py, true));
         self.look_at(px, py, mx, my);
-        self.player.look_at = Some(Vec3::new(mx, 0.0, my));
+        *self.player.look_at_mut() = Vec3::new(mx, 0.0, my);
         self.update_look_at = true;
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
-        let p = self.player.transform.position;
+        let p = self.player.transform().position;
 
         'done: {
             let Some(target) = self.move_target else {
@@ -465,7 +465,7 @@ impl Map {
             let distance = (dx * dx + dz * dz).sqrt();
 
             if distance < 0.01 {
-                self.player.transform.position = target;
+                self.player.transform_mut().position = target;
                 self.move_target = None;
                 self._animation_interval = None;
                 self.update_transform = true;
@@ -476,20 +476,21 @@ impl Map {
             let move_distance = step.min(distance);
             let ratio = move_distance / distance;
 
-            self.player.transform.position.x += dx * ratio;
-            self.player.transform.position.z += dz * ratio;
+            self.player.transform_mut().position.x += dx * ratio;
+            self.player.transform_mut().position.z += dz * ratio;
 
             // Face the movement direction unless a look_at target is active.
-            if self.player.look_at.is_none() {
+            if self.player.look_at().is_none() {
                 let angle_rad = dz.atan2(dx);
-                self.player.transform.front = api::Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+                self.player.transform_mut().front =
+                    api::Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
             }
 
             self.update_transform = true;
         };
 
         'done: {
-            let Some(target) = self.player.look_at else {
+            let Some(target) = self.player.look_at() else {
                 break 'done;
             };
 
@@ -498,24 +499,34 @@ impl Map {
     }
 
     fn send_transform_update(&mut self, ctx: &Context<Self>) {
-        self._update_transform = ctx
+        if !matches!(self.state, ws::State::Open) {
+            return;
+        }
+
+        self.update_transform_request = ctx
             .props()
             .ws
             .request()
-            .body(api::UpdateTransformRequest {
-                transform: self.player.transform,
+            .body(api::UpdateRequest {
+                key: Key::AVATAR_TRANSFORM,
+                value: Value::from(self.player.transform()),
             })
             .on_packet(ctx.link().callback(Msg::TransformUpdated))
             .send();
     }
 
     fn send_look_at_update(&mut self, ctx: &Context<Self>) {
-        self._update_look_at = ctx
+        if !matches!(self.state, ws::State::Open) {
+            return;
+        }
+
+        self.update_look_at_request = ctx
             .props()
             .ws
             .request()
-            .body(api::UpdateLookAtRequest {
-                look_at: self.player.look_at,
+            .body(api::UpdateRequest {
+                key: Key::AVATAR_LOOK_AT,
+                value: Value::from(self.player.look_at()),
             })
             .on_packet(ctx.link().callback(Msg::LookAtUpdated))
             .send();
@@ -551,13 +562,13 @@ impl Map {
 
                     if e.shift_key() {
                         let (px, py) = (
-                            self.player.transform.position.x,
-                            self.player.transform.position.z,
+                            self.player.transform().position.x,
+                            self.player.transform().position.z,
                         );
                         self.start_press = Some((px, py, true));
 
                         self.look_at(px, py, ex, ey);
-                        self.player.look_at = Some(Vec3::new(ex, 0.0, ey));
+                        *self.player.look_at_mut() = Vec3::new(ex, 0.0, ey);
                         self.update_look_at = true;
                     } else {
                         self.start_press = Some((ex, ey, false));
@@ -607,7 +618,7 @@ impl Map {
             if shift_key {
                 let dist = (mx - px).hypot(my - py);
                 if dist >= ARROW_THRESHOLD {
-                    self.player.look_at = Some(Vec3::new(mx, 0.0, my));
+                    *self.player.look_at_mut() = Vec3::new(mx, 0.0, my);
                     self.update_look_at = true;
                     self.look_at(px, py, mx, my);
                     needs_redraw = true;
@@ -631,7 +642,7 @@ impl Map {
         let angle_rad = (my - py).atan2(mx - px);
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
-        self.player.transform.front = api::Vec3::new(dir_x, 0.0, dir_z);
+        self.player.transform_mut().front = api::Vec3::new(dir_x, 0.0, dir_z);
         self.update_transform = true;
     }
 
@@ -709,7 +720,7 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.player.image.into_iter();
+        let ids = self.player.image().into_iter();
         let ids = ids.chain(self.remote_avatars.iter().filter_map(|a| a.image()));
 
         for id in ids {

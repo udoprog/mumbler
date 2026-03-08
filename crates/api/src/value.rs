@@ -12,6 +12,11 @@ pub struct Value {
 
 impl Value {
     #[inline]
+    pub fn into_kind(self) -> ValueKind {
+        self.kind
+    }
+
+    #[inline]
     pub fn as_id(&self) -> Option<Id> {
         match &self.kind {
             ValueKind::Id(id) => Some(*id),
@@ -52,6 +57,19 @@ impl Value {
     }
 
     #[inline]
+    pub fn into_transform_mut(&mut self) -> &mut Transform {
+        if !matches!(self.kind, ValueKind::Transform(_)) {
+            self.kind = ValueKind::Transform(Transform::origin());
+        }
+
+        if let ValueKind::Transform(transform) = &mut self.kind {
+            return transform;
+        }
+
+        unreachable!()
+    }
+
+    #[inline]
     pub fn as_transform(&self) -> Option<Transform> {
         match &self.kind {
             ValueKind::Transform(transform) => Some(*transform),
@@ -74,6 +92,19 @@ impl Value {
             _ => None,
         }
     }
+
+    #[inline]
+    pub fn into_vec3_mut(&mut self) -> &mut Vec3 {
+        if !matches!(self.kind, ValueKind::Vec3(_)) {
+            self.kind = ValueKind::Vec3(Vec3::default());
+        }
+
+        if let ValueKind::Vec3(vec) = &mut self.kind {
+            return vec;
+        }
+
+        unreachable!()
+    }
 }
 
 impl Default for Value {
@@ -94,14 +125,14 @@ impl fmt::Debug for Value {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-enum ValueKind {
+#[non_exhaustive]
+pub enum ValueKind {
     Id(Id),
     String(String),
     Bytes(Vec<u8>),
     Transform(Transform),
     Color(Color),
     Vec3(Vec3),
-    /// Empty value.
     None,
 }
 

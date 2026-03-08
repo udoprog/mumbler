@@ -9,8 +9,8 @@ use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
-use crate::backend::BackendEvent;
 use crate::backend::RemoteAvatarEvent;
+use crate::backend::{BackendEvent, ClientState, Player};
 use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
 use crate::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
 
@@ -160,21 +160,26 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
 
-    let image = 'image: {
-        let Some(image) = player.image else {
-            break 'image None;
-        };
-
-        b.db().get_image_data(image).await?
-    };
-
     let mut values = HashMap::new();
 
-    values.insert(Key::AVATAR_TRANSFORM, Value::from(player.transform));
-    values.insert(Key::AVATAR_LOOK_AT, Value::from(player.look_at));
-    values.insert(Key::AVATAR_IMAGE_BYTES, Value::from(image));
-    values.insert(Key::AVATAR_COLOR, Value::from(player.color));
-    values.insert(Key::AVATAR_NAME, Value::from(player.name.clone()));
+    for (key, value) in &player.values {
+        let (key, value) = match *key {
+            Key::AVATAR_IMAGE_ID => {
+                let Some(image) = value.as_id() else {
+                    continue;
+                };
+
+                let Some(bytes) = b.db().get_image_data(image).await? else {
+                    continue;
+                };
+
+                (Key::AVATAR_IMAGE_BYTES, Value::from(bytes))
+            }
+            key => (key, value.clone()),
+        };
+
+        values.insert(key, value);
+    }
 
     let mut peer = Peer::new(addr, client);
     peer.connect(b"default", values)?;
@@ -186,34 +191,29 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut()).await?;
             }
             () = wait.as_mut() => {
-                let state = b.take_client_player().await;
+                let ClientState { player: Player { values, changed }, .. } = &mut *b.client_state().await;
 
-                if state.is_transform() {
-                    peer.update_peer(Key::AVATAR_TRANSFORM, &Value::from(state.transform))?;
-                }
-
-                if state.is_look_at() {
-                    peer.update_peer(Key::AVATAR_LOOK_AT, &Value::from(state.look_at))?;
-                }
-
-                if state.is_image() {
-                    let image = 'image: {
-                        let Some(image) = state.image else {
-                            break 'image None;
-                        };
-
-                        b.db().get_image_data(image).await?
+                for key in changed.drain() {
+                    let Some(value) = values.get(&key) else {
+                        continue;
                     };
 
-                    peer.update_peer(Key::AVATAR_IMAGE_BYTES, &Value::from(image))?;
-                }
+                    let owned;
 
-                if state.is_color() {
-                    peer.update_peer(Key::AVATAR_COLOR, &Value::from(state.color))?;
-                }
+                    let (key, value) = match key {
+                        Key::AVATAR_IMAGE_ID => {
+                            let Some(image) = value.as_id() else {
+                                continue;
+                            };
 
-                if state.is_name() {
-                    peer.update_peer(Key::AVATAR_NAME, &Value::from(state.name.clone()))?;
+                            let bytes = b.db().get_image_data(image).await?;
+                            owned = Value::from(bytes);
+                            (Key::AVATAR_IMAGE_BYTES, &owned)
+                        }
+                        _ => (key, value),
+                    };
+
+                    peer.update_peer(key, value)?;
                 }
 
                 wait.set(b.client_wait());

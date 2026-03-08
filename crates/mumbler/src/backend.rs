@@ -1,6 +1,6 @@
 use core::fmt;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -9,12 +9,6 @@ use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{Database, Paths};
-
-const TRANSFORM_CHANGED: u8 = 0b0000_0001;
-const LOOK_AT_CHANGED: u8 = 0b0000_0010;
-const IMAGE_CHANGED: u8 = 0b0000_0100;
-const COLOR_CHANGED: u8 = 0b0000_1000;
-const NAME_CHANGED: u8 = 0b0001_0000;
 
 #[derive(Debug, Clone)]
 pub(crate) enum RemoteAvatarEvent {
@@ -46,43 +40,21 @@ pub(crate) enum BackendEvent {
 /// State for the backend.
 #[derive(Debug, Clone)]
 pub(crate) struct Player {
-    pub(crate) transform: Transform,
-    pub(crate) look_at: Option<Vec3>,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: Color,
-    pub(crate) name: Option<String>,
-    changed: u8,
+    pub(crate) values: HashMap<Key, Value>,
+    pub(crate) changed: HashSet<Key>,
 }
 
 impl Player {
-    /// Check if the transform has changed in the current state.
-    #[inline]
-    pub(crate) fn is_transform(&self) -> bool {
-        self.changed & TRANSFORM_CHANGED != 0
+    pub(crate) fn image(&self) -> Option<Id> {
+        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
     }
 
-    /// Check if the look at point has changed in the current state.
-    #[inline]
-    pub(crate) fn is_look_at(&self) -> bool {
-        self.changed & LOOK_AT_CHANGED != 0
+    pub(crate) fn color(&self) -> Option<Color> {
+        self.values.get(&Key::AVATAR_COLOR)?.as_color()
     }
 
-    /// Check if the player's image has changed.
-    #[inline]
-    pub(crate) fn is_image(&self) -> bool {
-        self.changed & IMAGE_CHANGED != 0
-    }
-
-    /// Check if the player's color has changed.
-    #[inline]
-    pub(crate) fn is_color(&self) -> bool {
-        self.changed & COLOR_CHANGED != 0
-    }
-
-    /// Check if the player's name has changed.
-    #[inline]
-    pub(crate) fn is_name(&self) -> bool {
-        self.changed & NAME_CHANGED != 0
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.values.get(&Key::AVATAR_NAME)?.as_string()
     }
 }
 
@@ -152,22 +124,33 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        let image = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE_ID).await?;
+        let mut values = HashMap::new();
 
-        let color = database
-            .get::<Color>(Id::GLOBAL, Key::AVATAR_COLOR)
-            .await?
-            .unwrap_or_else(Color::neutral);
-
-        let transform = database
+        if let Some(value) = database
             .get::<Transform>(Id::GLOBAL, Key::AVATAR_TRANSFORM)
             .await?
-            .unwrap_or_else(Transform::origin);
+        {
+            values.insert(Key::AVATAR_TRANSFORM, Value::from(value));
+        }
 
-        let look_at = database
+        if let Some(image) = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE_ID).await? {
+            values.insert(Key::AVATAR_IMAGE_ID, Value::from(image));
+        }
+
+        if let Some(value) = database.get::<Color>(Id::GLOBAL, Key::AVATAR_COLOR).await? {
+            values.insert(Key::AVATAR_COLOR, Value::from(value));
+        }
+
+        if let Some(value) = database
             .get::<Vec3>(Id::GLOBAL, Key::AVATAR_LOOK_AT)
-            .await?;
-        let name = database.get::<String>(Id::GLOBAL, Key::AVATAR_NAME).await?;
+            .await?
+        {
+            values.insert(Key::AVATAR_LOOK_AT, Value::from(value));
+        }
+
+        if let Some(value) = database.get::<String>(Id::GLOBAL, Key::AVATAR_NAME).await? {
+            values.insert(Key::AVATAR_NAME, Value::from(value));
+        }
 
         Ok(Self {
             inner: Arc::new(Inner {
@@ -175,12 +158,8 @@ impl Backend {
                 paths,
                 client_state: Mutex::new(ClientState {
                     player: Player {
-                        transform,
-                        look_at,
-                        image,
-                        color,
-                        name,
-                        changed: 0,
+                        values,
+                        changed: HashSet::new(),
                     },
                     peers: HashMap::new(),
                 }),
@@ -253,51 +232,11 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_client_transform(&self, transform: Transform) {
+    pub(crate) async fn set_client(&self, key: Key, value: Value) {
         let mut state = self.inner.client_state.lock().await;
-        state.player.transform = transform;
-        state.player.changed |= TRANSFORM_CHANGED;
+        state.player.values.insert(key, value);
+        state.player.changed.insert(key);
         self.inner.client_notify.notify_one();
-    }
-
-    /// Update the look at point.
-    pub(crate) async fn set_client_look_at(&self, look_at: Option<Vec3>) {
-        let mut state = self.inner.client_state.lock().await;
-        state.player.look_at = look_at;
-        state.player.changed |= LOOK_AT_CHANGED;
-        self.inner.client_notify.notify_one();
-    }
-
-    /// Update the player's image.
-    pub(crate) async fn set_client_image(&self, image: Option<Id>) {
-        let mut state = self.inner.client_state.lock().await;
-        state.player.image = image;
-        state.player.changed |= IMAGE_CHANGED;
-        self.inner.client_notify.notify_one();
-    }
-
-    /// Update the player's color.
-    pub(crate) async fn set_client_color(&self, color: Color) {
-        let mut state = self.inner.client_state.lock().await;
-        state.player.color = color;
-        state.player.changed |= COLOR_CHANGED;
-        self.inner.client_notify.notify_one();
-    }
-
-    /// Update the player's display name.
-    pub(crate) async fn set_client_name(&self, name: Option<String>) {
-        let mut state = self.inner.client_state.lock().await;
-        state.player.name = name;
-        state.player.changed |= NAME_CHANGED;
-        self.inner.client_notify.notify_one();
-    }
-
-    /// Get the current state, resetting any changed flags.
-    pub(crate) async fn take_client_player(&self) -> Player {
-        let mut state = self.inner.client_state.lock().await;
-        let out = state.player.clone();
-        state.player.changed = 0;
-        out
     }
 
     /// Get the transform.

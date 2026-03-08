@@ -5,7 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Id, Image, Key};
+use api::{Id, Image, Key, Value, ValueKind};
 use jiff::Timestamp;
 use musli::Encode;
 use musli::alloc::Global;
@@ -212,6 +212,35 @@ impl Database {
         });
 
         task.await?
+    }
+
+    /// Set specific configuration by key, or delete it if the value is unset.
+    pub async fn set_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
+        match value.into_kind() {
+            ValueKind::String(string) => {
+                self.set(id, key, string).await?;
+            }
+            ValueKind::Id(value) => {
+                self.set(id, key, value).await?;
+            }
+            ValueKind::Bytes(value) => {
+                self.set(id, key, value).await?;
+            }
+            ValueKind::Transform(value) => {
+                self.set(id, key, value).await?;
+            }
+            ValueKind::Color(value) => {
+                self.set(id, key, value).await?;
+            }
+            ValueKind::Vec3(value) => {
+                self.set(id, key, value).await?;
+            }
+            _ => {
+                self.delete(id, key).await?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Set specific configuration by key, or delete it if the value is `None`.

@@ -5,7 +5,7 @@ mod config;
 pub use config::Key;
 
 mod value;
-pub use self::value::Value;
+pub use self::value::{Value, ValueKind};
 
 use core::fmt;
 use std::collections::HashMap;
@@ -93,8 +93,9 @@ pub struct InitializeMapRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateTransformRequest {
-    pub transform: Transform,
+pub struct UpdateRequest {
+    pub key: Key,
+    pub value: Value,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -326,12 +327,8 @@ impl RemoteAvatar {
     }
 
     #[inline]
-    pub fn color(&self) -> Color {
-        let Some(value) = self.values.get(&Key::AVATAR_COLOR) else {
-            return Color::neutral();
-        };
-
-        value.as_color().unwrap_or_else(Color::neutral)
+    pub fn color(&self) -> Option<Color> {
+        self.values.get(&Key::AVATAR_COLOR)?.as_color()
     }
 
     #[inline]
@@ -340,32 +337,62 @@ impl RemoteAvatar {
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Default, Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Avatar {
-    /// The transform (position and orientation) of the avatar.
-    pub transform: Transform,
-    /// The point in world coordinates that the avatar is looking at, if any.
-    pub look_at: Option<Vec3>,
-    /// The unique identifier of the avatar image, if any.
-    pub image: Option<Id>,
-    /// The custom color for the avatar.
-    pub color: Color,
-    /// The display name of this avatar.
-    pub name: Option<String>,
+    /// Values associated with the player's avatar.
+    pub values: HashMap<Key, Value>,
 }
 
 impl Avatar {
-    /// A default avatar with no image, neutral gray color, at the origin facing
-    /// forward.
-    pub const fn zero() -> Self {
-        Self {
-            transform: Transform::origin(),
-            look_at: None,
-            image: None,
-            color: Color::neutral(),
-            name: None,
-        }
+    #[inline]
+    pub fn transform_mut(&mut self) -> &mut Transform {
+        self.values
+            .entry(Key::AVATAR_TRANSFORM)
+            .or_default()
+            .into_transform_mut()
+    }
+
+    #[inline]
+    pub fn transform(&self) -> Transform {
+        let Some(value) = self.values.get(&Key::AVATAR_TRANSFORM) else {
+            return Transform::origin();
+        };
+
+        value.as_transform().unwrap_or_else(Transform::origin)
+    }
+
+    #[inline]
+    pub fn look_at(&self) -> Option<Vec3> {
+        self.values.get(&Key::AVATAR_LOOK_AT)?.as_vec3()
+    }
+
+    #[inline]
+    pub fn look_at_mut(&mut self) -> &mut Vec3 {
+        self.values
+            .entry(Key::AVATAR_LOOK_AT)
+            .or_default()
+            .into_vec3_mut()
+    }
+
+    #[inline]
+    pub fn clear_look_at(&mut self) {
+        self.values.remove(&Key::AVATAR_LOOK_AT);
+    }
+
+    #[inline]
+    pub fn image(&self) -> Option<Id> {
+        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
+    }
+
+    #[inline]
+    pub fn color(&self) -> Option<Color> {
+        self.values.get(&Key::AVATAR_COLOR)?.as_color()
+    }
+
+    #[inline]
+    pub fn name(&self) -> Option<&str> {
+        self.values.get(&Key::AVATAR_NAME)?.as_string()
     }
 }
 
@@ -400,9 +427,9 @@ pub struct Image {
 #[musli(crate = musli_core)]
 pub struct ListSettingsResponse {
     /// The unique identifier of the currently selected avatar image.
-    pub selected: Option<Id>,
+    pub image: Option<Id>,
     /// The selected color for the avatar.
-    pub color: Color,
+    pub color: Option<Color>,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
     /// The display name of the player's avatar.
@@ -411,20 +438,6 @@ pub struct ListSettingsResponse {
     pub remote_server: Option<String>,
     /// Whether TLS is enabled for the remote server connection.
     pub remote_server_tls: bool,
-}
-
-/// Request to select an image for use as the player's avatar.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SelectImageRequest {
-    pub id: Id,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SelectImageResponse {
-    /// The unique identifier of the selected image.
-    pub id: Id,
 }
 
 /// Request to delete a stored image.
@@ -437,34 +450,6 @@ pub struct DeleteImageRequest {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct DeleteImageResponse;
-
-/// Request to update the avatar display name.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateNameRequest {
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct UpdateNameResponse {
-    /// The updated name.
-    pub name: Option<String>,
-}
-
-/// Request to select a custom color for the player's avatar.
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SelectColorRequest {
-    pub color: Color,
-}
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct SelectColorResponse {
-    /// The selected color.
-    pub color: Color,
-}
 
 /// Request to update world settings (pan and zoom).
 #[derive(Debug, Encode, Decode)]
@@ -588,17 +573,10 @@ api::define! {
         type Response<'de> = InitializeMapEvent;
     }
 
-    pub type UpdateTransform;
+    pub type Update;
 
-    impl Endpoint for UpdateTransform {
-        impl Request for UpdateTransformRequest;
-        type Response<'de> = Empty;
-    }
-
-    pub type UpdateLookAt;
-
-    impl Endpoint for UpdateLookAt {
-        impl Request for UpdateLookAtRequest;
+    impl Endpoint for Update {
+        impl Request for UpdateRequest;
         type Response<'de> = Empty;
     }
 
@@ -616,32 +594,11 @@ api::define! {
         type Response<'de> = ListSettingsResponse;
     }
 
-    pub type SelectImage;
-
-    impl Endpoint for SelectImage {
-        impl Request for SelectImageRequest;
-        type Response<'de> = SelectImageResponse;
-    }
-
     pub type DeleteImage;
 
     impl Endpoint for DeleteImage {
         impl Request for DeleteImageRequest;
         type Response<'de> = DeleteImageResponse;
-    }
-
-    pub type SelectColor;
-
-    impl Endpoint for SelectColor {
-        impl Request for SelectColorRequest;
-        type Response<'de> = SelectColorResponse;
-    }
-
-    pub type UpdateName;
-
-    impl Endpoint for UpdateName {
-        impl Request for UpdateNameRequest;
-        type Response<'de> = UpdateNameResponse;
     }
 
     pub type UpdateWorld;

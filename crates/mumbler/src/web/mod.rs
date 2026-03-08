@@ -145,11 +145,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         let state = b.client_state().await;
 
         player = api::Avatar {
-            transform: state.player.transform,
-            look_at: state.player.look_at,
-            image: state.player.image,
-            color: state.player.color,
-            name: state.player.name.clone(),
+            values: state.player.values.clone(),
         };
 
         for (id, peer) in state.peers.iter() {
@@ -213,25 +209,13 @@ async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
         .unwrap_or(false);
 
     Ok(api::ListSettingsResponse {
-        selected: state.player.image,
         images,
-        color: state.player.color,
-        name: state.player.name.clone(),
+        image: state.player.image(),
+        color: state.player.color(),
+        name: state.player.name().map(str::to_owned),
         remote_server,
         remote_server_tls,
     })
-}
-
-async fn select_image(
-    backend: &Backend,
-    request: api::SelectImageRequest,
-) -> Result<api::SelectImageResponse> {
-    backend
-        .db()
-        .set(Id::GLOBAL, Key::AVATAR_IMAGE_ID, request.id)
-        .await?;
-    backend.set_client_image(Some(request.id)).await;
-    Ok(api::SelectImageResponse { id: request.id })
 }
 
 async fn delete_image(
@@ -240,32 +224,6 @@ async fn delete_image(
 ) -> Result<api::DeleteImageResponse> {
     backend.db().delete_image(request.id).await?;
     Ok(api::DeleteImageResponse)
-}
-
-async fn select_color(
-    backend: &Backend,
-    request: api::SelectColorRequest,
-) -> Result<api::SelectColorResponse> {
-    let color = request.color;
-    backend
-        .db()
-        .set(Id::GLOBAL, Key::AVATAR_COLOR, color)
-        .await?;
-    backend.set_client_color(color).await;
-    Ok(api::SelectColorResponse { color })
-}
-
-async fn update_name(
-    backend: &Backend,
-    request: api::UpdateNameRequest,
-) -> Result<api::UpdateNameResponse> {
-    let name = request.name;
-    backend
-        .db()
-        .set_optional(Id::GLOBAL, Key::AVATAR_NAME, name.clone())
-        .await?;
-    backend.set_client_name(name.clone()).await;
-    Ok(api::UpdateNameResponse { name })
 }
 
 async fn update_world(backend: &Backend, request: api::UpdateWorldRequest) -> Result<api::Empty> {
