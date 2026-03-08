@@ -490,17 +490,13 @@ impl State {
                 continue;
             };
 
-            let objects = peer.objects.values().cloned().collect::<Vec<_>>();
+            let objects = joining.objects.values().cloned().collect::<Vec<_>>();
 
             if let Err(error) = peer.peer.join(joining.peer_id, &objects) {
                 tracing::error!(?id, %error, "Sending join");
             } else {
                 self.poll.insert(joining.peer_id);
             }
-        }
-
-        if !room.members.contains(&joining.peer_id) {
-            room.members.push(joining.peer_id);
         }
 
         tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "Connecting room");
@@ -514,9 +510,13 @@ impl State {
 
             if let Err(error) = joining.peer.join(other.peer_id, &objects) {
                 tracing::error!(?id, %error, "Sending join");
+            } else {
+                self.poll.insert(joining.peer_id);
             }
+        }
 
-            self.poll.insert(joining.peer_id);
+        if !room.members.contains(&joining.peer_id) {
+            room.members.push(joining.peer_id);
         }
     }
 }

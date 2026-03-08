@@ -38,18 +38,22 @@ struct Opts {
 pub fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    let default_level = if opts.debug {
-        LevelFilter::DEBUG
+    let (default_level, default_filter) = if opts.debug {
+        (LevelFilter::DEBUG, "")
     } else {
-        LevelFilter::INFO
+        (LevelFilter::INFO, "mumbler=info")
     };
 
     let builder = EnvFilter::builder().with_default_directive(default_level.into());
 
-    let mut env_filter = builder.parse("").context("parsing default log filter")?;
+    let mut env_filter;
 
     if let Ok(log) = env::var("MUMBLER_LOG") {
-        env_filter = env_filter.add_directive(log.parse().context("parsing MUMBLER_LOG")?);
+        env_filter = builder.parse(log).context("parsing MUMBLER_LOG")?;
+    } else {
+        env_filter = builder
+            .parse(default_filter)
+            .context("parsing default log filter")?;
     }
 
     for log in opts.log {

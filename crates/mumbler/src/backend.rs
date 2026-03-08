@@ -1,5 +1,7 @@
 use core::fmt;
+use core::sync::atomic::Ordering;
 
+use core::sync::atomic::AtomicU64;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -123,6 +125,7 @@ struct Inner {
     mumblelink_restart_notify: Notify,
     images: RwLock<Images>,
     broadcast: Sender<BackendEvent>,
+    mumble_object: AtomicId,
 }
 
 /// The backend of the application, containing the database and other shared state.
@@ -156,6 +159,8 @@ impl Backend {
             );
         }
 
+        let mumble_object = database.config(Key::MUMBLE_OBJECT).await?;
+
         tracing::debug!("Loaded {} objects", objects.len());
 
         Ok(Self {
@@ -180,13 +185,29 @@ impl Backend {
                 mumblelink_notify: Notify::new(),
                 mumblelink_restart_notify: Notify::new(),
                 broadcast,
+                mumble_object: AtomicId::new(mumble_object),
             }),
         })
+    }
+
+    /// Get a reference to the database.
+    pub(crate) fn db(&self) -> &Database {
+        &self.inner.database
     }
 
     /// Set up an event subscriber.
     pub(crate) fn subscribe(&self) -> Receiver<BackendEvent> {
         self.inner.broadcast.subscribe()
+    }
+
+    /// Load the id of the object used to position mumble.
+    pub(crate) fn mumble_object(&self) -> Option<Id> {
+        self.inner.mumble_object.load()
+    }
+
+    /// Set the id of the object used to position mumble.
+    pub(crate) fn store_mumble_object(&self, id: Option<Id>) {
+        self.inner.mumble_object.store(id);
     }
 
     /// Lock the remote state and access it.
@@ -304,6 +325,13 @@ impl Backend {
 
     /// Delete a local object, removing it from the database and in-memory state.
     pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
+        // If the mumble object is deleted, clear the mumble object setting to
+        // avoid dangling references.
+        if self.mumble_object() == Some(id) {
+            self.store_mumble_object(None);
+            self.set_mumblelink_transform(Transform::origin()).await;
+        }
+
         self.db().delete_object(id, Type::AVATAR).await?;
         let mut state = self.inner.client_state.lock().await;
         state.objects.remove(&id);
@@ -313,9 +341,34 @@ impl Backend {
         self.inner.client_notify.notify_one();
         Ok(())
     }
+}
 
-    /// Get a reference to the database.
-    pub(crate) fn db(&self) -> &Database {
-        &self.inner.database
+/// An optional and atomically stored identifier.
+pub struct AtomicId {
+    raw: AtomicU64,
+}
+
+impl AtomicId {
+    fn new(value: Option<Id>) -> Self {
+        Self {
+            raw: AtomicU64::new(value.map_or(u64::MAX, |id| id.get())),
+        }
+    }
+
+    /// Load the identifier from the atomic, returning None if it is invalid.
+    pub fn load(&self) -> Option<Id> {
+        let id = self.raw.load(Ordering::Relaxed);
+
+        if id == u64::MAX {
+            None
+        } else {
+            Some(Id::new(id))
+        }
+    }
+
+    /// Store an identifier in the atomic, replacing any existing value.
+    pub fn store(&self, id: Option<Id>) {
+        self.raw
+            .store(id.map_or(u64::MAX, |id| id.get()), Ordering::Relaxed);
     }
 }

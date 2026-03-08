@@ -21,9 +21,13 @@ impl Key {
 }
 
 macro_rules! keys {
-    ($($name:ident: $ty:ident = $value:expr),* $(,)?) => {
+    ($(
+        $(#[doc = $doc:literal])*
+        $name:ident: $ty:ident = $value:expr
+    ),* $(,)?) => {
         impl Key {
             $(
+                $(#[doc = $doc])*
                 pub const $name: Self = Self::new($value);
             )*
 
@@ -62,6 +66,9 @@ keys! {
     WORLD_PAN: Pan = 10,
     WORLD_EXTENT: Extent = 12,
     WORLD_TOKEN_RADIUS: Float = 13,
+    /// The object which is used for mumble link.
+    MUMBLE_OBJECT: Id = 14,
+    /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }
 

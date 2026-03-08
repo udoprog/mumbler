@@ -109,6 +109,11 @@ h1, h2, h3, h4, h5, h6 {
         color: var(--text-color-inverted);
     }
 
+    &.info {
+        background-color: var(--info-color);
+        color: var(--text-color-inverted);
+    }
+
     &.sm {
         padding: 0.25em 0.75em;
         font-size: 0.85em;
@@ -360,7 +365,7 @@ input[type="search"] {
     &-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-end;
     }
 
     &-item {
@@ -394,6 +399,10 @@ input[type="search"] {
             flex-shrink: 0;
             opacity: 0;
             transition: opacity 0.1s;
+
+            &.info {
+                opacity: 1;
+            }
         }
 
         &:hover &-action {

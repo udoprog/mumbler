@@ -66,7 +66,11 @@ impl ws::Handler for Handler<'_> {
 
                 if request.key == Key::TRANSFORM {
                     if let Some(transform) = request.value.as_transform() {
-                        self.backend.set_mumblelink_transform(transform).await;
+                        let mumble_id = self.backend.mumble_object();
+
+                        if mumble_id.is_none() || mumble_id == Some(request.object_id) {
+                            self.backend.set_mumblelink_transform(transform).await;
+                        }
                     }
                 }
 

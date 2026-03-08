@@ -27,6 +27,9 @@ struct Opts {
     /// Enable debug logging.
     #[clap(long)]
     debug: bool,
+    /// Additional log filters to apply, in the same format as `RUST_LOG`.
+    #[clap(long)]
+    log: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -39,7 +42,7 @@ fn main() -> Result<()> {
     };
 
     let builder = EnvFilter::builder().with_default_directive(level.into());
-    let env_filter;
+    let mut env_filter;
 
     if let Ok(log) = env::var("MUMBLER_SERVER_LOG") {
         env_filter = builder.parse(log).context("parsing MUMBLER_SERVER_LOG")?;
@@ -47,6 +50,10 @@ fn main() -> Result<()> {
         env_filter = builder
             .parse(default_filter)
             .context("parsing default log filter")?;
+    }
+
+    for log in opts.log {
+        env_filter = env_filter.add_directive(log.parse().context("parsing log filter")?);
     }
 
     tracing_subscriber::fmt()

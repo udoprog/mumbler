@@ -233,8 +233,6 @@ async fn update_config(
     let mut restart_client = false;
 
     for (key, value) in values {
-        backend.db().set_config_value(key, value).await?;
-
         match key {
             Key::MUMBLE_ENABLED => {
                 restart_mumblelink = true;
@@ -242,8 +240,13 @@ async fn update_config(
             Key::REMOTE_ENABLED | Key::REMOTE_SERVER | Key::REMOTE_TLS => {
                 restart_client = true;
             }
+            Key::MUMBLE_OBJECT => {
+                backend.store_mumble_object(value.as_id());
+            }
             _ => {}
         }
+
+        backend.db().set_config_value(key, value).await?;
     }
 
     if restart_mumblelink {

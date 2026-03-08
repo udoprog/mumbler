@@ -1,6 +1,6 @@
 use core::mem;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use api::{
     Color, Config, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
@@ -17,6 +17,7 @@ use web_sys::{
 };
 use yew::prelude::*;
 
+use crate::components::Icon;
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
@@ -203,9 +204,9 @@ pub(crate) struct Map {
     /// The selected object.
     selected: Option<Id>,
     /// The list of local objects.
-    objects: HashMap<Id, LocalObject>,
+    objects: BTreeMap<Id, LocalObject>,
     /// The list of remote objects.
-    peers: HashMap<(PeerId, Id), PeerObject>,
+    peers: BTreeMap<(PeerId, Id), PeerObject>,
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
@@ -231,6 +232,10 @@ pub(crate) struct Map {
     confirm_delete: Option<Id>,
     /// Object whose settings modal is currently open.
     open_settings: Option<Id>,
+    /// The object whose transform drives MumbleLink output.
+    mumble_object: Option<Id>,
+    /// In-flight set-mumble-object request.
+    _set_mumble_object: ws::Request,
 }
 
 pub(crate) enum Msg {
@@ -260,6 +265,8 @@ pub(crate) enum Msg {
     ObjectDeleted(Id, Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
     CloseObjectSettings,
+    SetMumbleObject(Id),
+    SetMumbleObjectResult(Result<Packet<api::UpdateConfig>, ws::Error>),
     SetLog(log::Log),
 }
 
@@ -334,8 +341,8 @@ impl Component for Map {
             canvas_ref: NodeRef::default(),
             world: World::default(),
             selected: None,
-            objects: HashMap::new(),
-            peers: HashMap::new(),
+            objects: BTreeMap::new(),
+            peers: BTreeMap::new(),
             update_transform_ids: HashSet::new(),
             update_look_at_ids: HashSet::new(),
             update_world: false,
@@ -351,6 +358,8 @@ impl Component for Map {
             _delete_object: ws::Request::new(),
             confirm_delete: None,
             open_settings: None,
+            mumble_object: None,
+            _set_mumble_object: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -431,7 +440,7 @@ impl Component for Map {
         html! {
             <>
             <div class="row">
-                <div class="col-10 rows">
+                <div class="col-9 rows">
                     <div class="pre">{HELP}</div>
 
                     <div class="map-sizer" ref={self.canvas_sizer.clone()}>
@@ -447,12 +456,11 @@ impl Component for Map {
                     {pos}
                 </div>
 
-                <div class="col-2 rows">
+                <div class="col-3 rows">
                     <div class="object-list-header">
-                        <strong>{"Objects"}</strong>
                         <button class="btn sm square" title="Add object"
                             onclick={ctx.link().callback(|_| Msg::CreateObject)}>
-                            {"+"}
+                            <Icon name="user-plus" title="Add object" />
                         </button>
                     </div>
 
@@ -468,7 +476,7 @@ impl Component for Map {
                             if self.confirm_delete == Some(object_id) {
                                 html! {
                                     <div class={classes}>
-                                        <span class="object-list-item-label">{"Delete?"}</span>
+                                        <span class="object-list-item-label">{"Remove?"}</span>
                                         <button class="btn sm square danger" title="Confirm delete"
                                             onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
                                             <span class="icon x-mark" />
@@ -496,6 +504,14 @@ impl Component for Map {
                                                 Msg::ConfirmDelete(object_id)
                                             })}>
                                             <span class="icon x-mark" />
+                                        </button>
+                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", (self.mumble_object == Some(object_id)).then_some("info"))}
+                                            title="Set as MumbleLink source"
+                                            onclick={ctx.link().callback(move |e: MouseEvent| {
+                                                e.stop_propagation();
+                                                Msg::SetMumbleObject(object_id)
+                                            })}>
+                                            <span class="icon mumble" />
                                         </button>
                                     </div>
                                 }
@@ -549,6 +565,23 @@ impl Map {
                 self.open_settings = None;
                 Ok(true)
             }
+            Msg::SetMumbleObject(id) => {
+                self.mumble_object = Some(id);
+                self._set_mumble_object = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateConfigRequest {
+                        values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
+                    })
+                    .on_packet(ctx.link().callback(Msg::SetMumbleObjectResult))
+                    .send();
+                Ok(true)
+            }
+            Msg::SetMumbleObjectResult(result) => {
+                result?;
+                Ok(false)
+            }
             Msg::SetLog(log) => {
                 self.log = log;
                 Ok(false)
@@ -560,6 +593,11 @@ impl Map {
                 tracing::debug!(?body, "Initialize");
 
                 self.world = World::from_globals(&body.globals);
+                self.mumble_object = body
+                    .globals
+                    .values
+                    .get(&Key::MUMBLE_OBJECT)
+                    .and_then(|v| v.as_id());
 
                 self.objects = body
                     .objects
