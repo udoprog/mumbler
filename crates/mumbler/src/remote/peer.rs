@@ -1,12 +1,11 @@
 use core::net::SocketAddr;
 use core::task::{Context, Poll};
 
-use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::{Id, Key, Value};
+use api::{Id, Key, PeerId, RemoteObject, Value};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -124,11 +123,11 @@ impl Peer {
     }
 
     /// Connects the peer by sending a connect request.
-    pub fn connect(&mut self, room: &[u8], values: HashMap<Key, Value>) -> Result<()> {
+    pub fn connect(&mut self, room: &[u8], objects: Vec<RemoteObject>) -> Result<()> {
         self.scratch.send(ConnectBody {
             version: 1,
             room: Box::from(room),
-            values,
+            objects,
         })?;
 
         self.write.write_message(&mut self.scratch);
@@ -150,29 +149,44 @@ impl Peer {
     }
 
     /// Mark the given peer as having joined the room.
-    pub fn join(&mut self, id: Id, values: &HashMap<Key, Value>) -> Result<()> {
-        self.scratch.send(JoinBodyRef { id, values })?;
+    pub fn join(&mut self, peer_id: PeerId, objects: &[RemoteObject]) -> Result<()> {
+        self.scratch.send(JoinBodyRef { peer_id, objects })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
     /// Mark the given peer as having left the room.
-    pub fn leave(&mut self, id: Id) -> Result<()> {
+    pub fn leave(&mut self, id: PeerId) -> Result<()> {
         self.scratch.send(LeaveBody { id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
     /// Update the peer with the given key and value.
-    pub fn update_peer(&mut self, key: Key, value: &Value) -> Result<()> {
-        self.scratch.send(UpdatePeerRef { key, value })?;
+    pub fn update_peer(&mut self, id: Id, key: Key, value: &Value) -> Result<()> {
+        self.scratch.send(UpdatePeerRef {
+            object_id: id,
+            key,
+            value,
+        })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
 
     /// Mark the given peer as having updated the given key and value.
-    pub fn updated_peer(&mut self, id: Id, key: Key, value: &Value) -> Result<()> {
-        self.scratch.send(UpdatedPeerRef { id, key, value })?;
+    pub fn updated_peer(
+        &mut self,
+        peer_id: PeerId,
+        object_id: Id,
+        key: Key,
+        value: &Value,
+    ) -> Result<()> {
+        self.scratch.send(UpdatedPeerRef {
+            peer_id,
+            object_id,
+            key,
+            value,
+        })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{Id, Key, Value};
+use ::api::{Id, Key, PeerId, RemoteObject, Value};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -21,8 +19,8 @@ pub struct ConnectBody {
     pub version: u32,
     /// The context to connect to.
     pub room: Box<[u8]>,
-    /// The key-value pairs to immediately set for the peer.
-    pub values: HashMap<Key, Value>,
+    /// List of remote objects and their properties defined by peer.
+    pub objects: Vec<RemoteObject>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -49,32 +47,34 @@ pub struct PongBody {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct JoinBody {
-    /// The peer that joined the room.
-    pub id: Id,
+    /// The peer that joined.
+    pub peer_id: PeerId,
     /// The key-value pairs that were immediately set for the peer.
-    pub values: HashMap<Key, Value>,
+    pub objects: Vec<RemoteObject>,
 }
 
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
 pub struct JoinBodyRef<'a> {
-    /// The peer that joined the room.
-    pub id: Id,
+    /// The peer that joined.
+    pub peer_id: PeerId,
     /// The key-value pairs that were immediately set for the peer.
-    pub values: &'a HashMap<Key, Value>,
+    pub objects: &'a [RemoteObject],
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct LeaveBody {
     /// The peer that left the room.
-    pub id: Id,
+    pub id: PeerId,
 }
 
 /// A request to update.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct UpdatePeer {
+    /// The id of the object being updated.
+    pub object_id: Id,
     /// The key to update.
     pub key: Key,
     /// The value to update.
@@ -87,6 +87,8 @@ pub struct UpdatePeer {
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
 pub struct UpdatePeerRef<'a> {
+    /// The id of the object being updated.
+    pub object_id: Id,
     /// The key to update.
     pub key: Key,
     /// The value to update.
@@ -98,7 +100,9 @@ pub struct UpdatePeerRef<'a> {
 #[musli(crate = musli_core)]
 pub struct UpdatedPeer {
     /// The peer that updated.
-    pub id: Id,
+    pub peer_id: PeerId,
+    /// The object id being updated.
+    pub object_id: Id,
     /// The key that was updated.
     pub key: Key,
     /// The value that was updated.
@@ -112,7 +116,9 @@ pub struct UpdatedPeer {
 #[musli(crate = musli_core)]
 pub struct UpdatedPeerRef<'a> {
     /// The peer that updated.
-    pub id: Id,
+    pub peer_id: PeerId,
+    /// The object id being updated.
+    pub object_id: Id,
     /// The key that was updated.
     pub key: Key,
     /// The value that was updated.

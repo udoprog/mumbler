@@ -2,7 +2,6 @@
 //! the commands that it receives.
 
 use core::pin::pin;
-use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -72,7 +71,7 @@ async fn main() -> Result<()> {
 
     tracing::info!(tls = opts.tls, ?addr, "Connected");
 
-    let values = HashMap::new();
+    let values = Vec::new();
 
     let mut peer = Peer::new(addr, client);
     peer.connect(opts.room.as_bytes(), values)?;
@@ -108,7 +107,7 @@ async fn main() -> Result<()> {
                         }
                         Event::Updated => {
                             let event = body.decode::<UpdatedPeer>()?;
-                            tracing::debug!(?event.id, ?event.key, ?event.value, "Updated");
+                            tracing::debug!(?event.peer_id, ?event.key, ?event.value, "Updated");
                         }
                         event => {
                             tracing::debug!(?event);

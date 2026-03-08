@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::{Color, Id, Key, RemoteAvatar, Transform, Value, Vec3};
+use api::{Id, Key, PeerId, RemoteObject, Transform, Value};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -13,9 +13,19 @@ use super::{Database, Paths};
 #[derive(Debug, Clone)]
 pub(crate) enum RemoteAvatarEvent {
     RemoteLost,
-    Join { peer_id: Id, avatar: RemoteAvatar },
-    Leave { peer_id: Id },
-    Update { peer_id: Id, key: Key, value: Value },
+    Join {
+        peer_id: PeerId,
+        objects: Vec<RemoteObject>,
+    },
+    Leave {
+        peer_id: PeerId,
+    },
+    Update {
+        peer_id: PeerId,
+        object_id: Id,
+        key: Key,
+        value: Value,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -30,35 +40,24 @@ pub(crate) enum BackendEvent {
 
 /// State for the backend.
 #[derive(Debug, Clone)]
-pub(crate) struct Player {
-    pub(crate) values: HashMap<Key, Value>,
+pub(crate) struct LocalObject {
+    pub(crate) properties: HashMap<Key, Value>,
     pub(crate) changed: HashSet<Key>,
 }
 
-impl Player {
-    pub(crate) fn image(&self) -> Option<Id> {
-        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
-    }
-
-    pub(crate) fn color(&self) -> Option<Color> {
-        self.values.get(&Key::AVATAR_COLOR)?.as_color()
-    }
-
-    pub(crate) fn name(&self) -> Option<&str> {
-        self.values.get(&Key::AVATAR_NAME)?.as_string()
-    }
-}
-
-/// Information about a remote peer.
 #[derive(Default)]
 pub(crate) struct PeerInfo {
-    pub(crate) values: HashMap<Key, Value>,
+    pub(crate) objects: HashMap<Id, RemoteObject>,
 }
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
-    pub(crate) player: Player,
-    pub(crate) peers: HashMap<Id, PeerInfo>,
+    /// Local objects.
+    pub(crate) objects: HashMap<Id, LocalObject>,
+    /// Identifiers of objects that have been changed.
+    pub(crate) objects_changed: HashSet<Id>,
+    /// Remote objects.
+    pub(crate) peers: HashMap<PeerId, PeerInfo>,
 }
 
 /// Temporary images.
@@ -115,32 +114,22 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        let mut values = HashMap::new();
+        let mut objects = HashMap::new();
 
-        if let Some(value) = database
-            .get::<Transform>(Id::GLOBAL, Key::AVATAR_TRANSFORM)
-            .await?
-        {
-            values.insert(Key::AVATAR_TRANSFORM, Value::from(value));
-        }
+        for id in database.objects(api::Type::AVATAR).await? {
+            let mut values = HashMap::new();
 
-        if let Some(image) = database.get::<Id>(Id::GLOBAL, Key::AVATAR_IMAGE_ID).await? {
-            values.insert(Key::AVATAR_IMAGE_ID, Value::from(image));
-        }
+            for (key, value) in database.properties(id).await? {
+                values.insert(key, value);
+            }
 
-        if let Some(value) = database.get::<Color>(Id::GLOBAL, Key::AVATAR_COLOR).await? {
-            values.insert(Key::AVATAR_COLOR, Value::from(value));
-        }
-
-        if let Some(value) = database
-            .get::<Vec3>(Id::GLOBAL, Key::AVATAR_LOOK_AT)
-            .await?
-        {
-            values.insert(Key::AVATAR_LOOK_AT, Value::from(value));
-        }
-
-        if let Some(value) = database.get::<String>(Id::GLOBAL, Key::AVATAR_NAME).await? {
-            values.insert(Key::AVATAR_NAME, Value::from(value));
+            objects.insert(
+                id,
+                LocalObject {
+                    properties: values,
+                    changed: HashSet::new(),
+                },
+            );
         }
 
         Ok(Self {
@@ -148,10 +137,8 @@ impl Backend {
                 database,
                 paths,
                 client_state: Mutex::new(ClientState {
-                    player: Player {
-                        values,
-                        changed: HashSet::new(),
-                    },
+                    objects,
+                    objects_changed: HashSet::new(),
                     peers: HashMap::new(),
                 }),
                 images: RwLock::new(Images {
@@ -223,10 +210,17 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_client(&self, key: Key, value: Value) {
+    pub(crate) async fn set_client(&self, id: Id, key: Key, value: Value) {
         let mut state = self.inner.client_state.lock().await;
-        state.player.values.insert(key, value);
-        state.player.changed.insert(key);
+
+        let Some(object) = state.objects.get_mut(&id) else {
+            return;
+        };
+
+        object.properties.insert(key, value);
+        object.changed.insert(key);
+        state.objects_changed.insert(id);
+
         self.inner.client_notify.notify_one();
     }
 

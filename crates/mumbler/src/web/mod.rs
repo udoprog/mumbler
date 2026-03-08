@@ -138,39 +138,40 @@ async fn image(
 }
 
 async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
-    let player;
+    let mut objects = Vec::new();
     let mut remote_avatars = Vec::new();
 
     {
         let state = b.client_state().await;
 
-        player = api::RemoteAvatar {
-            id: Id::GLOBAL,
-            values: state.player.values.clone(),
-        };
-
-        for (id, peer) in state.peers.iter() {
-            remote_avatars.push(api::RemoteAvatar {
+        for (id, object) in state.objects.iter() {
+            objects.push(api::RemoteObject {
                 id: *id,
-                values: peer.values.clone(),
+                properties: object.properties.clone(),
             });
+        }
+
+        for (peer_id, peer) in state.peers.iter() {
+            for object in peer.objects.values() {
+                remote_avatars.push(api::RemotePeerObject {
+                    peer_id: *peer_id,
+                    id: object.id,
+                    properties: object.properties.clone(),
+                });
+            }
         }
     }
 
-    let zoom = b
-        .db()
-        .get::<f32>(Id::GLOBAL, Key::WORLD_ZOOM)
-        .await?
-        .unwrap_or(10.0);
+    let zoom = b.db().config::<f32>(Key::WORLD_ZOOM).await?.unwrap_or(10.0);
 
     let pan = b
         .db()
-        .get::<api::Pan>(Id::GLOBAL, Key::WORLD_PAN)
+        .config::<api::Pan>(Key::WORLD_PAN)
         .await?
         .unwrap_or_else(api::Pan::zero);
 
     let ev = api::InitializeMapEvent {
-        player,
+        objects,
         remote_avatars,
         world: api::World {
             zoom,
@@ -196,24 +197,33 @@ async fn upload_image(
     Ok(api::UploadImageResponse { id })
 }
 
-async fn list_images(backend: &Backend) -> Result<api::ListSettingsResponse> {
+async fn get_settings(backend: &Backend) -> Result<api::ListSettingsResponse> {
+    let mut objects = Vec::new();
+
+    {
+        let state = backend.client_state().await;
+
+        for (id, peer) in state.objects.iter() {
+            objects.push(api::RemoteObject {
+                id: *id,
+                properties: peer.properties.clone(),
+            });
+        }
+    }
+
     let images = backend.db().list_images().await?;
-    let state = backend.client_state().await;
-    let remote_server = backend
-        .db()
-        .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
-        .await?;
+
+    let remote_server = backend.db().config::<String>(Key::REMOTE_SERVER).await?;
+
     let remote_server_tls = backend
         .db()
-        .get::<bool>(Id::GLOBAL, Key::REMOTE_TLS)
+        .config::<bool>(Key::REMOTE_TLS)
         .await?
         .unwrap_or(false);
 
     Ok(api::ListSettingsResponse {
+        objects,
         images,
-        image: state.player.image(),
-        color: state.player.color(),
-        name: state.player.name().map(str::to_owned),
         remote_server,
         remote_server_tls,
     })
@@ -228,13 +238,10 @@ async fn delete_image(
 }
 
 async fn update_world(backend: &Backend, request: api::UpdateWorldRequest) -> Result<api::Empty> {
+    backend.db().set_config(Key::WORLD_PAN, request.pan).await?;
     backend
         .db()
-        .set(Id::GLOBAL, Key::WORLD_PAN, request.pan)
-        .await?;
-    backend
-        .db()
-        .set(Id::GLOBAL, Key::WORLD_ZOOM, request.zoom)
+        .set_config(Key::WORLD_ZOOM, request.zoom)
         .await?;
     Ok(api::Empty)
 }
@@ -253,8 +260,9 @@ async fn mumble_toggle(
 ) -> Result<api::MumbleToggleResponse> {
     backend
         .db()
-        .set(Id::GLOBAL, Key::MUMBLE_ENABLED, request.enabled)
+        .set_config(Key::MUMBLE_ENABLED, request.enabled)
         .await?;
+
     backend.restart_mumblelink();
     Ok(api::MumbleToggleResponse {
         enabled: request.enabled,
@@ -267,7 +275,7 @@ async fn get_mumble_status(
 ) -> Result<api::GetMumbleStatusResponse> {
     let enabled = backend
         .db()
-        .get::<bool>(Id::GLOBAL, Key::MUMBLE_ENABLED)
+        .config::<bool>(Key::MUMBLE_ENABLED)
         .await?
         .unwrap_or(false);
 
@@ -280,14 +288,11 @@ async fn get_remote_status(
 ) -> Result<api::GetRemoteStatusResponse> {
     let enabled = backend
         .db()
-        .get::<bool>(Id::GLOBAL, Key::REMOTE_ENABLED)
+        .config::<bool>(Key::REMOTE_ENABLED)
         .await?
         .unwrap_or(true);
 
-    let server = backend
-        .db()
-        .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
-        .await?;
+    let server = backend.db().config::<String>(Key::REMOTE_SERVER).await?;
 
     Ok(api::GetRemoteStatusResponse { enabled, server })
 }
@@ -306,7 +311,7 @@ async fn remote_toggle(
 ) -> Result<api::RemoteToggleResponse> {
     backend
         .db()
-        .set(Id::GLOBAL, Key::REMOTE_ENABLED, request.enabled)
+        .set_config(Key::REMOTE_ENABLED, request.enabled)
         .await?;
 
     backend.restart_client();
@@ -322,11 +327,12 @@ async fn set_remote_server(
 ) -> Result<api::SetRemoteServerResponse> {
     backend
         .db()
-        .set_optional(Id::GLOBAL, Key::REMOTE_SERVER, request.server.clone())
+        .set_optional_config(Key::REMOTE_SERVER, request.server.clone())
         .await?;
+
     backend
         .db()
-        .set(Id::GLOBAL, Key::REMOTE_TLS, request.tls)
+        .set_config(Key::REMOTE_TLS, request.tls)
         .await?;
 
     backend.restart_client();

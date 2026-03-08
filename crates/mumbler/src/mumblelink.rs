@@ -1,7 +1,7 @@
 use core::pin::pin;
 
 use anyhow::{Context as _, Result};
-use api::{Id, Key};
+use api::Key;
 use async_fuse::Fuse;
 use mumblelink::{Link, Position};
 use tokio::time::{self, Duration};
@@ -60,7 +60,7 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
 pub async fn managed(b: Backend) -> Result<()> {
     let settings = async || -> Result<bool> {
         Ok(b.db()
-            .get::<bool>(Id::GLOBAL, Key::MUMBLE_ENABLED)
+            .config::<bool>(Key::MUMBLE_ENABLED)
             .await?
             .unwrap_or_default())
     };

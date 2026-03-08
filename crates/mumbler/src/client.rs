@@ -3,14 +3,14 @@ use core::time::Duration;
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Id, Key, RemoteAvatar, Value};
+use api::{Key, RemoteObject, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::RemoteAvatarEvent;
-use crate::backend::{BackendEvent, ClientState, Player};
+use crate::backend::{BackendEvent, ClientState};
 use crate::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
 use crate::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
 
@@ -36,30 +36,30 @@ async fn handle_peer(
                 }
             }
             Event::Join => {
-                let mut body = body.decode::<JoinBody>()?;
-                tracing::debug!(?id, ?body.id);
+                let body = body.decode::<JoinBody>()?;
+                tracing::debug!(?id, ?body.peer_id, objects = body.objects.len());
 
-                if let Some(image) = body
-                    .values
-                    .remove(&Key::AVATAR_IMAGE_BYTES)
-                    .and_then(|v| v.into_bytes())
-                {
-                    let mut images = b.images().await;
-                    let image = images.store(image);
-                    body.values.insert(Key::AVATAR_IMAGE_ID, Value::from(image));
-                }
+                let mut remote = b.client_state().await;
+                let peer = remote.peers.entry(body.peer_id).or_default();
 
-                {
-                    let mut remote = b.client_state().await;
-                    remote.peers.entry(body.id).or_default().values = body.values.clone();
+                for mut o in body.objects {
+                    if let Some(image) = o
+                        .properties
+                        .remove(&Key::AVATAR_IMAGE_BYTES)
+                        .and_then(|v| v.into_bytes())
+                    {
+                        let mut images = b.images().await;
+                        let image = images.store(image);
+                        o.properties
+                            .insert(Key::AVATAR_IMAGE_ID, Value::from(image));
+                    }
+
+                    peer.objects.insert(o.id, o);
                 }
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Join {
-                    peer_id: body.id,
-                    avatar: RemoteAvatar {
-                        id: body.id,
-                        values: body.values,
-                    },
+                    peer_id: body.peer_id,
+                    objects: peer.objects.values().cloned().collect(),
                 }));
             }
             Event::Leave => {
@@ -77,11 +77,15 @@ async fn handle_peer(
             }
             Event::Updated => {
                 let body = body.decode::<UpdatedPeer>()?;
-                tracing::debug!(?id, ?body.id, ?body.key, ?body.value);
+                tracing::debug!(?id, ?body.peer_id, ?body.key, ?body.value);
 
                 let mut remote = b.client_state().await;
 
-                let Some(peer) = remote.peers.get_mut(&body.id) else {
+                let Some(peer) = remote.peers.get_mut(&body.peer_id) else {
+                    continue;
+                };
+
+                let Some(object) = peer.objects.get_mut(&body.object_id) else {
                     continue;
                 };
 
@@ -95,8 +99,9 @@ async fn handle_peer(
 
                         let image = images.store(bytes);
 
-                        if let Some(old) =
-                            peer.values.insert(Key::AVATAR_IMAGE_ID, Value::from(image))
+                        if let Some(old) = object
+                            .properties
+                            .insert(Key::AVATAR_IMAGE_ID, Value::from(image))
                             && let Some(id) = old.as_id()
                         {
                             images.remove(id);
@@ -105,13 +110,14 @@ async fn handle_peer(
                         (Key::AVATAR_IMAGE_ID, Value::from(image))
                     }
                     key => {
-                        peer.values.insert(key, body.value.clone());
+                        object.properties.insert(key, body.value.clone());
                         (key, body.value)
                     }
                 };
 
                 b.broadcast(BackendEvent::RemoteAvatar(RemoteAvatarEvent::Update {
-                    peer_id: body.id,
+                    peer_id: body.peer_id,
+                    object_id: body.object_id,
                     key,
                     value,
                 }));
@@ -137,9 +143,9 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         connect.as_str()
     };
 
-    let player = {
+    let players = {
         let remote = b.client_state().await;
-        remote.player.clone()
+        remote.objects.clone()
     };
 
     tracing::info!(?host, ?port, ?tls, "Connecting to mumbler-server");
@@ -163,29 +169,35 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
 
-    let mut values = HashMap::new();
+    let mut objects = Vec::new();
 
-    for (key, value) in &player.values {
-        let (key, value) = match *key {
-            Key::AVATAR_IMAGE_ID => {
-                let Some(image) = value.as_id() else {
-                    continue;
-                };
+    for (id, object) in players {
+        let mut properties = HashMap::new();
 
-                let Some(bytes) = b.db().get_image_data(image).await? else {
-                    continue;
-                };
+        for (key, value) in &object.properties {
+            let (key, value) = match *key {
+                Key::AVATAR_IMAGE_ID => {
+                    let Some(image) = value.as_id() else {
+                        continue;
+                    };
 
-                (Key::AVATAR_IMAGE_BYTES, Value::from(bytes))
-            }
-            key => (key, value.clone()),
-        };
+                    let Some(bytes) = b.db().get_image_data(image).await? else {
+                        continue;
+                    };
 
-        values.insert(key, value);
+                    (Key::AVATAR_IMAGE_BYTES, Value::from(bytes))
+                }
+                key => (key, value.clone()),
+            };
+
+            properties.insert(key, value);
+        }
+
+        objects.push(RemoteObject { id, properties });
     }
 
     let mut peer = Peer::new(addr, client);
-    peer.connect(b"default", values)?;
+    peer.connect(b"default", objects)?;
 
     loop {
         tokio::select! {
@@ -194,29 +206,35 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut()).await?;
             }
             () = wait.as_mut() => {
-                let ClientState { player: Player { values, changed }, .. } = &mut *b.client_state().await;
+                let ClientState { objects, objects_changed, .. } = &mut *b.client_state().await;
 
-                for key in changed.drain() {
-                    let Some(value) = values.get(&key) else {
+                for id in objects_changed.drain() {
+                    let Some(object) = objects.get_mut(&id) else {
                         continue;
                     };
 
-                    let owned;
+                    for key in object.changed.drain() {
+                        let Some(value) = object.properties.get(&key) else {
+                            continue;
+                        };
 
-                    let (key, value) = match key {
-                        Key::AVATAR_IMAGE_ID => {
-                            let Some(image) = value.as_id() else {
-                                continue;
-                            };
+                        let owned;
 
-                            let bytes = b.db().get_image_data(image).await?;
-                            owned = Value::from(bytes);
-                            (Key::AVATAR_IMAGE_BYTES, &owned)
-                        }
-                        _ => (key, value),
-                    };
+                        let (key, value) = match key {
+                            Key::AVATAR_IMAGE_ID => {
+                                let Some(image) = value.as_id() else {
+                                    continue;
+                                };
 
-                    peer.update_peer(key, value)?;
+                                let bytes = b.db().get_image_data(image).await?;
+                                owned = Value::from(bytes);
+                                (Key::AVATAR_IMAGE_BYTES, &owned)
+                            }
+                            _ => (key, value),
+                        };
+
+                        peer.update_peer(id, key, value)?;
+                    }
                 }
 
                 wait.set(b.client_wait());
@@ -245,7 +263,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
     let settings = async || -> Result<(Option<String>, bool, bool)> {
         let connect = b
             .db()
-            .get::<String>(Id::GLOBAL, Key::REMOTE_SERVER)
+            .config::<String>(Key::REMOTE_SERVER)
             .await?
             .as_deref()
             .or(default_connect)
@@ -253,13 +271,13 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
         let enabled = b
             .db()
-            .get::<bool>(Id::GLOBAL, Key::REMOTE_ENABLED)
+            .config::<bool>(Key::REMOTE_ENABLED)
             .await?
             .unwrap_or(true);
 
         let tls = b
             .db()
-            .get::<bool>(Id::GLOBAL, Key::REMOTE_TLS)
+            .config::<bool>(Key::REMOTE_TLS)
             .await?
             .unwrap_or(false);
 

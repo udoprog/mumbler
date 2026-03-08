@@ -16,11 +16,11 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
-pub struct Id {
+pub struct PeerId {
     raw: u64,
 }
 
-impl Id {
+impl PeerId {
     /// Create a new identifier from a u64.
     #[inline]
     pub const fn new(id: u64) -> Self {
@@ -34,7 +34,7 @@ impl Id {
     }
 }
 
-impl fmt::Display for Id {
+impl fmt::Display for PeerId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.raw.to_be_bytes();
@@ -43,7 +43,7 @@ impl fmt::Display for Id {
     }
 }
 
-impl fmt::Debug for Id {
+impl fmt::Debug for PeerId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.raw.to_be_bytes();
@@ -52,7 +52,7 @@ impl fmt::Debug for Id {
     }
 }
 
-impl<'de> Deserialize<'de> for Id {
+impl<'de> Deserialize<'de> for PeerId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -60,7 +60,7 @@ impl<'de> Deserialize<'de> for Id {
         struct Visitor;
 
         impl<'de> de::Visitor<'de> for Visitor {
-            type Value = Id;
+            type Value = PeerId;
 
             #[inline]
             fn expecting(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
@@ -85,7 +85,7 @@ impl<'de> Deserialize<'de> for Id {
                 }
 
                 let id = u64::from_be_bytes(dest);
-                Ok(Id::new(id))
+                Ok(PeerId::new(id))
             }
         }
 
@@ -94,7 +94,7 @@ impl<'de> Deserialize<'de> for Id {
 }
 
 #[cfg(feature = "sqll")]
-impl BindValue for Id {
+impl BindValue for PeerId {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
         self.raw.cast_signed().bind_value(stmt, index)
@@ -102,7 +102,7 @@ impl BindValue for Id {
 }
 
 #[cfg(feature = "sqll")]
-impl Bind for Id {
+impl Bind for PeerId {
     #[inline]
     fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
         self.bind_value(stmt, BIND_INDEX)
@@ -110,12 +110,12 @@ impl Bind for Id {
 }
 
 #[cfg(feature = "sqll")]
-impl FromColumn<'_> for Id {
+impl FromColumn<'_> for PeerId {
     type Type = ty::Integer;
 
     #[inline]
     fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
         let id = i64::from_column(stmt, index)?.cast_unsigned();
-        Ok(Id::new(id))
+        Ok(PeerId::new(id))
     }
 }

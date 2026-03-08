@@ -1,6 +1,12 @@
 mod id;
 pub use id::Id;
 
+mod peer_id;
+pub use peer_id::PeerId;
+
+mod ty;
+pub use ty::Type;
+
 mod config;
 pub use config::Key;
 
@@ -94,6 +100,7 @@ pub struct InitializeMapRequest;
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct UpdateRequest {
+    pub id: Id,
     pub key: Key,
     pub value: Value,
 }
@@ -299,81 +306,25 @@ impl Transform {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct RemoteAvatar {
-    /// The identifier of the remote avatar.
+pub struct RemotePeerObject {
+    pub peer_id: PeerId,
     pub id: Id,
-    /// The key-value pairs representing the state of the remote avatar.
-    pub values: HashMap<Key, Value>,
+    pub properties: HashMap<Key, Value>,
 }
 
-#[derive(Default, Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct Avatar {
-    /// Values associated with the player's avatar.
-    pub values: HashMap<Key, Value>,
-}
-
-impl Avatar {
-    #[inline]
-    pub fn transform_mut(&mut self) -> &mut Transform {
-        self.values
-            .entry(Key::AVATAR_TRANSFORM)
-            .or_default()
-            .into_transform_mut()
-    }
-
-    #[inline]
-    pub fn transform(&self) -> Transform {
-        let Some(value) = self.values.get(&Key::AVATAR_TRANSFORM) else {
-            return Transform::origin();
-        };
-
-        value.as_transform().unwrap_or_else(Transform::origin)
-    }
-
-    #[inline]
-    pub fn look_at(&self) -> Option<Vec3> {
-        self.values.get(&Key::AVATAR_LOOK_AT)?.as_vec3()
-    }
-
-    #[inline]
-    pub fn look_at_mut(&mut self) -> &mut Vec3 {
-        self.values
-            .entry(Key::AVATAR_LOOK_AT)
-            .or_default()
-            .into_vec3_mut()
-    }
-
-    #[inline]
-    pub fn clear_look_at(&mut self) {
-        self.values.remove(&Key::AVATAR_LOOK_AT);
-    }
-
-    #[inline]
-    pub fn image(&self) -> Option<Id> {
-        self.values.get(&Key::AVATAR_IMAGE_ID)?.as_id()
-    }
-
-    #[inline]
-    pub fn color(&self) -> Option<Color> {
-        self.values.get(&Key::AVATAR_COLOR)?.as_color()
-    }
-
-    #[inline]
-    pub fn name(&self) -> Option<&str> {
-        self.values.get(&Key::AVATAR_NAME)?.as_string()
-    }
+pub struct RemoteObject {
+    pub id: Id,
+    pub properties: HashMap<Key, Value>,
 }
 
 /// Event emitted when the map is initialized.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeMapEvent {
-    /// The player avatar.
-    pub player: RemoteAvatar,
-    /// List of remote avatars.
-    pub remote_avatars: Vec<RemoteAvatar>,
-    /// The configuration of the world.
+    pub objects: Vec<RemoteObject>,
+    pub remote_avatars: Vec<RemotePeerObject>,
     pub world: World,
 }
 
@@ -395,14 +346,10 @@ pub struct Image {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct ListSettingsResponse {
-    /// The unique identifier of the currently selected avatar image.
-    pub image: Option<Id>,
-    /// The selected color for the avatar.
-    pub color: Option<Color>,
+    /// List of objects.
+    pub objects: Vec<RemoteObject>,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
-    /// The display name of the player's avatar.
-    pub name: Option<String>,
     /// The remote host[:port] combination.
     pub remote_server: Option<String>,
     /// Whether TLS is enabled for the remote server connection.
@@ -520,15 +467,15 @@ pub enum ServerNotificationBody {
 pub enum RemoteAvatarUpdateBody {
     RemoteLost,
     Join {
-        peer_id: Id,
-        avatar: RemoteAvatar,
+        peer_id: PeerId,
+        objects: Vec<RemoteObject>,
     },
     Leave {
-        peer_id: Id,
+        peer_id: PeerId,
     },
-    /// Update to a remote avatar's property.
     Update {
-        peer_id: Id,
+        peer_id: PeerId,
+        object_id: Id,
         key: Key,
         value: Value,
     },

@@ -5,7 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Id, Image, Key, Value, ValueKind};
+use api::{Id, Image, Key, Type, Value, ValueKind};
 use jiff::Timestamp;
 use musli::Encode;
 use musli::alloc::Global;
@@ -29,9 +29,16 @@ struct Inner {
     select_images: SendStatement,
     select_image_data: SendStatement,
     delete_image: SendStatement,
+    get_property: SendStatement,
+    list_properties: SendStatement,
+    set_property: SendStatement,
+    delete_property: SendStatement,
     get_config: SendStatement,
     set_config: SendStatement,
     delete_config: SendStatement,
+    insert_object: SendStatement,
+    delete_object: SendStatement,
+    list_objects_by_type: SendStatement,
 }
 
 /// A database connection.
@@ -118,9 +125,16 @@ impl Database {
                 select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
-                get_config: c.prepare("SELECT value FROM config WHERE id = ? AND key = ?")?.into_send()?,
-                set_config: c.prepare("INSERT INTO config (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
-                delete_config: c.prepare("DELETE FROM config WHERE id = ? AND key = ?")?.into_send()?,
+                get_property: c.prepare("SELECT value FROM properties WHERE id = ? AND key = ?")?.into_send()?,
+                list_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
+                set_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                delete_property: c.prepare("DELETE FROM properties WHERE id = ? AND key = ?")?.into_send()?,
+                get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
+                set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
+                insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
+                delete_object: c.prepare("DELETE FROM objects WHERE id = ? AND type = ?")?.into_send()?,
+                list_objects_by_type: c.prepare("SELECT id FROM objects WHERE type = ?")?.into_send()?,
             }
         };
 
@@ -193,15 +207,14 @@ impl Database {
         task.await?
     }
 
-    /// Get specific configuration by key.
-    pub async fn get<T>(&self, id: Id, key: Key) -> Result<Option<T>>
+    pub async fn config<T>(&self, key: Key) -> Result<Option<T>>
     where
         T: 'static + Send + DecodeOwned<Binary, Global>,
     {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.get_config.bind((id, key))?;
+            inner.get_config.bind((key,))?;
 
             if let Some(row) = inner.get_config.next::<&[u8]>()? {
                 let value = musli::descriptive::from_slice::<T>(row)?;
@@ -214,56 +227,21 @@ impl Database {
         task.await?
     }
 
-    /// Set specific configuration by key, or delete it if the value is unset.
-    pub async fn set_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
-        match value.into_kind() {
-            ValueKind::String(string) => {
-                self.set(id, key, string).await?;
-            }
-            ValueKind::Id(value) => {
-                self.set(id, key, value).await?;
-            }
-            ValueKind::Bytes(value) => {
-                self.set(id, key, value).await?;
-            }
-            ValueKind::Transform(value) => {
-                self.set(id, key, value).await?;
-            }
-            ValueKind::Color(value) => {
-                self.set(id, key, value).await?;
-            }
-            ValueKind::Vec3(value) => {
-                self.set(id, key, value).await?;
-            }
-            _ => {
-                self.delete(id, key).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Set specific configuration by key, or delete it if the value is `None`.
-    pub async fn set_optional(
-        &self,
-        id: Id,
-        key: Key,
-        value: Option<impl 'static + Send + Encode<Binary>>,
-    ) -> Result<()> {
+    pub async fn set_optional_config<T>(&self, key: Key, value: Option<T>) -> Result<()>
+    where
+        T: 'static + Send + Encode<Binary>,
+    {
         if let Some(value) = value {
-            self.set(id, key, value).await
+            self.set_config(key, value).await
         } else {
-            self.delete(id, key).await
+            self.delete_config(key).await
         }
     }
 
-    /// Set specific configuration by key.
-    pub async fn set(
-        &self,
-        id: Id,
-        key: Key,
-        value: impl 'static + Send + Encode<Binary>,
-    ) -> Result<()> {
+    pub async fn set_config<T>(&self, key: Key, value: T) -> Result<()>
+    where
+        T: 'static + Send + Encode<Binary>,
+    {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -275,7 +253,110 @@ impl Database {
                 ..
             } = &mut *inner;
 
-            set_config.execute((id, key, &scratch[..]))?;
+            set_config.execute((key, &scratch[..]))?;
+            scratch.clear();
+            Ok(())
+        });
+
+        task.await?
+    }
+
+    pub async fn delete_config(&self, key: Key) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.delete_config.execute((key,))?;
+            Ok(())
+        });
+
+        task.await?
+    }
+
+    /// Get specific property.
+    ///
+    /// Properties are values associated with a specified object identified by id.
+    pub async fn property<T>(&self, id: Id, key: Key) -> Result<Option<T>>
+    where
+        T: 'static + Send + DecodeOwned<Binary, Global>,
+    {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.get_property.bind((id, key))?;
+
+            if let Some(row) = inner.get_property.next::<&[u8]>()? {
+                let value = musli::descriptive::from_slice::<T>(row)?;
+                return Ok(Some(value));
+            }
+
+            Ok(None)
+        });
+
+        task.await?
+    }
+
+    /// Set specific configuration by key, or delete it if the value is unset.
+    pub async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
+        match value.into_kind() {
+            ValueKind::String(string) => {
+                self.set_property(id, key, string).await?;
+            }
+            ValueKind::Id(value) => {
+                self.set_property(id, key, value).await?;
+            }
+            ValueKind::Bytes(value) => {
+                self.set_property(id, key, value).await?;
+            }
+            ValueKind::Transform(value) => {
+                self.set_property(id, key, value).await?;
+            }
+            ValueKind::Color(value) => {
+                self.set_property(id, key, value).await?;
+            }
+            ValueKind::Vec3(value) => {
+                self.set_property(id, key, value).await?;
+            }
+            _ => {
+                self.delete_property(id, key).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Set specific configuration by key, or delete it if the value is `None`.
+    pub async fn set_optional_property(
+        &self,
+        id: Id,
+        key: Key,
+        value: Option<impl 'static + Send + Encode<Binary>>,
+    ) -> Result<()> {
+        if let Some(value) = value {
+            self.set_property(id, key, value).await
+        } else {
+            self.delete_property(id, key).await
+        }
+    }
+
+    /// Set specific configuration by key.
+    pub async fn set_property(
+        &self,
+        id: Id,
+        key: Key,
+        value: impl 'static + Send + Encode<Binary>,
+    ) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            musli::descriptive::encode(&mut inner.scratch, &value)?;
+
+            let Inner {
+                set_property,
+                scratch,
+                ..
+            } = &mut *inner;
+
+            set_property.execute((id, key, &scratch[..]))?;
             scratch.clear();
             Ok(())
         });
@@ -284,12 +365,71 @@ impl Database {
     }
 
     /// Remove the specified configuration.
-    pub async fn delete(&self, id: Id, key: Key) -> Result<()> {
+    pub async fn delete_property(&self, id: Id, key: Key) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.delete_config.execute((id, key))?;
+            inner.delete_property.execute((id, key))?;
             Ok(())
+        });
+
+        task.await?
+    }
+
+    pub async fn insert_object(&self, id: Id, ty: Type) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.insert_object.execute((id, ty))?;
+            Ok(())
+        });
+
+        task.await?
+    }
+
+    pub async fn delete_object(&self, id: Id, ty: Type) -> Result<()> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.delete_object.execute((id, ty))?;
+            Ok(())
+        });
+
+        task.await?
+    }
+
+    pub async fn objects(&self, ty: Type) -> Result<Vec<Id>> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.list_objects_by_type.bind((ty,))?;
+
+            let mut objects = Vec::new();
+
+            while let Some(id) = inner.list_objects_by_type.next::<Id>()? {
+                objects.push(id);
+            }
+
+            Ok(objects)
+        });
+
+        task.await?
+    }
+
+    pub async fn properties(&self, id: Id) -> Result<Vec<(Key, Value)>> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.list_properties.bind((id,))?;
+
+            let mut properties = Vec::new();
+
+            while let Some((key, value)) = inner.list_properties.next::<(Key, Vec<u8>)>()? {
+                let value = musli::descriptive::from_slice(&value)?;
+                properties.push((key, value));
+            }
+
+            Ok(properties)
         });
 
         task.await?

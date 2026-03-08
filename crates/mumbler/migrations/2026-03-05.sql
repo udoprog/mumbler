@@ -6,9 +6,24 @@ CREATE TABLE `images` (
     `data` BLOB NOT NULL
 );
 
+-- Global configuration.
 CREATE TABLE `config` (
-    `id` INTEGER NOT NULL,
+    `key` INTEGER NOT NULL PRIMARY KEY,
+    `value` BLOB NOT NULL
+);
+
+-- Token-specific configuration.
+CREATE TABLE `properties` (
+    `id` BLOB PRIMARY KEY,
     `key` INTEGER NOT NULL,
     `value` BLOB NOT NULL,
-    PRIMARY KEY (`id`, `key`)
+    PRIMARY KEY (`id`, `key`),
+    FOREIGN KEY (`id`) REFERENCES `tokens`(`id`) ON DELETE CASCADE
+);
+
+-- List of local objects.
+CREATE TABLE `objects` (
+    `id` BLOB PRIMARY KEY,
+    `type` INTEGER NOT NULL,
+    PRIMARY KEY (`id`, `type`)
 );

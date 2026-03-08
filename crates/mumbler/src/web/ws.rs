@@ -23,7 +23,7 @@ use crate::backend::RemoteAvatarEvent;
 
 struct Handler<'a> {
     backend: Backend,
-    database_updates: HashMap<Key, Value>,
+    database_updates: HashMap<(Id, Key), Value>,
     database_updates_notify: &'a Notify,
 }
 
@@ -57,7 +57,8 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
 
                 self.database_updates
-                    .insert(request.key, request.value.clone());
+                    .insert((request.id, request.key), request.value.clone());
+
                 self.database_updates_notify.notify_one();
 
                 if request.key == Key::AVATAR_TRANSFORM {
@@ -67,7 +68,7 @@ impl ws::Handler for Handler<'_> {
                 }
 
                 self.backend
-                    .set_client(request.key, request.value.clone())
+                    .set_client(request.id, request.key, request.value.clone())
                     .await;
 
                 outgoing.write(api::Empty);
@@ -84,7 +85,7 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::ListSettingsRequest>()
                     .context("missing request")?;
 
-                let response = super::list_images(&self.backend).await?;
+                let response = super::get_settings(&self.backend).await?;
                 outgoing.write(response);
             }
             api::Request::DeleteImage => {
@@ -214,8 +215,8 @@ pub(super) async fn entry(
                         tracing::debug!("Saving updates");
 
                         let result = async {
-                            for (key, value) in local_updates.drain() {
-                                backend.db().set_value(Id::GLOBAL, key, value).await?;
+                            for ((id, key), value) in local_updates.drain() {
+                                backend.db().set_property_value(id, key, value).await?;
                             }
 
                             Ok(())
@@ -246,9 +247,9 @@ pub(super) async fn entry(
                             BackendEvent::RemoteAvatar(body) => {
                                 let body = match body {
                                     RemoteAvatarEvent::RemoteLost => api::RemoteAvatarUpdateBody::RemoteLost,
-                                    RemoteAvatarEvent::Join { peer_id, avatar } => api::RemoteAvatarUpdateBody::Join { peer_id, avatar },
+                                    RemoteAvatarEvent::Join { peer_id, objects } => api::RemoteAvatarUpdateBody::Join { peer_id, objects },
                                     RemoteAvatarEvent::Leave { peer_id } => api::RemoteAvatarUpdateBody::Leave { peer_id },
-                                    RemoteAvatarEvent::Update { peer_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, key, value },
+                                    RemoteAvatarEvent::Update { peer_id, object_id, key, value } => api::RemoteAvatarUpdateBody::Update { peer_id, object_id, key, value },
                                 };
 
                                 server.broadcast(body).context("send broadcast")
