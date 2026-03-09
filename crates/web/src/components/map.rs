@@ -28,6 +28,7 @@ use super::render::{self, RenderAvatar, ViewTransform};
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const MOVEMENT_SPEED: f32 = 5.0;
+const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "Shift to look / Shift + Click to place eye";
 
@@ -35,7 +36,6 @@ pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
     pub(crate) extent: State<Extent>,
-    pub(crate) token_radius: State<f32>,
     pub(crate) mumble_object: State<Option<Id>>,
     pub(crate) mumble_follow_selection: State<bool>,
 }
@@ -58,7 +58,6 @@ impl Config {
             Key::WORLD_EXTENT => self
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
-            Key::WORLD_TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.5)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(value.as_id()),
             Key::MUMBLE_FOLLOW_SELECTION => self
                 .mumble_follow_selection
@@ -72,7 +71,6 @@ impl Config {
         values.push((Key::WORLD_SCALE, Value::from(*self.zoom)));
         values.push((Key::WORLD_PAN, Value::from(*self.pan)));
         values.push((Key::WORLD_EXTENT, Value::from(*self.extent)));
-        values.push((Key::WORLD_TOKEN_RADIUS, Value::from(*self.token_radius)));
         values
     }
 }
@@ -83,7 +81,6 @@ impl Default for Config {
             zoom: State::new(1.0),
             pan: State::new(Pan::zero()),
             extent: State::new(Extent::arena()),
-            token_radius: State::new(0.5),
             mumble_object: State::new(None),
             mumble_follow_selection: State::new(false),
         }
@@ -128,6 +125,7 @@ pub(crate) struct ObjectData {
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
+    pub(crate) token_radius: State<f32>,
 }
 
 impl ObjectData {
@@ -158,6 +156,13 @@ impl ObjectData {
                     .as_bool()
                     .unwrap_or(false),
             ),
+            token_radius: State::new(
+                remote
+                    .properties
+                    .get(Key::TOKEN_RADIUS)
+                    .as_float()
+                    .unwrap_or(DEFAULT_TOKEN_RADIUS),
+            ),
         }
     }
 
@@ -171,6 +176,9 @@ impl ObjectData {
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            Key::TOKEN_RADIUS => self
+                .token_radius
+                .update(value.as_float().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             _ => false,
         }
     }
@@ -572,7 +580,7 @@ impl Component for Map {
                 </div>
             </div>
 
-            if let Some(settings_id) = self.open_settings {
+            if let Some(id) = self.open_settings {
                 <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
                     <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
                         <div class="modal-header">
@@ -583,7 +591,7 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body">
-                            <ObjectSettings ws={ctx.props().ws.clone()} id={settings_id} />
+                            <ObjectSettings ws={ctx.props().ws.clone()} {id} />
                         </div>
                     </div>
                 </div>
@@ -1185,13 +1193,12 @@ impl Map {
                     let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
                     let (ex, ey) = t.canvas_to_world(ex, ey);
 
-                    let r = *self.config.token_radius;
-
                     let hit = self
                         .objects
                         .values()
                         .find(|o| {
                             let p = o.data.transform.position;
+                            let r = *o.data.token_radius;
                             let dx = p.x - ex;
                             let dz = p.z - ey;
                             dx * dx + dz * dz <= r * r
@@ -1450,8 +1457,6 @@ impl Map {
 
         let t = ViewTransform::new(&canvas, &self.config);
 
-        let token_radius = *self.config.token_radius as f64 * t.scale;
-
         render::draw_grid(&cx, &t, &self.config.extent, *self.config.zoom);
 
         let selected = self.selected;
@@ -1480,10 +1485,7 @@ impl Map {
 
         for a in renders() {
             let arrow = a.selected.then_some(selected_arrow).flatten();
-
-            render::draw_avatar_token(&cx, &t, &a, token_radius, arrow, |id| {
-                self.images.get(id).cloned()
-            })?;
+            render::draw_avatar_token(&cx, &t, &a, arrow, |id| self.images.get(id).cloned())?;
         }
 
         for a in renders() {

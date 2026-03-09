@@ -74,7 +74,6 @@ keys! {
     WORLD_ZOOM: Float = 9,
     WORLD_PAN: Pan = 10,
     WORLD_EXTENT: Extent = 12,
-    WORLD_TOKEN_RADIUS: Float = 13,
     /// The object which is used for mumble link.
     MUMBLE_OBJECT: Id = 14,
     /// Whether the object is hidden from remote peers.
@@ -82,6 +81,8 @@ keys! {
     /// Whether selecting an object automatically sets it as the MumbleLink
     /// source.
     MUMBLE_FOLLOW_SELECTION: Boolean = 16,
+    /// Per-object token radius.
+    TOKEN_RADIUS: Float = 17,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

@@ -6,6 +6,8 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url};
 use yew::prelude::*;
 
+use crate::components::Icon;
+use crate::components::render::ViewTransform;
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
@@ -32,6 +34,9 @@ pub(crate) enum Msg {
     NameChanged(Event),
     UpdateName(Option<String>),
     UpdateNameResult(Result<Packet<api::Update>, ws::Error>),
+    RadiusChanged(Event),
+    UpdateRadius(f32),
+    UpdateRadiusResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
@@ -48,6 +53,7 @@ pub(crate) struct ObjectSettings {
     image: State<Option<api::Id>>,
     color: State<Option<api::Color>>,
     name: State<Option<String>>,
+    token_radius: State<f32>,
     images: Vec<api::Image>,
     crop_source_url: Option<String>,
     crop_source_data: Option<(String, Vec<u8>)>,
@@ -64,6 +70,7 @@ pub(crate) struct ObjectSettings {
     _delete_image: ws::Request,
     _select_color: ws::Request,
     _update_name: ws::Request,
+    _update_radius: ws::Request,
     _local_update_listener: ws::Listener,
 }
 
@@ -99,6 +106,7 @@ impl Component for ObjectSettings {
             image: State::new(None),
             color: State::new(None),
             name: State::new(None),
+            token_radius: State::new(0.25),
             images: Vec::new(),
             crop_source_url: None,
             crop_source_data: None,
@@ -115,6 +123,7 @@ impl Component for ObjectSettings {
             _delete_image: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
+            _update_radius: ws::Request::new(),
             _local_update_listener,
         };
 
@@ -163,9 +172,9 @@ impl Component for ObjectSettings {
             <>
             <div id="content" class="row">
                 <div class="col-8 rows">
-                    <h2>{"Name"}</h2>
+                    <section class="input-group">
+                        <label for="avatar-name">{"Name:"}</label>
 
-                    <section>
                         <input
                             id="avatar-name"
                             type="text"
@@ -175,16 +184,44 @@ impl Component for ObjectSettings {
                             />
                     </section>
 
-                    <h2>{"Image"}</h2>
+                    <section class="input-group">
+                        <label for="avatar-color">
+                            {"Color:"}
+                            <span class="color-preview" style={format!("--color: {}", color.to_css_string())} />
+                        </label>
+
+                        <input
+                            id="avatar-color"
+                            class="hidden"
+                            type="color"
+                            value={color.to_css_string()}
+                            onchange={ctx.link().callback(Msg::ColorChanged)}
+                            />
+                    </section>
+
+                    <section class="input-group">
+                        <label for="avatar-radius">{"Radius:"}</label>
+
+                        <input
+                            id="avatar-radius"
+                            type="number"
+                            min="0.05"
+                            max="10"
+                            step="0.05"
+                            value={format!("{}", *self.token_radius)}
+                            onchange={ctx.link().callback(Msg::RadiusChanged)}
+                            />
+                    </section>
+
+                    <div class="gallery">
+                        {for images}
+                    </div>
 
                     <section>
-                        <div class="btn-group">
-                            <label for="avatar-file"
-                                class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}
-                                disabled={self.image_uploading}>
-                                {"Upload image"}
-                            </label>
-                        </div>
+                        <label for="avatar-file" class={classes!("btn", "sm", "primary", self.image_uploading.then_some("disabled"))}>
+                            {"Upload Image"}
+                            <Icon name="arrow-up-on-square" />
+                        </label>
 
                         <input
                             id="avatar-file"
@@ -195,27 +232,9 @@ impl Component for ObjectSettings {
                             onchange={ctx.link().callback(Msg::AvatarImageSelected)}
                             />
                     </section>
-
-                    <div class="gallery">
-                        {for images}
-                    </div>
-
-                    <h2>{"Color"}</h2>
-
-                    <section class="color-picker">
-                        <label for="avatar-color">{"Select Color:"}</label>
-                        <input
-                            id="avatar-color"
-                            type="color"
-                            value={color.to_css_string()}
-                            onchange={ctx.link().callback(Msg::ColorChanged)}
-                            />
-                    </section>
                 </div>
 
                 <div class="col-4 rows">
-                    <h2>{"Preview"}</h2>
-
                     <section class="avatar-preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
                     </section>
@@ -440,6 +459,41 @@ impl ObjectSettings {
                 _ = result.decode()?;
                 Ok(false)
             }
+            Msg::RadiusChanged(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                if let Ok(v) = input.value().parse::<f32>() {
+                    let v = v.clamp(0.05, 10.0);
+                    ctx.link().send_message(Msg::UpdateRadius(v));
+                }
+                Ok(false)
+            }
+            Msg::UpdateRadius(radius) => {
+                *self.token_radius = radius;
+
+                self._update_radius = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateRequest {
+                        object_id: ctx.props().id,
+                        key: Key::TOKEN_RADIUS,
+                        value: Value::from(radius),
+                    })
+                    .on_packet(ctx.link().callback(Msg::UpdateRadiusResult))
+                    .send();
+
+                Ok(true)
+            }
+            Msg::UpdateRadiusResult(result) => {
+                let result = result?;
+                _ = result.decode()?;
+                Ok(false)
+            }
             Msg::ImageLoaded(msg) => {
                 self.preview_images.update(msg);
                 Ok(true)
@@ -484,6 +538,7 @@ impl ObjectSettings {
             }
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
+            Key::TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.25)),
             _ => false,
         }
     }
@@ -516,9 +571,14 @@ impl ObjectSettings {
             player: true,
             selected: false,
             hidden: false,
+            token_radius: 1.0,
         };
 
-        render::draw_avatar_preview(&cx, &canvas, &avatar, |id| {
+        let t = ViewTransform::preview(&canvas);
+
+        cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
+
+        render::draw_avatar_token(&cx, &t, &avatar, None, |id| {
             self.preview_images.get(id).cloned()
         })?;
 
