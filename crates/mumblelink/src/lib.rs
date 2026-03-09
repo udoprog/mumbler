@@ -213,9 +213,10 @@ const _: () = const {
 
 /// A mumble link connection.
 pub struct Link {
-    map: Option<imp::Map<Memory>>,
+    map: imp::Map<Memory>,
     local: Body,
     changes: u8,
+    enabled: bool,
 }
 
 impl Link {
@@ -232,25 +233,17 @@ impl Link {
         };
 
         Ok(Self {
-            map: Some(map),
+            map,
             local: Body::zero(),
             changes: VERSION_FLAG,
+            enabled: true,
         })
-    }
-
-    /// Cosntruct a disabled link.
-    pub fn disabled() -> Self {
-        Self {
-            map: None,
-            local: Body::zero(),
-            changes: 0,
-        }
     }
 
     /// Reconnect the link, reopening the shared memory if it was lost.
     pub fn reconnect(&mut self) -> io::Result<()> {
-        self.disable();
-        self.map = Some(imp::Map::<Memory>::new()?);
+        self.map = imp::Map::<Memory>::new()?;
+        self.changes = 0xff;
         Ok(())
     }
 
@@ -344,9 +337,9 @@ impl Link {
     /// This must be called fairly periodically to keep the link alive, even if
     /// there are no updates. A sleep of 100ms is likely sufficient.
     pub fn update(&mut self) {
-        let Some(map) = &mut self.map else {
+        if !self.enabled {
             return;
-        };
+        }
 
         let changes = mem::take(&mut self.changes);
 
@@ -354,12 +347,12 @@ impl Link {
             if changes == 0xff {
                 // Write everything.
                 unsafe {
-                    ptr::addr_of_mut!((*map.ptr.as_ptr()).body).write_volatile(self.local);
+                    ptr::addr_of_mut!((*self.map.ptr.as_ptr()).body).write_volatile(self.local);
                 }
             } else {
                 // Only write to the parts that have changed.
                 unsafe {
-                    let body = ptr::addr_of_mut!((*map.ptr.as_ptr()).body);
+                    let body = ptr::addr_of_mut!((*self.map.ptr.as_ptr()).body);
 
                     if changes & AVATAR_FLAG != 0 {
                         ptr::addr_of_mut!((*body).avatar).write_volatile(self.local.avatar);
@@ -393,40 +386,40 @@ impl Link {
 
         unsafe {
             if changes & VERSION_FLAG != 0 {
-                (*ptr::addr_of!((*map.ptr.as_ptr()).header.ui_version)).store(2, Ordering::SeqCst);
+                self.set_ui_version(2);
             }
 
             // Atomically increment tick.
-            let ui_tick = ptr::addr_of_mut!((*map.ptr.as_ptr()).header.ui_tick);
+            let ui_tick = ptr::addr_of_mut!((*self.map.ptr.as_ptr()).header.ui_tick);
             (*ui_tick).fetch_add(1, Ordering::SeqCst);
         }
     }
 
-    /// Get the status of the shared link. See `Status` for details.
-    pub fn is_active(&self) -> bool {
-        self.map.is_some()
+    /// Check if the mumble link is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
-    /// Deactivate the shared link effectively disabling it.
-    ///
-    /// Should be called when `update()` will not be called again for a while,
-    /// such as if the player is no longer in-game.
+    /// Force the link to be disabled.
     pub fn disable(&mut self) {
-        if let Some(map) = self.map.take() {
-            unsafe {
-                // Zero out non-atomic fields of shared memory.
-                Body::zero_non_atomic(ptr::addr_of_mut!((*map.ptr.as_ptr()).body));
+        if self.enabled {
+            self.set_ui_version(0);
+        }
 
-                // Atomically update ui_version to try and ensure that updates
-                // to those fields are not missed by other link clients.
-                //
-                // Preferably these should be using a seqlock.
-                (*ptr::addr_of!((*map.ptr.as_ptr()).header.ui_version)).store(0, Ordering::SeqCst);
-                (*ptr::addr_of!((*map.ptr.as_ptr()).header.ui_tick)).store(0, Ordering::SeqCst);
-            }
+        self.enabled = false;
+    }
 
-            // A deactivation causes the remote context to be fully out of sync.
-            self.changes = 0;
+    /// Force the link to be enabled.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+        self.changes |= VERSION_FLAG;
+    }
+
+    /// Set the UI version. If set to 0 this effectively disables the link.
+    fn set_ui_version(&mut self, version: u32) {
+        unsafe {
+            (*ptr::addr_of!((*self.map.ptr.as_ptr()).header.ui_version))
+                .store(version, Ordering::SeqCst);
         }
     }
 }

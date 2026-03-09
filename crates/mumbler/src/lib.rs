@@ -24,21 +24,20 @@ mod tls;
 mod tls;
 
 use core::pin::pin;
-use std::net::SocketAddr;
 
 use anyhow::{Result, bail};
 use tokio::net::TcpListener;
 
 use self::web::default_bind;
 
-pub async fn run(b: Backend, bundle: bool, bind: &str) -> Result<()> {
-    let addr: SocketAddr = default_bind(bundle, bind).parse()?;
+pub async fn run(b: Backend, dev: bool, bind: &str) -> Result<()> {
+    let (host, port) = default_bind(dev, bind)?;
 
-    tracing::info!("Listening on http://{addr}");
-    webbrowser::open(&format!("http://{addr}"))?;
+    tracing::info!("Listening on http://{host}:{port}");
+    webbrowser::open(&format!("http://{host}:{port}"))?;
 
-    let listener = TcpListener::bind(addr).await?;
-    let mut future = pin!(web::setup(listener, b, bundle)?);
+    let listener = TcpListener::bind((host, port)).await?;
+    let mut future = pin!(web::setup(listener, b, dev)?);
 
     tokio::select! {
         result = future.as_mut() => {

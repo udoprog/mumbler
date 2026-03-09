@@ -29,7 +29,7 @@ struct Opts {
     /// Work as development server.
     #[arg(long)]
     dev: bool,
-    #[arg(long, default_value = "127.0.0.1:41114")]
+    #[arg(long, default_value = "127.0.0.1")]
     bind: String,
     #[arg(long)]
     connect: Option<String>,
@@ -89,7 +89,7 @@ pub fn main() -> Result<()> {
         tokio::try_join!(
             client::managed(b.clone(), opts.connect.as_deref()),
             mumblelink::managed(b.clone()),
-            mumbler::run(b, !opts.dev, &opts.bind),
+            mumbler::run(b, opts.dev, &opts.bind),
         )?;
 
         Ok(())

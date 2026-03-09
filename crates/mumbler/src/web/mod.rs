@@ -6,6 +6,7 @@ mod nonbundle;
 mod ws;
 
 use crate::backend::Backend;
+use crate::remote::DEFAULT_PORT;
 
 /// Error type for web module.
 pub struct WebError {
@@ -49,7 +50,7 @@ impl From<anyhow::Error> for WebError {
 use std::future::Future;
 use std::net::SocketAddr;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use api::{Id, Key, Properties, Value};
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
@@ -60,37 +61,38 @@ use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
-pub(crate) fn default_bind(bundle: bool, bind: &str) -> &str {
-    #[cfg(feature = "bundle")]
-    if bundle {
-        return bind;
+pub(crate) fn default_bind(dev: bool, bind: &str) -> Result<(&str, u16)> {
+    let port: u16;
+
+    let host = if let Some((host, port_s)) = bind.rsplit_once(':') {
+        port = port_s.parse().context("port number")?;
+        host
+    } else {
+        port = if dev { 8080 } else { DEFAULT_PORT };
+        bind
+    };
+
+    if dev {
+        return Ok(("127.0.0.1", port));
     }
 
-    #[cfg(not(feature = "bundle"))]
-    {
-        _ = bundle;
-        _ = bind;
-    }
-
-    "127.0.0.1:44614"
+    Ok((host, port))
 }
 
 pub(crate) fn setup(
     listener: TcpListener,
     backend: Backend,
-    bundle: bool,
+    dev: bool,
 ) -> Result<impl Future<Output = Result<()>>> {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::any())
         .allow_methods(AllowMethods::any());
 
-    let app = match bundle {
+    let app = match dev {
+        true => self::nonbundle::router,
         #[cfg(feature = "bundle")]
-        true => self::bundle::router,
+        _ => self::bundle::router,
         #[cfg(not(feature = "bundle"))]
-        true => {
-            anyhow::bail!("cannot setup, bundle feature not enabled and `--dev` is not specified")
-        }
         _ => self::nonbundle::router,
     };
 
@@ -219,6 +221,56 @@ async fn get_object_settings(
     Ok(api::GetObjectSettingsResponse { object, images })
 }
 
+async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {
+    match key {
+        Key::TRANSFORM => 'done: {
+            let Some(transform) = value.as_transform() else {
+                break 'done;
+            };
+
+            if backend.mumble_object() != Some(object_id) {
+                break 'done;
+            };
+
+            let transform = if backend.is_hidden(object_id) {
+                None
+            } else {
+                Some(transform)
+            };
+
+            backend.set_mumblelink_transform(transform).await;
+        }
+        Key::HIDDEN => {
+            let hidden = value.as_bool().unwrap_or_default();
+            backend.set_hidden(object_id, hidden);
+
+            'out: {
+                if backend.mumble_object() != Some(object_id) {
+                    break 'out;
+                }
+
+                let state = backend.client_state().await;
+
+                let Some(object) = state.objects.get(&object_id) else {
+                    return Ok(());
+                };
+
+                let transform = if hidden {
+                    None
+                } else {
+                    object.properties.get(Key::TRANSFORM).as_transform()
+                };
+
+                backend.set_mumblelink_transform(transform).await;
+            }
+        }
+        _ => {}
+    }
+
+    backend.set_client(object_id, key, value.clone()).await;
+    Ok(())
+}
+
 async fn update_config(
     backend: &Backend,
     values: impl IntoIterator<Item = (Key, Value)>,
@@ -235,7 +287,33 @@ async fn update_config(
                 restart_client = true;
             }
             Key::MUMBLE_OBJECT => {
-                backend.store_mumble_object(value.as_id());
+                let mumble_object = value.as_id();
+                backend.store_mumble_object(mumble_object);
+
+                let transform = 'transform: {
+                    let Some(object_id) = mumble_object else {
+                        break 'transform None;
+                    };
+
+                    let state = backend.client_state().await;
+
+                    let Some(object) = state.objects.get(&object_id) else {
+                        break 'transform None;
+                    };
+
+                    if object
+                        .properties
+                        .get(Key::HIDDEN)
+                        .as_bool()
+                        .unwrap_or_default()
+                    {
+                        None
+                    } else {
+                        object.properties.get(Key::TRANSFORM).as_transform()
+                    }
+                };
+
+                backend.set_mumblelink_transform(transform).await;
             }
             _ => {}
         }

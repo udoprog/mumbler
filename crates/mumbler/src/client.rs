@@ -13,7 +13,7 @@ use crate::backend::{BackendEvent, ClientState};
 use crate::remote::api::{
     Event, JoinBody, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PongBody, UpdatedPeer,
 };
-use crate::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
+use crate::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 
 const COMPONENT: &str = "remote-client";
 
@@ -181,7 +181,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         port = port_s.parse::<u16>().context("invalid port number")?;
         host
     } else {
-        port = if tls { REMOTE_TLS_PORT } else { REMOTE_PORT };
+        port = if tls { DEFAULT_TLS_PORT } else { DEFAULT_PORT };
         connect.as_str()
     };
 

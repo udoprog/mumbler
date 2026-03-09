@@ -60,24 +60,18 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UpdateRequest>()
                     .context("missing request")?;
 
+                super::update(
+                    &self.backend,
+                    request.object_id,
+                    request.key,
+                    &request.value,
+                )
+                .await?;
+
                 self.database_updates
                     .insert((request.object_id, request.key), request.value.clone());
 
                 self.database_updates_notify.notify_one();
-
-                if request.key == Key::TRANSFORM {
-                    if let Some(transform) = request.value.as_transform() {
-                        let mumble_id = self.backend.mumble_object();
-
-                        if mumble_id.is_none() || mumble_id == Some(request.object_id) {
-                            self.backend.set_mumblelink_transform(transform).await;
-                        }
-                    }
-                }
-
-                self.backend
-                    .set_client(request.object_id, request.key, request.value.clone())
-                    .await;
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {

@@ -18,19 +18,45 @@ const UPDATES_PER_SECOND: u64 = 20;
 pub(crate) async fn run(b: Backend) -> Result<()> {
     let mut link = Link::new().context("creating link")?;
 
+    let transform = 'transform: {
+        let Some(id) = b.mumble_object() else {
+            break 'transform None;
+        };
+
+        let state = b.client_state().await;
+
+        let Some(object) = state.objects.get(&id) else {
+            break 'transform None;
+        };
+
+        if object
+            .properties
+            .get(Key::HIDDEN)
+            .as_bool()
+            .unwrap_or_default()
+        {
+            None
+        } else {
+            object.properties.get(Key::TRANSFORM).as_transform()
+        }
+    };
+
     let mut pos = Position::FORWARD;
     pos.position = [0., 0., 0.];
 
-    let setup_link = |link: &mut Link, pos| {
-        link.set_identity("mumbler");
-        link.set_context(b"");
-        link.set_name("Mumbler");
-        link.set_description("Test link from mumbler");
+    link.set_identity("mumbler");
+    link.set_context(b"");
+    link.set_name("Mumbler");
+    link.set_description("Test link from mumbler");
+
+    if let Some(transform) = transform {
+        pos.position = transform.position.as_array();
+        pos.front = transform.front.as_array();
         link.set_avatar(pos);
         link.set_camera(pos);
-    };
-
-    setup_link(&mut link, pos);
+    } else {
+        link.disable();
+    }
 
     let mut update_interval = time::interval(Duration::from_millis(1000 / UPDATES_PER_SECOND));
     let mut update_all_interval = time::interval(Duration::from_secs(5));
@@ -45,10 +71,16 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
             }
             () = b.mumblelink_wait() => {
                 let state = b.mumblelink_state().await;
-                pos.position = state.transform.position.as_array();
-                pos.front = state.transform.front.as_array();
-                link.set_avatar(pos);
-                link.set_camera(pos);
+
+                if let Some(transform) = state.transform {
+                    pos.position = transform.position.as_array();
+                    pos.front = transform.front.as_array();
+                    link.set_avatar(pos);
+                    link.set_camera(pos);
+                    link.enable();
+                } else {
+                    link.disable();
+                }
             }
         }
     }

@@ -34,7 +34,7 @@ image = "0.25.9"
 webbrowser = "1.1.0"
 
 musli-core = { version = "0.1.4", default-features = false }
-parking_lot = { version = "0.12.5" }
+parking_lot = "0.12.5"
 bstr = { version = "1.3.0", default-features = false }
 async-fuse = "1.0.1"
 tokio-rustls = { version = "0.26.4", optional = true }

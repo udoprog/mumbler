@@ -6,7 +6,7 @@ use core::pin::pin;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mumbler::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
-use mumbler::remote::{Client, Peer, REMOTE_PORT, REMOTE_TLS_PORT};
+use mumbler::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 use tokio::net::TcpStream;
 use tokio::time::{self, Duration, Instant};
 use tracing::Level;
@@ -49,9 +49,9 @@ async fn main() -> Result<()> {
         host
     } else {
         port = if opts.tls {
-            REMOTE_TLS_PORT
+            DEFAULT_TLS_PORT
         } else {
-            REMOTE_PORT
+            DEFAULT_PORT
         };
         &opts.connect
     };

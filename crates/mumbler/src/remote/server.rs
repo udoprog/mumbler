@@ -20,7 +20,7 @@ use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
 use crate::remote::api::{AddObjectBody, RemoveObjectBody, UpdatePeer};
-use crate::remote::{REMOTE_PORT, REMOTE_TLS_PORT};
+use crate::remote::{DEFAULT_PORT, DEFAULT_TLS_PORT};
 use crate::tls;
 
 use super::api::{ConnectBody, Event, PingBody};
@@ -126,9 +126,9 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
             Some(port) => port,
             None => {
                 if c.tls {
-                    REMOTE_TLS_PORT
+                    DEFAULT_TLS_PORT
                 } else {
-                    REMOTE_PORT
+                    DEFAULT_PORT
                 }
             }
         };

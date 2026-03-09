@@ -8,6 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use api::Properties;
 use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
+use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -109,7 +110,7 @@ impl Images {
 
 /// State communicated to the mumblelink plugin.
 pub(crate) struct MumblelinkState {
-    pub(crate) transform: Transform,
+    pub(crate) transform: Option<Transform>,
 }
 
 struct Inner {
@@ -125,6 +126,7 @@ struct Inner {
     images: RwLock<Images>,
     broadcast: Sender<BackendEvent>,
     mumble_object: AtomicId,
+    hidden: BlockingRwLock<HashSet<Id>>,
 }
 
 /// The backend of the application, containing the database and other shared state.
@@ -141,11 +143,21 @@ impl Backend {
         tracing::debug!("Loading objects from database");
 
         let mut objects = HashMap::new();
+        let mut hidden = HashSet::new();
 
         for id in database.objects(api::Type::AVATAR).await? {
             let mut properties = Properties::new();
 
             for (key, value) in database.properties(id).await? {
+                match key {
+                    Key::HIDDEN => {
+                        if value.as_bool().unwrap_or_default() {
+                            hidden.insert(id);
+                        }
+                    }
+                    _ => {}
+                }
+
                 properties.insert(key, value);
             }
 
@@ -178,13 +190,12 @@ impl Backend {
                 }),
                 client_notify: Notify::new(),
                 client_restart_notify: Notify::new(),
-                mumblelink_state: Mutex::new(MumblelinkState {
-                    transform: Transform::origin(),
-                }),
+                mumblelink_state: Mutex::new(MumblelinkState { transform: None }),
                 mumblelink_notify: Notify::new(),
                 mumblelink_restart_notify: Notify::new(),
                 broadcast,
                 mumble_object: AtomicId::new(mumble_object),
+                hidden: BlockingRwLock::new(hidden),
             }),
         })
     }
@@ -202,6 +213,20 @@ impl Backend {
     /// Load the id of the object used to position mumble.
     pub(crate) fn mumble_object(&self) -> Option<Id> {
         self.inner.mumble_object.load()
+    }
+
+    /// Test if the given object is hidden.
+    pub(crate) fn is_hidden(&self, id: Id) -> bool {
+        self.inner.hidden.read().contains(&id)
+    }
+
+    /// Set whether the given object is hidden.
+    pub(crate) fn set_hidden(&self, id: Id, hidden: bool) {
+        if hidden {
+            self.inner.hidden.write().insert(id);
+        } else {
+            self.inner.hidden.write().remove(&id);
+        }
     }
 
     /// Set the id of the object used to position mumble.
@@ -278,7 +303,7 @@ impl Backend {
     }
 
     /// Set the transform for mumblelink.
-    pub(crate) async fn set_mumblelink_transform(&self, transform: Transform) {
+    pub(crate) async fn set_mumblelink_transform(&self, transform: Option<Transform>) {
         let mut state = self.inner.mumblelink_state.lock().await;
         state.transform = transform;
         self.inner.mumblelink_notify.notify_one();
@@ -344,7 +369,7 @@ impl Backend {
         // avoid dangling references.
         if self.mumble_object() == Some(id) {
             self.store_mumble_object(None);
-            self.set_mumblelink_transform(Transform::origin()).await;
+            self.set_mumblelink_transform(None).await;
         }
 
         self.db().delete_object(id, Type::AVATAR).await?;

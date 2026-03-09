@@ -44,7 +44,7 @@ async fn main() -> io::Result<()> {
 
     loop {
         if status {
-            println!("# active: {}", link.is_active());
+            println!("# active: {}", link.is_enabled());
             status = false;
         }
 

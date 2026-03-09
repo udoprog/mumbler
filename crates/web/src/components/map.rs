@@ -268,8 +268,8 @@ pub(crate) enum Msg {
     ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
     CloseObjectSettings,
-    SetMumbleObject(Id),
-    SetMumbleObjectResult(Result<Packet<api::UpdateConfig>, ws::Error>),
+    ToggleMumbleObject(Id),
+    ToggleMumbleObjectResult(Result<Packet<api::UpdateConfig>, ws::Error>),
     ToggleHidden(Id),
     ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
     SetLog(log::Log),
@@ -519,10 +519,10 @@ impl Component for Map {
                                             <Icon name="x-mark" />
                                         </button>
                                         <button class={classes!("btn", "sm", "square", "object-list-item-action", is_mumble.then_some("info"), is_mumble.then_some("active"))}
-                                            title="Set as MumbleLink source"
+                                            title="Toggle as MumbleLink Source"
                                             onclick={ctx.link().callback(move |e: MouseEvent| {
                                                 e.stop_propagation();
-                                                Msg::SetMumbleObject(object_id)
+                                                Msg::ToggleMumbleObject(object_id)
                                             })}>
                                             <Icon name="mumble" />
                                         </button>
@@ -586,20 +586,26 @@ impl Map {
                 self.open_settings = None;
                 Ok(true)
             }
-            Msg::SetMumbleObject(id) => {
-                self.mumble_object = Some(id);
+            Msg::ToggleMumbleObject(id) => {
+                if self.mumble_object == Some(id) {
+                    self.mumble_object = None;
+                } else {
+                    self.mumble_object = Some(id);
+                }
+
                 self._set_mumble_object = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
+                        values: vec![(Key::MUMBLE_OBJECT, Value::from(self.mumble_object))],
                     })
-                    .on_packet(ctx.link().callback(Msg::SetMumbleObjectResult))
+                    .on_packet(ctx.link().callback(Msg::ToggleMumbleObjectResult))
                     .send();
+
                 Ok(true)
             }
-            Msg::SetMumbleObjectResult(result) => {
+            Msg::ToggleMumbleObjectResult(result) => {
                 result?;
                 Ok(false)
             }
