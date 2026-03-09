@@ -251,8 +251,7 @@ pub(crate) enum Msg {
     ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    TransformUpdated(Result<Packet<api::Update>, ws::Error>),
-    LookAtUpdated(Result<Packet<api::Update>, ws::Error>),
+    UpdateResult(Result<Packet<api::Update>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateConfig>, ws::Error>),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     StateChanged(ws::State),
@@ -866,12 +865,7 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::TransformUpdated(body) => {
-                let body = body?;
-                _ = body.decode()?;
-                Ok(false)
-            }
-            Msg::LookAtUpdated(body) => {
+            Msg::UpdateResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(false)
@@ -1126,18 +1120,7 @@ impl Map {
                 continue;
             };
 
-            let req = ctx
-                .props()
-                .ws
-                .request()
-                .body(api::UpdateRequest {
-                    object_id: id,
-                    key: Key::TRANSFORM,
-                    value: Value::from(*o.data.transform),
-                })
-                .on_packet(ctx.link().callback(Msg::TransformUpdated))
-                .send();
-
+            let req = send_update(ctx, id, Key::TRANSFORM, *o.data.transform);
             self.transform_requests.insert(id, req);
         }
     }
@@ -1153,18 +1136,7 @@ impl Map {
                 continue;
             };
 
-            let req = ctx
-                .props()
-                .ws
-                .request()
-                .body(api::UpdateRequest {
-                    object_id: id,
-                    key: Key::LOOK_AT,
-                    value: Value::from(*o.data.look_at),
-                })
-                .on_packet(ctx.link().callback(Msg::LookAtUpdated))
-                .send();
-
+            let req = send_update(ctx, id, Key::LOOK_AT, *o.data.look_at);
             self.look_at_requests.insert(id, req);
         }
     }
@@ -1496,4 +1468,22 @@ impl Map {
 
         Ok(())
     }
+}
+
+fn send_update(
+    ctx: &Context<Map>,
+    object_id: Id,
+    key: Key,
+    value: impl Into<Value>,
+) -> ws::Request {
+    ctx.props()
+        .ws
+        .request()
+        .body(api::UpdateRequest {
+            object_id,
+            key,
+            value: value.into(),
+        })
+        .on_packet(ctx.link().callback(Msg::UpdateResult))
+        .send()
 }

@@ -25,18 +25,14 @@ pub(crate) enum Msg {
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     SelectImage(api::Id),
-    SelectImageResult(Result<Packet<api::Update>, ws::Error>),
     DeleteImage(api::Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     ColorChanged(Event),
     SelectColor(api::Color),
-    SelectColorResult(Result<Packet<api::Update>, ws::Error>),
     NameChanged(Event),
     UpdateName(Option<String>),
-    UpdateNameResult(Result<Packet<api::Update>, ws::Error>),
     RadiusChanged(Event),
-    UpdateRadius(f32),
-    UpdateRadiusResult(Result<Packet<api::Update>, ws::Error>),
+    UpdateResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
@@ -356,26 +352,10 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::SelectImage(id) => {
-                self._select_image = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: ctx.props().id,
-                        key: Key::IMAGE_ID,
-                        value: Value::from(id),
-                    })
-                    .on_packet(ctx.link().callback(Msg::SelectImageResult))
-                    .send();
-
                 *self.image = Some(id);
                 self.load_preview_image(ctx);
+                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
-            }
-            Msg::SelectImageResult(result) => {
-                let result = result?;
-                _ = result.decode()?;
-                Ok(false)
             }
             Msg::DeleteImage(id) => {
                 self._delete_image = ctx
@@ -406,25 +386,9 @@ impl ObjectSettings {
                 Ok(false)
             }
             Msg::SelectColor(color) => {
-                self._select_color = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: ctx.props().id,
-                        key: Key::COLOR,
-                        value: Value::from(color),
-                    })
-                    .on_packet(ctx.link().callback(Msg::SelectColorResult))
-                    .send();
-
                 *self.color = Some(color);
+                self._select_color = send_update(ctx, Key::COLOR, color);
                 Ok(true)
-            }
-            Msg::SelectColorResult(result) => {
-                let result = result?;
-                _ = result.decode()?;
-                Ok(false)
             }
             Msg::NameChanged(e) => {
                 let input = e
@@ -440,24 +404,8 @@ impl ObjectSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: ctx.props().id,
-                        key: Key::NAME,
-                        value: Value::from(name.clone()),
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateNameResult))
-                    .send();
-
+                self._update_name = send_update(ctx, Key::NAME, name);
                 Ok(true)
-            }
-            Msg::UpdateNameResult(result) => {
-                let result = result?;
-                _ = result.decode()?;
-                Ok(false)
             }
             Msg::RadiusChanged(e) => {
                 let input = e
@@ -466,33 +414,18 @@ impl ObjectSettings {
                     .dyn_into::<HtmlInputElement>()
                     .map_err(|_| "target is not an input element")?;
 
-                if let Ok(v) = input.value().parse::<f32>() {
-                    let v = v.clamp(0.05, 10.0);
-                    ctx.link().send_message(Msg::UpdateRadius(v));
-                }
-                Ok(false)
-            }
-            Msg::UpdateRadius(radius) => {
-                *self.token_radius = radius;
+                let value = 'done: {
+                    let Ok(radius) = input.value().parse::<f32>() else {
+                        break 'done false;
+                    };
 
-                self._update_radius = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: ctx.props().id,
-                        key: Key::TOKEN_RADIUS,
-                        value: Value::from(radius),
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateRadiusResult))
-                    .send();
+                    let radius = radius.clamp(0.05, 10.0);
+                    *self.token_radius = radius;
+                    self._update_radius = send_update(ctx, Key::TOKEN_RADIUS, radius);
+                    true
+                };
 
-                Ok(true)
-            }
-            Msg::UpdateRadiusResult(result) => {
-                let result = result?;
-                _ = result.decode()?;
-                Ok(false)
+                Ok(value)
             }
             Msg::ImageLoaded(msg) => {
                 self.preview_images.update(msg);
@@ -500,6 +433,11 @@ impl ObjectSettings {
             }
             Msg::SetLog(log) => {
                 self.log = log;
+                Ok(false)
+            }
+            Msg::UpdateResult(result) => {
+                let result = result?;
+                _ = result.decode()?;
                 Ok(false)
             }
             Msg::LocalUpdate(body) => {
@@ -584,4 +522,17 @@ impl ObjectSettings {
 
         Ok(())
     }
+}
+
+fn send_update(ctx: &Context<ObjectSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+    ctx.props()
+        .ws
+        .request()
+        .body(api::UpdateRequest {
+            object_id: ctx.props().id,
+            key,
+            value: value.into(),
+        })
+        .on_packet(ctx.link().callback(Msg::UpdateResult))
+        .send()
 }
