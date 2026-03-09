@@ -83,6 +83,8 @@ keys! {
     MUMBLE_FOLLOW_SELECTION: Boolean = 16,
     /// Per-object token radius.
     TOKEN_RADIUS: Float = 17,
+    /// Per-object movement speed.
+    SPEED: Float = 18,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

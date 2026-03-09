@@ -32,6 +32,7 @@ pub(crate) enum Msg {
     NameChanged(Event),
     UpdateName(Option<String>),
     RadiusChanged(Event),
+    SpeedChanged(Event),
     UpdateResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
@@ -50,6 +51,7 @@ pub(crate) struct ObjectSettings {
     color: State<Option<api::Color>>,
     name: State<Option<String>>,
     token_radius: State<f32>,
+    speed: State<f32>,
     images: Vec<api::Image>,
     crop_source_url: Option<String>,
     crop_source_data: Option<(String, Vec<u8>)>,
@@ -103,6 +105,7 @@ impl Component for ObjectSettings {
             color: State::new(None),
             name: State::new(None),
             token_radius: State::new(0.25),
+            speed: State::new(5.0),
             images: Vec::new(),
             crop_source_url: None,
             crop_source_data: None,
@@ -206,6 +209,20 @@ impl Component for ObjectSettings {
                             step="0.05"
                             value={format!("{}", *self.token_radius)}
                             onchange={ctx.link().callback(Msg::RadiusChanged)}
+                            />
+                    </section>
+
+                    <section class="input-group">
+                        <label for="avatar-speed">{"Speed:"}</label>
+
+                        <input
+                            id="avatar-speed"
+                            type="number"
+                            min="0.5"
+                            max="100"
+                            step="0.5"
+                            value={format!("{}", *self.speed)}
+                            onchange={ctx.link().callback(Msg::SpeedChanged)}
                             />
                     </section>
 
@@ -427,6 +444,26 @@ impl ObjectSettings {
 
                 Ok(value)
             }
+            Msg::SpeedChanged(e) => {
+                let input = e
+                    .target()
+                    .ok_or("no target")?
+                    .dyn_into::<HtmlInputElement>()
+                    .map_err(|_| "target is not an input element")?;
+
+                let value = 'done: {
+                    let Ok(speed) = input.value().parse::<f32>() else {
+                        break 'done false;
+                    };
+
+                    let speed = speed.clamp(0.5, 100.0);
+                    *self.speed = speed;
+                    self._update_radius = send_update(ctx, Key::SPEED, speed);
+                    true
+                };
+
+                Ok(value)
+            }
             Msg::ImageLoaded(msg) => {
                 self.preview_images.update(msg);
                 Ok(true)
@@ -477,6 +514,7 @@ impl ObjectSettings {
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
             Key::TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.25)),
+            Key::SPEED => self.speed.update(value.as_float().unwrap_or(5.0)),
             _ => false,
         }
     }

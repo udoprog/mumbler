@@ -173,13 +173,9 @@ fn draw_hidden_badge(
 
     cx.save();
 
-    cx.set_fill_style_str("rgba(20,20,20,0.85)");
-    cx.begin_path();
-    cx.arc(bx, by, badge_r, 0.0, TAU)?;
-    cx.fill();
-
     let ew = badge_r * 0.75;
     let eh = badge_r * 0.45;
+
     cx.set_stroke_style_str("#e05252");
     cx.set_line_width(badge_r * 0.22);
     cx.begin_path();

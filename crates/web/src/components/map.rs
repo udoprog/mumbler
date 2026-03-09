@@ -27,7 +27,7 @@ use super::render::{self, RenderAvatar, ViewTransform};
 
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
-const MOVEMENT_SPEED: f32 = 5.0;
+const DEFAULT_SPEED: f32 = 5.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "Shift to look / Shift + Click to place eye";
@@ -126,6 +126,7 @@ pub(crate) struct ObjectData {
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
     pub(crate) token_radius: State<f32>,
+    pub(crate) speed: State<f32>,
 }
 
 impl ObjectData {
@@ -163,6 +164,13 @@ impl ObjectData {
                     .as_float()
                     .unwrap_or(DEFAULT_TOKEN_RADIUS),
             ),
+            speed: State::new(
+                remote
+                    .properties
+                    .get(Key::SPEED)
+                    .as_float()
+                    .unwrap_or(DEFAULT_SPEED),
+            ),
         }
     }
 
@@ -179,6 +187,7 @@ impl ObjectData {
             Key::TOKEN_RADIUS => self
                 .token_radius
                 .update(value.as_float().unwrap_or(DEFAULT_TOKEN_RADIUS)),
+            Key::SPEED => self.speed.update(value.as_float().unwrap_or(DEFAULT_SPEED)),
             _ => false,
         }
     }
@@ -1074,7 +1083,7 @@ impl Map {
                     break 'move_done;
                 }
 
-                let step = MOVEMENT_SPEED / ANIMATION_FPS as f32;
+                let step = *o.data.speed / ANIMATION_FPS as f32;
                 let move_distance = step.min(distance);
                 let ratio = move_distance / distance;
 
