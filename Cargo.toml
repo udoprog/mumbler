@@ -7,4 +7,4 @@ members = [
 
 [workspace.dependencies]
 musli-web = { version = "0.2.3", default-features = false }
-sqll = { version = "0.12.5" }
+sqll = { version = "0.12.5", features = ["bundled"] }
