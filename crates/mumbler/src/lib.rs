@@ -35,6 +35,7 @@ pub async fn run(b: Backend, bundle: bool, bind: &str) -> Result<()> {
     let addr: SocketAddr = default_bind(bundle, bind).parse()?;
 
     tracing::info!("Listening on http://{addr}");
+    webbrowser::open(&format!("http://{addr}"))?;
 
     let listener = TcpListener::bind(addr).await?;
     let mut future = pin!(web::setup(listener, b, bundle)?);

@@ -81,7 +81,7 @@ impl World {
 impl Default for World {
     fn default() -> Self {
         Self {
-            zoom: 10.0,
+            zoom: 2.0,
             pan: Pan::zero(),
             extent: Extent::arena(),
             token_radius: 0.5,
@@ -435,10 +435,12 @@ impl Component for Map {
         if let Some(o) = self.selected.and_then(|id| self.objects.get(&id)) {
             let p = o.data.transform.position;
             let f = o.data.transform.front;
+            let zoom = self.world.zoom;
 
             let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
             let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
-            pos = Some(html!(<div class="pre">{position}{" / "}{front}</div>))
+            let other = format!("ZOOM:{:.02}", zoom);
+            pos = Some(html!(<div class="pre">{position}{" / "}{front}{" / "}{other}</div>))
         } else {
             pos = None;
         }

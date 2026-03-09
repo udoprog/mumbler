@@ -30,6 +30,7 @@ relative-path = "2.0.1"
 tower-http = { version = "0.6.8", features = ["cors"] }
 rand = "0.10.0"
 image = "0.25.9"
+webbrowser = "1.1.0"
 
 musli-core = { version = "0.1.4", default-features = false }
 parking_lot = { version = "0.12.5" }

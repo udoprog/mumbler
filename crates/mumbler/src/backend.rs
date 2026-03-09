@@ -311,6 +311,7 @@ impl Backend {
 
         let mut properties = Properties::new();
         properties.insert(Key::NAME, Value::from("Anonymous Owlbear".to_string()));
+        properties.insert(Key::HIDDEN, Value::from(true));
 
         self.db().insert_object(id, Type::AVATAR).await?;
 
