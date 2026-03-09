@@ -1,3 +1,4 @@
+use api::{Key, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
@@ -7,13 +8,14 @@ use crate::error::Error;
 use crate::log;
 
 pub(crate) enum Msg {
-    GetMumbleStatus(Result<Packet<api::GetMumbleStatus>, ws::Error>),
     Restart,
     RestartResponse(Result<Packet<api::MumbleRestart>, ws::Error>),
     Toggle,
     ToggleResponse(Result<Packet<api::UpdateConfig>, ws::Error>),
     StateChanged(ws::State),
     LogUpdate(log::Log),
+    GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -30,6 +32,7 @@ pub(crate) struct MumbleStatus {
     _get_status: ws::Request,
     _restart_request: ws::Request,
     _toggle_request: ws::Request,
+    _config_update_listener: ws::Listener,
 }
 
 impl Component for MumbleStatus {
@@ -47,6 +50,11 @@ impl Component for MumbleStatus {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
+        let _config_update_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+
         let mut this = Self {
             enabled: false,
             log,
@@ -56,6 +64,7 @@ impl Component for MumbleStatus {
             _get_status: ws::Request::new(),
             _restart_request: ws::Request::new(),
             _toggle_request: ws::Request::new(),
+            _config_update_listener,
         };
 
         this.refresh(ctx);
@@ -113,12 +122,6 @@ impl Component for MumbleStatus {
 impl MumbleStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::GetMumbleStatus(result) => {
-                let packet = result?;
-                let response = packet.decode()?;
-                self.enabled = response.enabled;
-                Ok(true)
-            }
             Msg::Restart => {
                 if !matches!(self.state, ws::State::Open) {
                     return Ok(false);
@@ -146,20 +149,16 @@ impl MumbleStatus {
 
                 let new_enabled = !self.enabled;
                 let ws = ctx.props().ws.clone();
-                let callback = ctx.link().callback(Msg::ToggleResponse);
 
                 self._toggle_request = ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: Vec::from([(
-                            api::Key::MUMBLE_ENABLED,
-                            api::Value::from(new_enabled),
-                        )]),
+                        values: Vec::from([(Key::MUMBLE_ENABLED, Value::from(new_enabled))]),
+                        broadcast_self: true,
                     })
-                    .on_packet(callback)
+                    .on_packet(ctx.link().callback(Msg::ToggleResponse))
                     .send();
 
-                self.enabled = new_enabled;
                 Ok(true)
             }
             Msg::ToggleResponse(result) => {
@@ -176,7 +175,34 @@ impl MumbleStatus {
                 self.log = log;
                 Ok(false)
             }
+            Msg::GetConfig(result) => {
+                let packet = result?;
+                let response = packet.decode()?;
+
+                for (key, value) in response.iter() {
+                    self.update_config(key, value)?;
+                }
+
+                Ok(true)
+            }
+            Msg::ConfigUpdate(body) => {
+                let body = body?;
+                let body = body.decode()?;
+                self.update_config(body.key, &body.value)?;
+                Ok(true)
+            }
         }
+    }
+
+    fn update_config(&mut self, key: Key, value: &Value) -> Result<(), Error> {
+        match key {
+            Key::MUMBLE_ENABLED => {
+                self.enabled = value.as_bool().unwrap_or_default();
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     fn refresh(&mut self, ctx: &Context<Self>) {
@@ -185,8 +211,8 @@ impl MumbleStatus {
                 .props()
                 .ws
                 .request()
-                .body(api::GetMumbleStatusRequest)
-                .on_packet(ctx.link().callback(Msg::GetMumbleStatus))
+                .body(api::GetConfigRequest)
+                .on_packet(ctx.link().callback(Msg::GetConfig))
                 .send();
         }
     }

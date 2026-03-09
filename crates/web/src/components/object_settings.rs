@@ -32,6 +32,7 @@ pub(crate) enum Msg {
     UpdateNameResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
+    LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -42,7 +43,7 @@ pub(crate) struct Props {
 
 pub(crate) struct ObjectSettings {
     state: ws::State,
-    selected: Option<api::Id>,
+    image: Option<api::Id>,
     color: Option<api::Color>,
     name: Option<String>,
     images: Vec<api::Image>,
@@ -61,6 +62,7 @@ pub(crate) struct ObjectSettings {
     _delete_image: ws::Request,
     _select_color: ws::Request,
     _update_name: ws::Request,
+    _local_update_listener: ws::Listener,
 }
 
 impl From<ImageMessage> for Msg {
@@ -85,9 +87,14 @@ impl Component for ObjectSettings {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
+        let _local_update_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
+
         let mut this = Self {
             state,
-            selected: None,
+            image: None,
             color: None,
             name: None,
             images: Vec::new(),
@@ -106,6 +113,7 @@ impl Component for ObjectSettings {
             _delete_image: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
+            _local_update_listener,
         };
 
         this.refresh(ctx);
@@ -135,7 +143,7 @@ impl Component for ObjectSettings {
             let on_delete = ctx.link().callback(move |_: MouseEvent| Msg::DeleteImage(id));
             let classes = classes!(
                 "avatar",
-                (self.selected == Some(id)).then_some("selected"),
+                (self.image == Some(id)).then_some("selected"),
                 "clickable"
             );
 
@@ -249,8 +257,6 @@ impl ObjectSettings {
                 .body(api::GetObjectSettingsRequest { id: ctx.props().id })
                 .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                 .send();
-        } else {
-            self._list_settings = ws::Request::new();
         }
     }
 
@@ -336,19 +342,12 @@ impl ObjectSettings {
             Msg::GetObjectSettings(result) => {
                 let result = result?;
                 let response = result.decode()?;
-                self.images = response.images;
 
-                if let Some(object) = response.object {
-                    self.selected = object.properties.get(Key::IMAGE_ID).as_id();
-                    self.color = object.properties.get(Key::COLOR).as_color();
-                    self.name = object
-                        .properties
-                        .get(Key::NAME)
-                        .as_string()
-                        .map(str::to_owned)
+                for (key, value) in response.object.properties {
+                    self.update_property(ctx, key, value);
                 }
 
-                self.load_preview_image(ctx);
+                self.images = response.images;
                 Ok(true)
             }
             Msg::SelectImage(id) => {
@@ -365,7 +364,7 @@ impl ObjectSettings {
                     .on_packet(ctx.link().callback(Msg::SelectImageResult))
                     .send();
 
-                self.selected = Some(id);
+                self.image = Some(id);
                 self.load_preview_image(ctx);
                 Ok(true)
             }
@@ -450,7 +449,6 @@ impl ObjectSettings {
                     .on_packet(ctx.link().callback(Msg::UpdateNameResult))
                     .send();
 
-                self.name = name;
                 Ok(true)
             }
             Msg::UpdateNameResult(result) => {
@@ -466,13 +464,50 @@ impl ObjectSettings {
                 self.log = log;
                 Ok(false)
             }
+            Msg::LocalUpdate(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
+                match body {
+                    api::LocalUpdateBody::Update {
+                        object_id,
+                        key,
+                        value,
+                    } => {
+                        if object_id != ctx.props().id {
+                            return Ok(false);
+                        }
+
+                        self.update_property(ctx, key, value);
+                    }
+                    _ => {}
+                }
+
+                Ok(true)
+            }
+        }
+    }
+
+    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) {
+        match key {
+            Key::IMAGE_ID => {
+                self.image = value.as_id();
+                self.load_preview_image(ctx);
+            }
+            Key::COLOR => {
+                self.color = value.as_color();
+            }
+            Key::NAME => {
+                self.name = value.as_string().map(str::to_owned);
+            }
+            _ => {}
         }
     }
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
 
-        if let Some(id) = self.selected {
+        if let Some(id) = self.image {
             self.preview_images.load(ctx, id);
         }
     }
@@ -491,7 +526,7 @@ impl ObjectSettings {
         let avatar = render::RenderAvatar {
             transform: api::Transform::origin(),
             look_at: None,
-            image: self.selected,
+            image: self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             name: self.name.as_deref(),
             player: true,

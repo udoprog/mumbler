@@ -1,4 +1,5 @@
 #![allow(clippy::async_yields_async)]
+#![allow(clippy::single_match)]
 
 mod web;
 

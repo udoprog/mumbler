@@ -5,7 +5,7 @@ mod nonbundle;
 
 mod ws;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, BackendEvent, LocalConfigEvent};
 use crate::remote::DEFAULT_PORT;
 
 /// Error type for web module.
@@ -210,11 +210,12 @@ async fn get_object_settings(
 ) -> Result<api::GetObjectSettingsResponse> {
     let object = {
         let state = backend.client_state().await;
+        let object = state.objects.get(&request.id).context("object not found")?;
 
-        state.objects.get(&request.id).map(|o| api::RemoteObject {
+        api::RemoteObject {
             id: request.id,
-            properties: o.properties.clone(),
-        })
+            properties: object.properties.clone(),
+        }
     };
 
     let images = backend.db().list_images().await?;
@@ -274,6 +275,8 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
 async fn update_config(
     backend: &Backend,
     values: impl IntoIterator<Item = (Key, Value)>,
+    sender_id: Id,
+    broadcast_self: bool,
 ) -> Result<()> {
     let mut restart_mumblelink = false;
     let mut restart_client = false;
@@ -318,7 +321,13 @@ async fn update_config(
             _ => {}
         }
 
-        backend.db().set_config_value(key, value).await?;
+        backend.db().set_config_value(key, value.clone()).await?;
+
+        backend.broadcast(BackendEvent::ConfigUpdate(LocalConfigEvent {
+            sender_id,
+            broadcast_self,
+            body: api::ConfigUpdateBody { key, value },
+        }));
     }
 
     if restart_mumblelink {
@@ -330,25 +339,4 @@ async fn update_config(
     }
 
     Ok(())
-}
-
-async fn get_mumble_status(backend: &Backend) -> Result<api::GetMumbleStatusResponse> {
-    let enabled = backend
-        .db()
-        .config::<bool>(Key::MUMBLE_ENABLED)
-        .await?
-        .unwrap_or(false);
-
-    Ok(api::GetMumbleStatusResponse { enabled })
-}
-
-async fn get_remote_status(backend: &Backend) -> Result<api::GetRemoteStatusResponse> {
-    let enabled = backend
-        .db()
-        .config::<bool>(Key::REMOTE_ENABLED)
-        .await?
-        .unwrap_or(true);
-
-    let server = backend.db().config::<String>(Key::REMOTE_SERVER).await?;
-    Ok(api::GetRemoteStatusResponse { enabled, server })
 }

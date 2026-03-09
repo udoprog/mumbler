@@ -37,6 +37,8 @@ pub(crate) struct World {
     pub(crate) pan: Pan,
     pub(crate) extent: Extent,
     pub(crate) token_radius: f32,
+    /// The object whose transform drives MumbleLink output.
+    pub(crate) mumble_object: Option<Id>,
 }
 
 impl World {
@@ -64,11 +66,14 @@ impl World {
             Key::WORLD_TOKEN_RADIUS => {
                 self.token_radius = value.as_float().unwrap_or(0.5);
             }
+            Key::MUMBLE_OBJECT => {
+                self.mumble_object = value.as_id();
+            }
             _ => {}
         }
     }
 
-    fn values(&self) -> Vec<(Key, Value)> {
+    fn world_values(&self) -> Vec<(Key, Value)> {
         let mut values = Vec::new();
         values.push((Key::WORLD_SCALE, Value::from(self.zoom)));
         values.push((Key::WORLD_PAN, Value::from(self.pan)));
@@ -81,10 +86,11 @@ impl World {
 impl Default for World {
     fn default() -> Self {
         Self {
-            zoom: 2.0,
+            zoom: 1.0,
             pan: Pan::zero(),
             extent: Extent::arena(),
             token_radius: 0.5,
+            mumble_object: None,
         }
     }
 }
@@ -195,7 +201,7 @@ pub(crate) struct Map {
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
     /// World configuration.
-    world: World,
+    config: World,
     /// Object IDs whose transforms need to be sent to the server.
     update_transform_ids: HashSet<Id>,
     /// Object IDs whose look-at needs to be sent to the server.
@@ -233,8 +239,6 @@ pub(crate) struct Map {
     confirm_delete: Option<Id>,
     /// Object whose settings modal is currently open.
     open_settings: Option<Id>,
-    /// The object whose transform drives MumbleLink output.
-    mumble_object: Option<Id>,
     /// In-flight set-mumble-object request.
     _set_mumble_object: ws::Request,
     /// In-flight visibility toggle requests, per object.
@@ -245,6 +249,7 @@ pub(crate) enum Msg {
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     TransformUpdated(Result<Packet<api::Update>, ws::Error>),
@@ -302,6 +307,11 @@ impl Component for Map {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
+        let _config_update_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+
         let _local_update_listener = ctx
             .props()
             .ws
@@ -344,7 +354,7 @@ impl Component for Map {
             _log_handle,
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
-            world: World::default(),
+            config: World::default(),
             selected: None,
             objects: BTreeMap::new(),
             peers: BTreeMap::new(),
@@ -363,7 +373,6 @@ impl Component for Map {
             _delete_object: ws::Request::new(),
             confirm_delete: None,
             open_settings: None,
-            mumble_object: None,
             _set_mumble_object: ws::Request::new(),
             hide_requests: HashMap::new(),
         };
@@ -435,7 +444,7 @@ impl Component for Map {
         if let Some(o) = self.selected.and_then(|id| self.objects.get(&id)) {
             let p = o.data.transform.position;
             let f = o.data.transform.front;
-            let zoom = self.world.zoom;
+            let zoom = self.config.zoom;
 
             let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
             let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
@@ -499,7 +508,7 @@ impl Component for Map {
                                 let is_hidden = o.data.hidden;
                                 let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
                                 let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
-                                let is_mumble = self.mumble_object == Some(object_id);
+                                let is_mumble = self.config.mumble_object == Some(object_id);
 
                                 html! {
                                     <div class={classes} onclick={on_click}>
@@ -587,18 +596,19 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
-                if self.mumble_object == Some(id) {
-                    self.mumble_object = None;
+                let mumble_object = if self.config.mumble_object == Some(id) {
+                    None
                 } else {
-                    self.mumble_object = Some(id);
-                }
+                    Some(id)
+                };
 
                 self._set_mumble_object = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: vec![(Key::MUMBLE_OBJECT, Value::from(self.mumble_object))],
+                        values: vec![(Key::MUMBLE_OBJECT, Value::from(mumble_object))],
+                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::ToggleMumbleObjectResult))
                     .send();
@@ -648,9 +658,7 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.world = World::from_config(&body.config);
-
-                self.mumble_object = body.config.get(Key::MUMBLE_OBJECT).as_id();
+                self.config = World::from_config(&body.config);
 
                 self.objects = body
                     .objects
@@ -670,9 +678,16 @@ impl Map {
                 self.redraw()?;
                 Ok(true)
             }
+            Msg::ConfigUpdate(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
+                self.config.update(body.key, &body.value);
+                self.redraw()?;
+                Ok(true)
+            }
             Msg::LocalUpdate(body) => {
                 let body = body?;
-
                 let body = body.decode()?;
 
                 let update = match body {
@@ -683,10 +698,10 @@ impl Map {
                         true
                     }
                     LocalUpdateBody::Delete { object_id } => {
-                        if let Some(removed) = self.objects.remove(&object_id) {
-                            if let Some(id) = removed.data.image {
-                                self.images.remove(id);
-                            }
+                        if let Some(removed) = self.objects.remove(&object_id)
+                            && let Some(id) = removed.data.image
+                        {
+                            self.images.remove(id);
                         }
 
                         if self.selected == Some(object_id) {
@@ -787,10 +802,10 @@ impl Map {
                             .insert((peer_id, data.id), PeerObject { peer_id, data });
                     }
                     api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        if let Some(removed) = self.peers.remove(&(peer_id, object_id)) {
-                            if let Some(id) = removed.data.image {
-                                self.images.remove(id);
-                            }
+                        if let Some(removed) = self.peers.remove(&(peer_id, object_id))
+                            && let Some(id) = removed.data.image
+                        {
+                            self.images.remove(id);
                         }
                     }
                 }
@@ -1073,7 +1088,8 @@ impl Map {
             .ws
             .request()
             .body(api::UpdateConfigRequest {
-                values: self.world.values(),
+                values: self.config.world_values(),
+                broadcast_self: false,
             })
             .on_packet(ctx.link().callback(Msg::WorldUpdated))
             .send();
@@ -1087,11 +1103,11 @@ impl Map {
                         break 'out false;
                     };
 
-                    let t = ViewTransform::new(&canvas, &self.world);
+                    let t = ViewTransform::new(&canvas, &self.config);
                     let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
                     let (ex, ey) = t.canvas_to_world(ex, ey);
 
-                    let r = self.world.token_radius;
+                    let r = self.config.token_radius;
 
                     let hit = self
                         .objects
@@ -1104,12 +1120,12 @@ impl Map {
                         })
                         .map(|o| o.data.id);
 
-                    if let Some(hit_id) = hit {
-                        if self.selected != Some(hit_id) {
-                            self.selected = Some(hit_id);
-                            self.confirm_delete = None;
-                            break 'out true;
-                        }
+                    if let Some(hit_id) = hit
+                        && self.selected != Some(hit_id)
+                    {
+                        self.selected = Some(hit_id);
+                        self.confirm_delete = None;
+                        break 'out true;
                     }
 
                     let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
@@ -1155,14 +1171,14 @@ impl Map {
             return Ok(());
         };
 
-        let v = ViewTransform::new(&canvas, &self.world);
+        let v = ViewTransform::new(&canvas, &self.config);
 
         let mut needs_redraw = false;
 
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = e.client_x() as f64 - ax;
             let dy = e.client_y() as f64 - ay;
-            self.world.pan = self.world.pan.add(dx, dy);
+            self.config.pan = self.config.pan.add(dx, dy);
             self.pan_anchor = Some((e.client_x() as f64, e.client_y() as f64));
             self.update_world = true;
             needs_redraw = true;
@@ -1171,20 +1187,20 @@ impl Map {
         let (mx, my) = v.canvas_to_world(e.offset_x() as f64, e.offset_y() as f64);
         self.mouse_world_pos = Some((mx, my));
 
-        if let Some((px, py, shift_key)) = self.start_press {
-            if let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) {
-                if shift_key {
-                    let dist = (mx - px).hypot(my - py);
-                    if dist >= ARROW_THRESHOLD {
-                        self.update_look_at_ids.insert(o.data.id);
-                        o.data.look_at = Some(Vec3::new(mx, 0.0, my));
-                        self.look_at(px, py, mx, my);
-                        needs_redraw = true;
-                    }
-                } else {
-                    o.move_target = Some(Vec3::new(mx, 0.0, my));
+        if let Some((px, py, shift_key)) = self.start_press
+            && let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id))
+        {
+            if shift_key {
+                let dist = (mx - px).hypot(my - py);
+                if dist >= ARROW_THRESHOLD {
+                    self.update_look_at_ids.insert(o.data.id);
+                    o.data.look_at = Some(Vec3::new(mx, 0.0, my));
+                    self.look_at(px, py, mx, my);
                     needs_redraw = true;
                 }
+            } else {
+                o.move_target = Some(Vec3::new(mx, 0.0, my));
+                needs_redraw = true;
             }
         }
 
@@ -1273,15 +1289,15 @@ impl Map {
         let mx = e.offset_x() as f64;
         let my = e.offset_y() as f64;
 
-        let t_before = ViewTransform::new(&canvas, &self.world);
+        let t_before = ViewTransform::new(&canvas, &self.config);
         let (wx, wz) = t_before.canvas_to_world(mx, my);
 
-        self.world.zoom = (self.world.zoom * delta).clamp(0.1, 20.0);
+        self.config.zoom = (self.config.zoom * delta).clamp(0.1, 20.0);
 
-        let t_after = ViewTransform::new(&canvas, &self.world);
+        let t_after = ViewTransform::new(&canvas, &self.config);
         let (cx2, cy2) = t_after.world_to_canvas(wx, wz);
-        self.world.pan.x += mx - cx2;
-        self.world.pan.y += my - cy2;
+        self.config.pan.x += mx - cx2;
+        self.config.pan.y += my - cy2;
 
         self.update_world = true;
         self.redraw()?;
@@ -1354,11 +1370,11 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let t = ViewTransform::new(&canvas, &self.world);
+        let t = ViewTransform::new(&canvas, &self.config);
 
-        let token_radius = self.world.token_radius as f64 * t.scale;
+        let token_radius = self.config.token_radius as f64 * t.scale;
 
-        render::draw_grid(&cx, &t, &self.world.extent, self.world.zoom);
+        render::draw_grid(&cx, &t, &self.config.extent, self.config.zoom);
 
         let selected = self.selected;
 
@@ -1394,7 +1410,7 @@ impl Map {
 
         for a in renders() {
             if let Some(target) = a.look_at {
-                render::draw_look_at(&cx, &t, target, &a.color, self.world.zoom as f64)?;
+                render::draw_look_at(&cx, &t, target, &a.color, self.config.zoom as f64)?;
             }
         }
 

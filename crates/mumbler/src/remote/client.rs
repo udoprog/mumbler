@@ -209,7 +209,7 @@ struct Stream {
 enum StreamKind {
     Plain(TcpStream),
     #[cfg(feature = "tls")]
-    Tls(TlsStream<TcpStream>),
+    Tls(Box<TlsStream<TcpStream>>),
 }
 
 enum StreamKindProjected<'a> {
@@ -364,7 +364,7 @@ impl Client {
     pub fn tls(stream: TlsStream<TcpStream>) -> Self {
         Self {
             stream: Stream {
-                kind: StreamKind::Tls(stream),
+                kind: StreamKind::Tls(Box::new(stream)),
                 state: StreamState::Idle,
             },
         }

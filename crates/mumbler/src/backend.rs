@@ -15,6 +15,13 @@ use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWrit
 use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
+pub(crate) struct LocalConfigEvent {
+    pub(crate) sender_id: Id,
+    pub(crate) broadcast_self: bool,
+    pub(crate) body: api::ConfigUpdateBody,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct LocalUpdateEvent {
     pub(crate) sender_id: Id,
     pub(crate) broadcast_self: bool,
@@ -49,6 +56,7 @@ pub(crate) enum RemoteUpdateEvent {
 
 #[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
+    ConfigUpdate(LocalConfigEvent),
     LocalUpdate(LocalUpdateEvent),
     RemoteUpdate(RemoteUpdateEvent),
     Notification {

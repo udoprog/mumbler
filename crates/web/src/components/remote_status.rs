@@ -1,3 +1,4 @@
+use api::{Key, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
@@ -7,13 +8,14 @@ use crate::error::Error;
 use crate::log;
 
 pub(crate) enum Msg {
-    GetRemoteStatus(Result<Packet<api::GetRemoteStatus>, ws::Error>),
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
     ToggleResponse(Result<Packet<api::UpdateConfig>, ws::Error>),
     StateChanged(ws::State),
     LogUpdate(log::Log),
+    GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -30,6 +32,7 @@ pub(crate) struct RemoteStatus {
     _get_status: ws::Request,
     _restart_request: ws::Request,
     _toggle_request: ws::Request,
+    _config_update_listener: ws::Listener,
 }
 
 impl Component for RemoteStatus {
@@ -47,6 +50,11 @@ impl Component for RemoteStatus {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
+        let _config_update_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+
         let mut this = Self {
             enabled: true,
             log,
@@ -56,6 +64,7 @@ impl Component for RemoteStatus {
             _get_status: ws::Request::new(),
             _restart_request: ws::Request::new(),
             _toggle_request: ws::Request::new(),
+            _config_update_listener,
         };
 
         this.refresh(ctx);
@@ -114,12 +123,6 @@ impl Component for RemoteStatus {
 impl RemoteStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::GetRemoteStatus(result) => {
-                let packet = result?;
-                let response = packet.decode()?;
-                self.enabled = response.enabled;
-                Ok(true)
-            }
             Msg::Restart => {
                 if !matches!(self.state, ws::State::Open) {
                     return Ok(false);
@@ -151,15 +154,12 @@ impl RemoteStatus {
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: Vec::from([(
-                            api::Key::REMOTE_ENABLED,
-                            api::Value::from(new_enabled),
-                        )]),
+                        values: Vec::from([(Key::REMOTE_ENABLED, Value::from(new_enabled))]),
+                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::ToggleResponse))
                     .send();
 
-                self.enabled = new_enabled;
                 Ok(true)
             }
             Msg::ToggleResponse(result) => {
@@ -176,7 +176,34 @@ impl RemoteStatus {
                 self.log = log;
                 Ok(false)
             }
+            Msg::GetConfig(result) => {
+                let packet = result?;
+                let response = packet.decode()?;
+
+                for (key, value) in response.iter() {
+                    self.update_config(key, value)?;
+                }
+
+                Ok(true)
+            }
+            Msg::ConfigUpdate(body) => {
+                let body = body?;
+                let body = body.decode()?;
+                self.update_config(body.key, &body.value)?;
+                Ok(true)
+            }
         }
+    }
+
+    fn update_config(&mut self, key: Key, value: &Value) -> Result<(), Error> {
+        match key {
+            Key::REMOTE_ENABLED => {
+                self.enabled = value.as_bool().unwrap_or_default();
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     fn refresh(&mut self, ctx: &Context<Self>) {
@@ -185,8 +212,8 @@ impl RemoteStatus {
                 .props()
                 .ws
                 .request()
-                .body(api::GetRemoteStatusRequest)
-                .on_packet(ctx.link().callback(Msg::GetRemoteStatus))
+                .body(api::GetConfigRequest)
+                .on_packet(ctx.link().callback(Msg::GetConfig))
                 .send();
         }
     }

@@ -148,12 +148,11 @@ async fn handle_peer(
                 {
                     let mut remote = b.client_state().await;
 
-                    if let Some(peer) = remote.peers.get_mut(&body.peer_id) {
-                        if let Some(old) = peer.objects.remove(&body.object_id)
-                            && let Some(image_id) = old.properties.get(Key::IMAGE_ID).as_id()
-                        {
-                            b.images().await.remove(image_id);
-                        }
+                    if let Some(peer) = remote.peers.get_mut(&body.peer_id)
+                        && let Some(old) = peer.objects.remove(&body.object_id)
+                        && let Some(image_id) = old.properties.get(Key::IMAGE_ID).as_id()
+                    {
+                        b.images().await.remove(image_id);
                     }
                 }
 

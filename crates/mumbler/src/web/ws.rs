@@ -151,7 +151,13 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UpdateConfigRequest>()
                     .context("missing request")?;
 
-                super::update_config(&self.backend, request.values).await?;
+                super::update_config(
+                    &self.backend,
+                    request.values,
+                    self.sender_id,
+                    request.broadcast_self,
+                )
+                .await?;
                 outgoing.write(api::Empty);
             }
             api::Request::MumbleRestart => {
@@ -161,22 +167,6 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend.restart_mumblelink();
                 outgoing.write(api::Empty);
-            }
-            api::Request::GetMumbleStatus => {
-                _ = incoming
-                    .read::<api::GetMumbleStatusRequest>()
-                    .context("missing request")?;
-
-                let response = super::get_mumble_status(&self.backend).await?;
-                outgoing.write(response);
-            }
-            api::Request::GetRemoteStatus => {
-                _ = incoming
-                    .read::<api::GetRemoteStatusRequest>()
-                    .context("missing request")?;
-
-                let response = super::get_remote_status(&self.backend).await?;
-                outgoing.write(response);
             }
             api::Request::RemoteRestart => {
                 _ = incoming
@@ -264,6 +254,13 @@ pub(super) async fn entry(
                         tracing::debug!(?event, "Backend event");
 
                         let result = match event {
+                            BackendEvent::ConfigUpdate(event) => {
+                                if event.sender_id == sender_id && !event.broadcast_self {
+                                    continue;
+                                }
+
+                                server.broadcast(event.body).context("send config update")
+                            }
                             BackendEvent::LocalUpdate(event) => {
                                 if event.sender_id == sender_id && !event.broadcast_self {
                                     continue;

@@ -15,6 +15,7 @@ pub use self::value::{Value, ValueKind, ValueType};
 
 use core::fmt;
 use std::collections::HashMap;
+use std::collections::hash_map::IntoIter;
 
 use musli_core::{Decode, Encode};
 use musli_web::api;
@@ -253,6 +254,16 @@ impl Properties {
     }
 }
 
+impl IntoIterator for Properties {
+    type Item = (Key, Value);
+    type IntoIter = IntoIter<Key, Value>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
 #[derive(Clone, Copy, Default, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
@@ -377,7 +388,7 @@ pub struct GetObjectSettingsRequest {
 #[musli(crate = musli_core)]
 pub struct GetObjectSettingsResponse {
     /// The object, if it exists.
-    pub object: Option<RemoteObject>,
+    pub object: RemoteObject,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
 }
@@ -406,6 +417,7 @@ pub struct DeleteImageRequest {
 #[musli(crate = musli_core)]
 pub struct UpdateConfigRequest {
     pub values: Vec<(Key, Value)>,
+    pub broadcast_self: bool,
 }
 
 /// Request to restart the mumble link connection.
@@ -430,19 +442,6 @@ pub struct GetMumbleStatusResponse {
     pub enabled: bool,
 }
 
-// Remote server management.
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct GetRemoteStatusRequest;
-
-#[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct GetRemoteStatusResponse {
-    pub enabled: bool,
-    pub server: Option<String>,
-}
-
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct RemoteRestartRequest;
@@ -452,6 +451,13 @@ pub struct RemoteRestartRequest;
 pub enum ServerNotificationBody {
     Info { component: String, message: String },
     Error { component: String, message: String },
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct ConfigUpdateBody {
+    pub key: Key,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -568,25 +574,17 @@ api::define! {
         type Response<'de> = Empty;
     }
 
-    pub type GetMumbleStatus;
-
-    impl Endpoint for GetMumbleStatus {
-        impl Request for GetMumbleStatusRequest;
-        type Response<'de> = GetMumbleStatusResponse;
-    }
-
-    pub type GetRemoteStatus;
-
-    impl Endpoint for GetRemoteStatus {
-        impl Request for GetRemoteStatusRequest;
-        type Response<'de> = GetRemoteStatusResponse;
-    }
-
     pub type RemoteRestart;
 
     impl Endpoint for RemoteRestart {
         impl Request for RemoteRestartRequest;
         type Response<'de> = Empty;
+    }
+
+    pub type ConfigUpdate;
+
+    impl Broadcast for ConfigUpdate {
+        impl Event for ConfigUpdateBody;
     }
 
     pub type LocalUpdate;
