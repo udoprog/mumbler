@@ -205,20 +205,11 @@ pub(crate) fn draw_look_at(
     color: &api::Color,
     zoom: f64,
 ) -> Result<(), Error> {
-    let eye_width = 24.0 * zoom;
-    let eye_height = 12.0 * zoom;
-    let radius = 6.0 * zoom;
+    let radius = 10.0 * zoom;
 
-    let color = color.to_css_string();
+    let color = color.to_transparent_rgba(0.5);
 
     let (ex, ey) = t.world_to_canvas(target.x, target.z);
-
-    cx.save();
-    cx.set_stroke_style_str(&color);
-    cx.set_line_width(2.0 * zoom);
-    cx.begin_path();
-    cx.ellipse(ex, ey, eye_width / 2.0, eye_height / 2.0, 0.0, 0.0, TAU)?;
-    cx.stroke();
 
     cx.set_fill_style_str(&color);
     cx.begin_path();
@@ -307,7 +298,8 @@ pub(crate) fn draw_avatar_token(
     if front.x.hypot(front.z) > 0.01 {
         let angle = (-front.z as f64).atan2(front.x as f64);
         let arc_radius = token_radius * 1.5;
-        cx.set_stroke_style_str(&a.color.to_css_string());
+        let color = a.color.to_transparent_rgba(0.5);
+        cx.set_stroke_style_str(&color);
         draw_facing_arc(cx, x, y, arc_radius, angle, token_radius * 0.25)?;
     }
 

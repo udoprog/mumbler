@@ -60,6 +60,17 @@ impl Color {
         }
     }
 
+    /// Convert to a transparent css color.
+    pub fn to_transparent_rgba(&self, a: f32) -> String {
+        format!(
+            "rgba({}, {}, {}, {})",
+            self.r,
+            self.g,
+            self.b,
+            (self.a as f32 / 255.0) * a.clamp(0.0, 1.0),
+        )
+    }
+
     /// Parse a color from a CSS hex string (e.g., "#6B7280" or "#6B7280FF").
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.strip_prefix('#')?;
