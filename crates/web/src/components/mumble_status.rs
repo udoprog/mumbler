@@ -6,6 +6,7 @@ use yew::prelude::*;
 use super::Icon;
 use crate::error::Error;
 use crate::log;
+use crate::state::State;
 
 pub(crate) enum Msg {
     Restart,
@@ -24,7 +25,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct MumbleStatus {
-    enabled: bool,
+    enabled: State<bool>,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
@@ -56,7 +57,7 @@ impl Component for MumbleStatus {
             .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
 
         let mut this = Self {
-            enabled: false,
+            enabled: State::new(false),
             log,
             _log_handle,
             _state_change,
@@ -85,12 +86,12 @@ impl Component for MumbleStatus {
         let on_restart = ctx.link().callback(|_| Msg::Restart);
         let on_toggle = ctx.link().callback(|_| Msg::Toggle);
 
-        let toggle_text = if self.enabled {
+        let toggle_text = if *self.enabled {
             html!(<Icon name="x-mark" />)
         } else {
             html!(<Icon name="check" />)
         };
-        let toggle_title = if self.enabled {
+        let toggle_title = if *self.enabled {
             "Disable Mumble Link"
         } else {
             "Enable Mumble Link"
@@ -102,7 +103,7 @@ impl Component for MumbleStatus {
                 <button
                     class="btn square sm"
                     onclick={on_restart}
-                    disabled={!self.enabled}
+                    disabled={!*self.enabled}
                     title="Restart Mumble Link"
                 >
                     <Icon name="restart" />
@@ -147,14 +148,14 @@ impl MumbleStatus {
                     return Ok(false);
                 }
 
-                let new_enabled = !self.enabled;
+                let new_enabled = !*self.enabled;
+                *self.enabled = new_enabled;
                 let ws = ctx.props().ws.clone();
 
                 self._toggle_request = ws
                     .request()
                     .body(api::UpdateConfigRequest {
                         values: Vec::from([(Key::MUMBLE_ENABLED, Value::from(new_enabled))]),
-                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::ToggleResponse))
                     .send();
@@ -164,7 +165,7 @@ impl MumbleStatus {
             Msg::ToggleResponse(result) => {
                 let packet = result?;
                 _ = packet.decode()?;
-                Ok(true)
+                Ok(false)
             }
             Msg::StateChanged(state) => {
                 self.state = state;
@@ -179,30 +180,27 @@ impl MumbleStatus {
                 let packet = result?;
                 let response = packet.decode()?;
 
+                let mut changed = false;
                 for (key, value) in response.iter() {
-                    self.update_config(key, value)?;
+                    changed |= self.update_config(key, value)?;
                 }
 
-                Ok(true)
+                Ok(changed)
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-                self.update_config(body.key, &body.value)?;
-                Ok(true)
+                let changed = self.update_config(body.key, &body.value)?;
+                Ok(changed)
             }
         }
     }
 
-    fn update_config(&mut self, key: Key, value: &Value) -> Result<(), Error> {
+    fn update_config(&mut self, key: Key, value: &Value) -> Result<bool, Error> {
         match key {
-            Key::MUMBLE_ENABLED => {
-                self.enabled = value.as_bool().unwrap_or_default();
-            }
-            _ => {}
+            Key::MUMBLE_ENABLED => Ok(self.enabled.update(value.as_bool().unwrap_or_default())),
+            _ => Ok(false),
         }
-
-        Ok(())
     }
 
     fn refresh(&mut self, ctx: &Context<Self>) {

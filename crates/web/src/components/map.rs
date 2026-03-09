@@ -1,5 +1,3 @@
-use core::mem;
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use api::{
@@ -21,6 +19,7 @@ use crate::components::Icon;
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
+use crate::state::State;
 use crate::ws;
 
 use super::ObjectSettings;
@@ -32,16 +31,16 @@ const MOVEMENT_SPEED: f32 = 5.0;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "Shift to look / Shift + Click to place eye";
 
-pub(crate) struct World {
-    pub(crate) zoom: f32,
-    pub(crate) pan: Pan,
-    pub(crate) extent: Extent,
-    pub(crate) token_radius: f32,
-    /// The object whose transform drives MumbleLink output.
-    pub(crate) mumble_object: Option<Id>,
+pub(crate) struct Config {
+    pub(crate) zoom: State<f32>,
+    pub(crate) pan: State<Pan>,
+    pub(crate) extent: State<Extent>,
+    pub(crate) token_radius: State<f32>,
+    pub(crate) mumble_object: State<Option<Id>>,
+    pub(crate) mumble_follow_selection: State<bool>,
 }
 
-impl World {
+impl Config {
     fn from_config(properties: &api::Properties) -> Self {
         let mut this = Self::default();
 
@@ -52,45 +51,41 @@ impl World {
         this
     }
 
-    fn update(&mut self, key: Key, value: &Value) {
+    fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
-            Key::WORLD_SCALE => {
-                self.zoom = value.as_float().unwrap_or(2.0);
-            }
-            Key::WORLD_PAN => {
-                self.pan = value.as_pan().unwrap_or_else(Pan::zero);
-            }
-            Key::WORLD_EXTENT => {
-                self.extent = value.as_extent().unwrap_or_else(Extent::arena);
-            }
-            Key::WORLD_TOKEN_RADIUS => {
-                self.token_radius = value.as_float().unwrap_or(0.5);
-            }
-            Key::MUMBLE_OBJECT => {
-                self.mumble_object = value.as_id();
-            }
-            _ => {}
+            Key::WORLD_SCALE => self.zoom.update(value.as_float().unwrap_or(2.0)),
+            Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
+            Key::WORLD_EXTENT => self
+                .extent
+                .update(value.as_extent().unwrap_or_else(Extent::arena)),
+            Key::WORLD_TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.5)),
+            Key::MUMBLE_OBJECT => self.mumble_object.update(value.as_id()),
+            Key::MUMBLE_FOLLOW_SELECTION => self
+                .mumble_follow_selection
+                .update(value.as_bool().unwrap_or(false)),
+            _ => false,
         }
     }
 
     fn world_values(&self) -> Vec<(Key, Value)> {
         let mut values = Vec::new();
-        values.push((Key::WORLD_SCALE, Value::from(self.zoom)));
-        values.push((Key::WORLD_PAN, Value::from(self.pan)));
-        values.push((Key::WORLD_EXTENT, Value::from(self.extent)));
-        values.push((Key::WORLD_TOKEN_RADIUS, Value::from(self.token_radius)));
+        values.push((Key::WORLD_SCALE, Value::from(*self.zoom)));
+        values.push((Key::WORLD_PAN, Value::from(*self.pan)));
+        values.push((Key::WORLD_EXTENT, Value::from(*self.extent)));
+        values.push((Key::WORLD_TOKEN_RADIUS, Value::from(*self.token_radius)));
         values
     }
 }
 
-impl Default for World {
+impl Default for Config {
     fn default() -> Self {
         Self {
-            zoom: 1.0,
-            pan: Pan::zero(),
-            extent: Extent::arena(),
-            token_radius: 0.5,
-            mumble_object: None,
+            zoom: State::new(1.0),
+            pan: State::new(Pan::zero()),
+            extent: State::new(Extent::arena()),
+            token_radius: State::new(0.5),
+            mumble_object: State::new(None),
+            mumble_follow_selection: State::new(false),
         }
     }
 }
@@ -127,60 +122,56 @@ impl LocalObject {
 
 pub(crate) struct ObjectData {
     pub(crate) id: Id,
-    pub(crate) transform: Transform,
-    pub(crate) look_at: Option<Vec3>,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: Option<Color>,
-    pub(crate) name: Option<String>,
-    pub(crate) hidden: bool,
+    pub(crate) transform: State<Transform>,
+    pub(crate) look_at: State<Option<Vec3>>,
+    pub(crate) image: State<Option<Id>>,
+    pub(crate) color: State<Option<Color>>,
+    pub(crate) name: State<Option<String>>,
+    pub(crate) hidden: State<bool>,
 }
 
 impl ObjectData {
     fn from_remote(remote: &RemoteObject) -> Self {
         Self {
             id: remote.id,
-            transform: remote
-                .properties
-                .get(Key::TRANSFORM)
-                .as_transform()
-                .unwrap_or_else(Transform::origin),
-            look_at: remote.properties.get(Key::LOOK_AT).as_vec3(),
-            image: remote.properties.get(Key::IMAGE_ID).as_id(),
-            color: remote.properties.get(Key::COLOR).as_color(),
-            name: remote
-                .properties
-                .get(Key::NAME)
-                .as_string()
-                .map(str::to_owned),
-            hidden: remote
-                .properties
-                .get(Key::HIDDEN)
-                .as_bool()
-                .unwrap_or(false),
+            transform: State::new(
+                remote
+                    .properties
+                    .get(Key::TRANSFORM)
+                    .as_transform()
+                    .unwrap_or_else(Transform::origin),
+            ),
+            look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
+            image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
+            color: State::new(remote.properties.get(Key::COLOR).as_color()),
+            name: State::new(
+                remote
+                    .properties
+                    .get(Key::NAME)
+                    .as_string()
+                    .map(str::to_owned),
+            ),
+            hidden: State::new(
+                remote
+                    .properties
+                    .get(Key::HIDDEN)
+                    .as_bool()
+                    .unwrap_or(false),
+            ),
         }
     }
 
-    fn update(&mut self, key: Key, value: Value) {
+    fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::TRANSFORM => {
-                self.transform = value.as_transform().unwrap_or_else(Transform::origin);
-            }
-            Key::LOOK_AT => {
-                self.look_at = value.as_vec3();
-            }
-            Key::IMAGE_ID => {
-                self.image = value.as_id();
-            }
-            Key::COLOR => {
-                self.color = value.as_color();
-            }
-            Key::NAME => {
-                self.name = value.into_string();
-            }
-            Key::HIDDEN => {
-                self.hidden = value.as_bool().unwrap_or(false);
-            }
-            _ => {}
+            Key::TRANSFORM => self
+                .transform
+                .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            Key::LOOK_AT => self.look_at.update(value.as_vec3()),
+            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::COLOR => self.color.update(value.as_color()),
+            Key::NAME => self.name.update(value.into_string()),
+            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            _ => false,
         }
     }
 }
@@ -201,7 +192,7 @@ pub(crate) struct Map {
     canvas_sizer: NodeRef,
     canvas_ref: NodeRef,
     /// World configuration.
-    config: World,
+    config: Config,
     /// Object IDs whose transforms need to be sent to the server.
     update_transform_ids: HashSet<Id>,
     /// Object IDs whose look-at needs to be sent to the server.
@@ -236,11 +227,11 @@ pub(crate) struct Map {
     /// In-flight delete-object request.
     _delete_object: ws::Request,
     /// Index of the object pending delete confirmation.
-    confirm_delete: Option<Id>,
+    delete: HashSet<Id>,
     /// Object whose settings modal is currently open.
     open_settings: Option<Id>,
-    /// In-flight set-mumble-object request.
     _set_mumble_object: ws::Request,
+    _set_mumble_follow_selection: ws::Request,
     /// In-flight visibility toggle requests, per object.
     hide_requests: HashMap<Id, ws::Request>,
 }
@@ -265,16 +256,17 @@ pub(crate) enum Msg {
     MouseLeave,
     Wheel(WheelEvent),
     AnimationFrame,
-    SelectObject(Id),
+    SelectObject(Option<Id>),
     CreateObject,
     ConfirmDelete(Id),
-    CancelDelete,
+    CancelDelete(Id),
     DeleteObject(Id),
     ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
     CloseObjectSettings,
     ToggleMumbleObject(Id),
-    ToggleMumbleObjectResult(Result<Packet<api::UpdateConfig>, ws::Error>),
+    SetConfig(Result<Packet<api::UpdateConfig>, ws::Error>),
+    ToggleFollowMumbleSelection,
     ToggleHidden(Id),
     ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
     SetLog(log::Log),
@@ -354,7 +346,7 @@ impl Component for Map {
             _log_handle,
             canvas_sizer: NodeRef::default(),
             canvas_ref: NodeRef::default(),
-            config: World::default(),
+            config: Config::default(),
             selected: None,
             objects: BTreeMap::new(),
             peers: BTreeMap::new(),
@@ -371,9 +363,10 @@ impl Component for Map {
             _keyup_listener,
             _create_object: ws::Request::new(),
             _delete_object: ws::Request::new(),
-            confirm_delete: None,
+            delete: HashSet::new(),
             open_settings: None,
             _set_mumble_object: ws::Request::new(),
+            _set_mumble_follow_selection: ws::Request::new(),
             hide_requests: HashMap::new(),
         };
 
@@ -444,7 +437,7 @@ impl Component for Map {
         if let Some(o) = self.selected.and_then(|id| self.objects.get(&id)) {
             let p = o.data.transform.position;
             let f = o.data.transform.front;
-            let zoom = self.config.zoom;
+            let zoom = *self.config.zoom;
 
             let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
             let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
@@ -453,6 +446,17 @@ impl Component for Map {
         } else {
             pos = None;
         }
+
+        let follow_classes = classes! {
+            "btn", "square",
+            self.config.mumble_follow_selection.then_some("success"),
+        };
+
+        let toggle_mumblelink_title = if *self.config.mumble_follow_selection {
+            "Disable MumbleLink selection following"
+        } else {
+            "Enable MumbleLink selection following"
+        };
 
         html! {
             <>
@@ -475,7 +479,12 @@ impl Component for Map {
 
                 <div class="col-3 rows">
                     <div class="object-list-header">
-                        <button class="btn sm square" title="Add object"
+                        <button class={follow_classes}
+                            title={toggle_mumblelink_title}
+                            onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
+                            <Icon name="cursor-arrow-rays" />
+                        </button>
+                        <button class="btn square primary" title="Add object"
                             onclick={ctx.link().callback(|_| Msg::CreateObject)}>
                             <Icon name="user-plus" title="Add object" />
                         </button>
@@ -486,29 +495,41 @@ impl Component for Map {
                             let object_id = o.data.id;
 
                             let selected = self.selected == Some(object_id);
-                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(object_id));
+                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(object_id)));
                             let classes = classes!("object-list-item", selected.then_some("selected"));
                             let label = o.data.name.as_deref().unwrap_or("");
 
-                            if self.confirm_delete == Some(object_id) {
+                            if self.delete.contains(&object_id) {
                                 html! {
                                     <div class={classes}>
                                         <span class="object-list-item-label">{"Confirm removal?"}</span>
-                                        <button class="btn sm square danger" title="Cancel"
-                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                            <Icon name="x-mark" />
-                                        </button>
-                                        <button class="btn sm square" title="Remove"
+                                        <button class="btn sm square success" title="Remove"
                                             onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
                                             <Icon name="check" />
+                                        </button>
+                                        <button class="btn sm square danger" title="Cancel"
+                                            onclick={ctx.link().callback(move |_| Msg::CancelDelete(object_id))}>
+                                            <Icon name="x-mark" />
                                         </button>
                                     </div>
                                 }
                             } else {
-                                let is_hidden = o.data.hidden;
+                                let is_hidden = *o.data.hidden;
                                 let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
                                 let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
-                                let is_mumble = self.config.mumble_object == Some(object_id);
+                                let is_mumble = *self.config.mumble_object == Some(object_id);
+
+                                let mumble_classes = classes! {
+                                    "btn", "sm", "square", "object-list-item-action",
+                                    is_mumble.then_some("success"),
+                                    is_mumble.then_some("active"),
+                                };
+
+                                let hidden_classes = classes! {
+                                    "btn", "sm", "square", "object-list-item-action",
+                                    is_hidden.then_some("danger"),
+                                    is_hidden.then_some("active"),
+                                };
 
                                 html! {
                                     <div class={classes} onclick={on_click}>
@@ -527,7 +548,7 @@ impl Component for Map {
                                             })}>
                                             <Icon name="x-mark" />
                                         </button>
-                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", is_mumble.then_some("info"), is_mumble.then_some("active"))}
+                                        <button class={mumble_classes}
                                             title="Toggle as MumbleLink Source"
                                             onclick={ctx.link().callback(move |e: MouseEvent| {
                                                 e.stop_propagation();
@@ -535,7 +556,7 @@ impl Component for Map {
                                             })}>
                                             <Icon name="mumble" />
                                         </button>
-                                        <button class={classes!("btn", "sm", "square", "object-list-item-action", is_hidden.then_some("danger"), is_hidden.then_some("active"))}
+                                        <button class={hidden_classes}
                                             title={eye_title}
                                             onclick={ctx.link().callback(move |e: MouseEvent| {
                                                 e.stop_propagation();
@@ -556,7 +577,7 @@ impl Component for Map {
                     <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
                         <div class="modal-header">
                             <h2>{"Object Settings"}</h2>
-                            <button class="btn sm square" title="Close"
+                            <button class="btn sm square danger" title="Close"
                                 onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
                                 <Icon name="x-mark" />
                             </button>
@@ -596,26 +617,27 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
-                let mumble_object = if self.config.mumble_object == Some(id) {
+                let update = if *self.config.mumble_object == Some(id) {
                     None
                 } else {
                     Some(id)
                 };
+
+                *self.config.mumble_object = update;
 
                 self._set_mumble_object = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: vec![(Key::MUMBLE_OBJECT, Value::from(mumble_object))],
-                        broadcast_self: true,
+                        values: vec![(Key::MUMBLE_OBJECT, Value::from(update))],
                     })
-                    .on_packet(ctx.link().callback(Msg::ToggleMumbleObjectResult))
+                    .on_packet(ctx.link().callback(Msg::SetConfig))
                     .send();
 
                 Ok(true)
             }
-            Msg::ToggleMumbleObjectResult(result) => {
+            Msg::SetConfig(result) => {
                 result?;
                 Ok(false)
             }
@@ -624,8 +646,8 @@ impl Map {
                     return Ok(false);
                 };
 
-                object.data.hidden = !object.data.hidden;
-                let new_hidden = object.data.hidden;
+                *object.data.hidden = !*object.data.hidden;
+                let new_hidden = *object.data.hidden;
 
                 let req = ctx
                     .props()
@@ -635,7 +657,6 @@ impl Map {
                         object_id: id,
                         key: Key::HIDDEN,
                         value: Value::from(new_hidden),
-                        broadcast_self: false,
                     })
                     .on_packet(ctx.link().callback(move |r| Msg::ToggleHiddenResult(id, r)))
                     .send();
@@ -658,7 +679,7 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.config = World::from_config(&body.config);
+                self.config = Config::from_config(&body.config);
 
                 self.objects = body
                     .objects
@@ -682,9 +703,13 @@ impl Map {
                 let body = body?;
                 let body = body.decode()?;
 
-                self.config.update(body.key, &body.value);
-                self.redraw()?;
-                Ok(true)
+                let changed = self.config.update(body.key, &body.value);
+
+                if changed {
+                    self.redraw()?;
+                }
+
+                Ok(changed)
             }
             Msg::LocalUpdate(body) => {
                 let body = body?;
@@ -699,13 +724,13 @@ impl Map {
                     }
                     LocalUpdateBody::Delete { object_id } => {
                         if let Some(removed) = self.objects.remove(&object_id)
-                            && let Some(id) = removed.data.image
+                            && let Some(id) = *removed.data.image
                         {
                             self.images.remove(id);
                         }
 
                         if self.selected == Some(object_id) {
-                            self.selected = None;
+                            ctx.link().send_message(Msg::SelectObject(None));
                         }
 
                         true
@@ -715,25 +740,38 @@ impl Map {
                         key,
                         value,
                     } => {
-                        if let Some(a) = self.objects.get_mut(&object_id) {
-                            if key == Key::IMAGE_ID {
-                                let new = value.as_id();
+                        'done: {
+                            let Some(a) = self.objects.get_mut(&object_id) else {
+                                break 'done false;
+                            };
 
-                                let old = mem::replace(&mut a.data.image, new);
-
-                                if let Some(new) = new {
-                                    self.images.load(ctx, new);
+                            match key {
+                                // Don't support local updates of transform and
+                                // look at because they cause feedback loops
+                                // which are laggy.
+                                Key::TRANSFORM | Key::LOOK_AT => {
+                                    break 'done false;
                                 }
+                                Key::IMAGE_ID => {
+                                    let new = value.as_id();
 
-                                if let Some(old) = old {
-                                    self.images.remove(old);
+                                    let Some(old) = a.data.image.replace(new) else {
+                                        break 'done false;
+                                    };
+
+                                    if let Some(new) = new {
+                                        self.images.load(ctx, new);
+                                    }
+
+                                    if let Some(old) = old {
+                                        self.images.remove(old);
+                                    }
                                 }
+                                _ => {}
                             }
 
-                            a.data.update(key, value);
+                            a.data.update(key, value)
                         }
-
-                        false
                     }
                 };
 
@@ -756,7 +794,7 @@ impl Map {
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
 
-                            if let Some(id) = data.image {
+                            if let Some(id) = *data.image {
                                 self.images.load(ctx, id);
                             }
 
@@ -772,12 +810,18 @@ impl Map {
                         peer_id,
                         key,
                         value,
-                    } => {
-                        if let Some(a) = self.peers.get_mut(&(peer_id, object_id)) {
-                            if key == Key::IMAGE_ID {
+                    } => 'done: {
+                        let Some(a) = self.peers.get_mut(&(peer_id, object_id)) else {
+                            break 'done;
+                        };
+
+                        match key {
+                            Key::IMAGE_ID => {
                                 let new = value.as_id();
 
-                                let old = mem::replace(&mut a.data.image, new);
+                                let Some(old) = a.data.image.replace(new) else {
+                                    break 'done;
+                                };
 
                                 if let Some(new) = new {
                                     self.images.load(ctx, new);
@@ -787,14 +831,15 @@ impl Map {
                                     self.images.remove(old);
                                 }
                             }
-
-                            a.data.update(key, value);
+                            _ => {}
                         }
+
+                        a.data.update(key, value);
                     }
                     api::RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
 
-                        if let Some(id) = data.image {
+                        if let Some(id) = *data.image {
                             self.images.load(ctx, id);
                         }
 
@@ -803,7 +848,7 @@ impl Map {
                     }
                     api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
                         if let Some(removed) = self.peers.remove(&(peer_id, object_id))
-                            && let Some(id) = removed.data.image
+                            && let Some(id) = *removed.data.image
                         {
                             self.images.remove(id);
                         }
@@ -844,7 +889,7 @@ impl Map {
                 Ok(false)
             }
             Msg::MouseDown(e) => {
-                self.on_mouse_down(e)?;
+                self.on_mouse_down(ctx, e)?;
                 Ok(true)
             }
             Msg::MouseMove(e) => {
@@ -876,9 +921,45 @@ impl Map {
                 self.on_key_up(e)?;
                 Ok(false)
             }
-            Msg::SelectObject(i) => {
-                self.selected = Some(i);
-                self.confirm_delete = None;
+            Msg::SelectObject(id) => {
+                self.selected = id;
+
+                if let Some(id) = id {
+                    self.delete.remove(&id);
+                }
+
+                if *self.config.mumble_follow_selection && *self.config.mumble_object != id {
+                    *self.config.mumble_object = id;
+
+                    self._set_mumble_object = ctx
+                        .props()
+                        .ws
+                        .request()
+                        .body(api::UpdateConfigRequest {
+                            values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
+                        })
+                        .on_packet(ctx.link().callback(Msg::SetConfig))
+                        .send();
+                }
+
+                Ok(true)
+            }
+            Msg::ToggleFollowMumbleSelection => {
+                *self.config.mumble_follow_selection = !*self.config.mumble_follow_selection;
+
+                self._set_mumble_follow_selection = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateConfigRequest {
+                        values: vec![(
+                            Key::MUMBLE_FOLLOW_SELECTION,
+                            Value::from(*self.config.mumble_follow_selection),
+                        )],
+                    })
+                    .on_packet(ctx.link().callback(Msg::SetConfig))
+                    .send();
+
                 Ok(true)
             }
             Msg::CreateObject => {
@@ -897,11 +978,11 @@ impl Map {
                 Ok(true)
             }
             Msg::ConfirmDelete(id) => {
-                self.confirm_delete = Some(id);
+                self.delete.insert(id);
                 Ok(true)
             }
-            Msg::CancelDelete => {
-                self.confirm_delete = None;
+            Msg::CancelDelete(id) => {
+                self.delete.remove(&id);
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -913,7 +994,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
-                self.confirm_delete = None;
+                self.delete.remove(&id);
                 Ok(false)
             }
             Msg::ObjectDeleted(result) => {
@@ -938,7 +1019,7 @@ impl Map {
         };
 
         let object_id = o.data.id;
-        o.data.look_at = None;
+        *o.data.look_at = None;
         o.arrow_target = None;
 
         self.update_look_at_ids.insert(object_id);
@@ -961,7 +1042,7 @@ impl Map {
         };
 
         let object_id = o.data.id;
-        o.data.look_at = Some(Vec3::new(mx, 0.0, my));
+        *o.data.look_at = Some(Vec3::new(mx, 0.0, my));
 
         let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
         self.start_press = Some((px, py, true));
@@ -1008,7 +1089,7 @@ impl Map {
             };
 
             'look_done: {
-                let Some(target) = o.data.look_at else {
+                let Some(target) = *o.data.look_at else {
                     break 'look_done;
                 };
 
@@ -1044,8 +1125,7 @@ impl Map {
                 .body(api::UpdateRequest {
                     object_id: id,
                     key: Key::TRANSFORM,
-                    value: Value::from(o.data.transform),
-                    broadcast_self: false,
+                    value: Value::from(*o.data.transform),
                 })
                 .on_packet(ctx.link().callback(Msg::TransformUpdated))
                 .send();
@@ -1072,8 +1152,7 @@ impl Map {
                 .body(api::UpdateRequest {
                     object_id: id,
                     key: Key::LOOK_AT,
-                    value: Value::from(o.data.look_at),
-                    broadcast_self: false,
+                    value: Value::from(*o.data.look_at),
                 })
                 .on_packet(ctx.link().callback(Msg::LookAtUpdated))
                 .send();
@@ -1089,13 +1168,12 @@ impl Map {
             .request()
             .body(api::UpdateConfigRequest {
                 values: self.config.world_values(),
-                broadcast_self: false,
             })
             .on_packet(ctx.link().callback(Msg::WorldUpdated))
             .send();
     }
 
-    fn on_mouse_down(&mut self, e: MouseEvent) -> Result<(), Error> {
+    fn on_mouse_down(&mut self, ctx: &Context<Self>, e: MouseEvent) -> Result<(), Error> {
         let needs_redraw = 'out: {
             match e.button() {
                 0 => {
@@ -1107,7 +1185,7 @@ impl Map {
                     let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
                     let (ex, ey) = t.canvas_to_world(ex, ey);
 
-                    let r = self.config.token_radius;
+                    let r = *self.config.token_radius;
 
                     let hit = self
                         .objects
@@ -1123,8 +1201,8 @@ impl Map {
                     if let Some(hit_id) = hit
                         && self.selected != Some(hit_id)
                     {
-                        self.selected = Some(hit_id);
-                        self.confirm_delete = None;
+                        ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
+                        self.delete.remove(&hit_id);
                         break 'out true;
                     }
 
@@ -1140,7 +1218,7 @@ impl Map {
                         let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
 
                         self.start_press = Some((px, py, true));
-                        o.data.look_at = Some(Vec3::new(ex, 0.0, ey));
+                        *o.data.look_at = Some(Vec3::new(ex, 0.0, ey));
                         self.look_at(px, py, ex, ey);
                         self.update_look_at_ids.insert(object_id);
                     } else {
@@ -1178,7 +1256,7 @@ impl Map {
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = e.client_x() as f64 - ax;
             let dy = e.client_y() as f64 - ay;
-            self.config.pan = self.config.pan.add(dx, dy);
+            *self.config.pan = self.config.pan.add(dx, dy);
             self.pan_anchor = Some((e.client_x() as f64, e.client_y() as f64));
             self.update_world = true;
             needs_redraw = true;
@@ -1194,7 +1272,7 @@ impl Map {
                 let dist = (mx - px).hypot(my - py);
                 if dist >= ARROW_THRESHOLD {
                     self.update_look_at_ids.insert(o.data.id);
-                    o.data.look_at = Some(Vec3::new(mx, 0.0, my));
+                    *o.data.look_at = Some(Vec3::new(mx, 0.0, my));
                     self.look_at(px, py, mx, my);
                     needs_redraw = true;
                 }
@@ -1292,7 +1370,7 @@ impl Map {
         let t_before = ViewTransform::new(&canvas, &self.config);
         let (wx, wz) = t_before.canvas_to_world(mx, my);
 
-        self.config.zoom = (self.config.zoom * delta).clamp(0.1, 20.0);
+        *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
 
         let t_after = ViewTransform::new(&canvas, &self.config);
         let (cx2, cy2) = t_after.world_to_canvas(wx, wz);
@@ -1308,8 +1386,8 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.objects.values().filter_map(|o| o.data.image);
-        let ids = ids.chain(self.peers.values().filter_map(|a| a.data.image));
+        let ids = self.objects.values().filter_map(|o| *o.data.image);
+        let ids = ids.chain(self.peers.values().filter_map(|a| *a.data.image));
 
         for id in ids {
             self.images.load(ctx, id);
@@ -1372,9 +1450,9 @@ impl Map {
 
         let t = ViewTransform::new(&canvas, &self.config);
 
-        let token_radius = self.config.token_radius as f64 * t.scale;
+        let token_radius = *self.config.token_radius as f64 * t.scale;
 
-        render::draw_grid(&cx, &t, &self.config.extent, self.config.zoom);
+        render::draw_grid(&cx, &t, &self.config.extent, *self.config.zoom);
 
         let selected = self.selected;
 
@@ -1382,7 +1460,7 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
-                .filter(|a| !a.data.hidden)
+                .filter(|a| !*a.data.hidden)
                 .map(|a| RenderAvatar::from_data(&a.data));
 
             let locals = self.objects.values().map(move |a| {
@@ -1410,7 +1488,7 @@ impl Map {
 
         for a in renders() {
             if let Some(target) = a.look_at {
-                render::draw_look_at(&cx, &t, target, &a.color, self.config.zoom as f64)?;
+                render::draw_look_at(&cx, &t, target, &a.color, *self.config.zoom as f64)?;
             }
         }
 

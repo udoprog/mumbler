@@ -3,7 +3,7 @@ use std::f64::consts::{FRAC_PI_6, PI, TAU};
 use api::{Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
-use crate::components::map::{ObjectData, World};
+use crate::components::map::{Config, ObjectData};
 use crate::error::Error;
 
 const HALF_SPAN: f64 = FRAC_PI_6;
@@ -23,14 +23,14 @@ pub(crate) struct RenderAvatar<'a> {
 impl<'a> RenderAvatar<'a> {
     pub(crate) fn from_data(data: &'a ObjectData) -> Self {
         Self {
-            transform: data.transform,
-            look_at: data.look_at,
-            image: data.image,
+            transform: *data.transform,
+            look_at: *data.look_at,
+            image: *data.image,
             color: data.color.unwrap_or_else(api::Color::neutral),
             name: data.name.as_deref(),
             player: false,
             selected: false,
-            hidden: data.hidden,
+            hidden: *data.hidden,
         }
     }
 }
@@ -43,11 +43,11 @@ pub(crate) struct ViewTransform {
 }
 
 impl ViewTransform {
-    pub(crate) fn new(canvas: &HtmlCanvasElement, w: &World) -> Self {
+    pub(crate) fn new(canvas: &HtmlCanvasElement, w: &Config) -> Self {
         let canvas_min = canvas.width().min(canvas.height()) as f64;
         let world_w = (w.extent.x.end - w.extent.x.start) as f64;
         let world_h = (w.extent.y.end - w.extent.y.start) as f64;
-        let scale = (canvas_min / world_w.max(world_h)) * w.zoom as f64;
+        let scale = (canvas_min / world_w.max(world_h)) * *w.zoom as f64;
 
         let world_mid_x = ((w.extent.x.start + w.extent.x.end) / 2.0) as f64;
         let world_mid_y = ((w.extent.y.start + w.extent.y.end) / 2.0) as f64;

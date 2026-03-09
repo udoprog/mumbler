@@ -7,6 +7,7 @@ use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
+use crate::state::State;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -25,9 +26,9 @@ pub(crate) struct Props {
 
 pub(crate) struct Settings {
     state: ws::State,
-    remote_server: String,
+    remote_server: State<String>,
     _remote_server_request: ws::Request,
-    remote_server_tls: bool,
+    remote_server_tls: State<bool>,
     _remote_server_tls_request: ws::Request,
     _get_config_request: ws::Request,
     log: log::Log,
@@ -58,9 +59,9 @@ impl Component for Settings {
 
         let mut this = Self {
             state,
-            remote_server: String::new(),
+            remote_server: State::new(String::new()),
             _remote_server_request: ws::Request::new(),
-            remote_server_tls: false,
+            remote_server_tls: State::new(false),
             _remote_server_tls_request: ws::Request::new(),
             _get_config_request: ws::Request::new(),
             log,
@@ -97,7 +98,7 @@ impl Component for Settings {
                         id="remote-server"
                         type="text"
                         placeholder="host[:port]"
-                        value={self.remote_server.clone()}
+                        value={(*self.remote_server).clone()}
                         onchange={ctx.link().callback(Msg::ServerChanged)}
                         />
 
@@ -105,7 +106,7 @@ impl Component for Settings {
                         <input
                             id="remote-server-tls"
                             type="checkbox"
-                            checked={self.remote_server_tls}
+                            checked={*self.remote_server_tls}
                             onchange={ctx.link().callback(Msg::TlsToggled)}
                             />
                         {" Use TLS"}
@@ -147,11 +148,11 @@ impl Settings {
                 let value = value.trim();
 
                 let value = if value.is_empty() {
-                    self.remote_server = String::new();
+                    *self.remote_server = String::new();
                     api::Value::empty()
                 } else {
-                    self.remote_server = value.to_owned();
-                    api::Value::from(self.remote_server.clone())
+                    *self.remote_server = value.to_owned();
+                    api::Value::from((*self.remote_server).clone())
                 };
 
                 self._remote_server_request = ctx
@@ -160,7 +161,6 @@ impl Settings {
                     .request()
                     .body(api::UpdateConfigRequest {
                         values: vec![(api::Key::REMOTE_SERVER, value)],
-                        broadcast_self: false,
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateConfig))
                     .send();
@@ -175,6 +175,7 @@ impl Settings {
                     .map_err(|_| "target is not an input element")?;
 
                 let remote_server_tls = input.checked();
+                *self.remote_server_tls = remote_server_tls;
 
                 self._remote_server_tls_request = ctx
                     .props()
@@ -182,7 +183,6 @@ impl Settings {
                     .request()
                     .body(api::UpdateConfigRequest {
                         values: vec![(api::Key::REMOTE_TLS, remote_server_tls.into())],
-                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateConfig))
                     .send();
@@ -202,32 +202,31 @@ impl Settings {
                 let packet = result?;
                 let response = packet.decode()?;
 
+                let mut changed = false;
                 for (key, value) in response.iter() {
-                    self.update_config(key, value)?;
+                    changed |= self.update_config(key, value)?;
                 }
 
-                Ok(true)
+                Ok(changed)
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-                self.update_config(body.key, &body.value)?;
-                Ok(true)
+                let changed = self.update_config(body.key, &body.value)?;
+                Ok(changed)
             }
         }
     }
 
-    fn update_config(&mut self, key: Key, value: &Value) -> Result<(), Error> {
+    fn update_config(&mut self, key: Key, value: &Value) -> Result<bool, Error> {
         match key {
-            Key::REMOTE_SERVER => {
-                self.remote_server = value.as_string().unwrap_or_default().to_string();
-            }
-            Key::REMOTE_TLS => {
-                self.remote_server_tls = value.as_bool().unwrap_or_default();
-            }
-            _ => {}
+            Key::REMOTE_SERVER => Ok(self
+                .remote_server
+                .update(value.as_string().unwrap_or_default().to_string())),
+            Key::REMOTE_TLS => Ok(self
+                .remote_server_tls
+                .update(value.as_bool().unwrap_or_default())),
+            _ => Ok(false),
         }
-
-        Ok(())
     }
 }

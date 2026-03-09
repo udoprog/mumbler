@@ -16,15 +16,11 @@ use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalConfigEvent {
-    pub(crate) sender_id: Id,
-    pub(crate) broadcast_self: bool,
     pub(crate) body: api::ConfigUpdateBody,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalUpdateEvent {
-    pub(crate) sender_id: Id,
-    pub(crate) broadcast_self: bool,
     pub(crate) body: api::LocalUpdateBody,
 }
 

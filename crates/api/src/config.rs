@@ -79,6 +79,9 @@ keys! {
     MUMBLE_OBJECT: Id = 14,
     /// Whether the object is hidden from remote peers.
     HIDDEN: Boolean = 15,
+    /// Whether selecting an object automatically sets it as the MumbleLink
+    /// source.
+    MUMBLE_FOLLOW_SELECTION: Boolean = 16,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

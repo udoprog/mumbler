@@ -19,7 +19,7 @@ pub enum ValueType {
     Bytes,
 }
 
-#[derive(Clone, Encode, Decode)]
+#[derive(Clone, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 pub struct Value {
     kind: ValueKind,
@@ -177,7 +177,7 @@ impl fmt::Debug for Value {
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum ValueKind {
     Id(Id),

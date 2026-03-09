@@ -6,6 +6,7 @@ mod components;
 mod error;
 mod images;
 mod log;
+mod state;
 
 use components::{Icon, Route};
 use musli_web::web03::prelude::*;

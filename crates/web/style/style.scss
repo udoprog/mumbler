@@ -6,6 +6,8 @@
 $margin: 10px;
 $border-radius: 4px;
 $border-radius2: 8px;
+$btn-height: 32px;
+$btn-height-sm: 24px;
 
 @import "_log";
 
@@ -21,13 +23,13 @@ $border-radius2: 8px;
     --link-hover: #eee;
     --input-color: #2e2e2e;
     --border-color: #333;
-    --btn-color: #4caf50;
-    --btn-color-disabled: #888;
     --danger-color: #e05252;
     --danger-background-color: #2e1e1e;
-    --success-color: #4caf50;
-    --warning-color: #ffcc00;
-    --info-color: #3b82f6;
+    --success-color: #6eb671;
+    --warning-color: #ffe992;
+    --primary-color: #97bfff;
+    --secondary-color: #868686;
+    --secondary-color-disabled: #c4c4c4;
     --info-background-color: #1e2a3b;
 }
 
@@ -36,7 +38,12 @@ body {
     color: var(--text-color);
 }
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
     color: var(--heading-color);
     margin: 0.5em 0;
     font-weight: bold;
@@ -85,23 +92,38 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn {
+    display: flex;
+    align-items: center;
+    flex-direction: row;
+    gap: 0.25em;
     cursor: pointer;
     font-size: 14px;
-    padding: 0.5em 1em;
-    background-color: var(--btn-color);
-    color: var(--text-color-inverted);
+    padding: 0.25em 0.75em;
     border: none;
     border-radius: $border-radius;
     transition: background-color 0.15s, border-color 0.15s;
 
+    background-color: var(--secondary-color);
+    color: var(--text-color-inverted);
+    height: $btn-height;
+
+    &.inactive {
+        opacity: 0.5;
+    }
+
     &:disabled {
         cursor: not-allowed;
-        opacity: 0.5;
+        background-color: var(--secondary-color-disabled);
     }
 
     &.disabled {
         cursor: not-allowed;
-        background-color: var(--btn-color-disabled);
+        background-color: var(--secondary-color-disabled);
+    }
+
+    &.primary {
+        background-color: var(--primary-color);
+        color: var(--text-color-inverted);
     }
 
     &.danger {
@@ -109,14 +131,15 @@ h1, h2, h3, h4, h5, h6 {
         color: var(--text-color-inverted);
     }
 
-    &.info {
-        background-color: var(--info-color);
+    &.success {
+        background-color: var(--success-color);
         color: var(--text-color-inverted);
     }
 
     &.sm {
         padding: 0.25em 0.75em;
         font-size: 0.85em;
+        height: $btn-height-sm;
     }
 
     &.square {
@@ -248,7 +271,7 @@ canvas#map {
     }
 
     &.info {
-        background-color: var(--info-color);
+        background-color: var(--success-color);
     }
 }
 
@@ -366,6 +389,7 @@ input[type="search"] {
         display: flex;
         align-items: center;
         justify-content: flex-end;
+        gap: 0.25em;
     }
 
     &-item {
@@ -410,6 +434,96 @@ input[type="search"] {
         }
     }
 }
+
+.crop-area {
+    display: inline-block;
+    user-select: none;
+    max-width: 100%;
+    overflow: hidden;
+    align-self: center;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+.crop-inner {
+    position: relative;
+    display: inline-block;
+    cursor: crosshair;
+    overflow: hidden;
+}
+
+.crop-source {
+    max-width: 100%;
+    max-height: 55vh;
+    display: block;
+    pointer-events: none;
+}
+
+.crop-selection {
+    position: absolute;
+    border: 2px solid white;
+    box-sizing: border-box;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    cursor: move;
+    overflow: visible;
+}
+
+.crop-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+
+    &.nw {
+        top: -6px;
+        left: -6px;
+        cursor: nw-resize;
+    }
+
+    &.n {
+        top: -6px;
+        left: calc(50% - 5px);
+        cursor: n-resize;
+    }
+
+    &.ne {
+        top: -6px;
+        right: -6px;
+        cursor: ne-resize;
+    }
+
+    &.w {
+        top: calc(50% - 5px);
+        left: -6px;
+        cursor: w-resize;
+    }
+
+    &.e {
+        top: calc(50% - 5px);
+        right: -6px;
+        cursor: e-resize;
+    }
+
+    &.sw {
+        bottom: -6px;
+        left: -6px;
+        cursor: sw-resize;
+    }
+
+    &.s {
+        bottom: -6px;
+        left: calc(50% - 5px);
+        cursor: s-resize;
+    }
+
+    &.se {
+        bottom: -6px;
+        right: -6px;
+        cursor: se-resize;
+    }
+}
+
 .modal {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
@@ -437,7 +551,9 @@ input[type="search"] {
         padding: $margin $margin * 1.5;
         border-bottom: 1px solid var(--border-color);
 
-        h2 { margin: 0; }
+        h2 {
+            margin: 0;
+        }
     }
 
     &-body {

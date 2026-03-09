@@ -61,22 +61,28 @@ use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
-pub(crate) fn default_bind(dev: bool, bind: &str) -> Result<(&str, u16)> {
+const DEV_PORT: u16 = 44614;
+const TRUNK_PORT: u16 = 8080;
+
+pub(crate) fn default_bind(dev: bool, bind: &str) -> Result<(&str, u16, u16)> {
     let port: u16;
+    let open_port: u16;
 
     let host = if let Some((host, port_s)) = bind.rsplit_once(':') {
         port = port_s.parse().context("port number")?;
+        open_port = if dev { TRUNK_PORT } else { port };
         host
     } else {
-        port = if dev { 8080 } else { DEFAULT_PORT };
+        port = if dev { DEV_PORT } else { DEFAULT_PORT };
+        open_port = if dev { TRUNK_PORT } else { port };
         bind
     };
 
     if dev {
-        return Ok(("127.0.0.1", port));
+        return Ok(("127.0.0.1", port, open_port));
     }
 
-    Ok((host, port))
+    Ok((host, port, open_port))
 }
 
 pub(crate) fn setup(
@@ -187,7 +193,7 @@ async fn upload_image(
 ) -> Result<api::UploadImageResponse> {
     tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
 
-    let task = task::spawn_blocking(move || imaging::process(&request.data, 128));
+    let task = task::spawn_blocking(move || imaging::process(&request.data, request.crop, 128));
 
     let bytes = task.await??;
     let id = backend.db().save_image(128, 128, bytes).await?;
@@ -275,8 +281,6 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
 async fn update_config(
     backend: &Backend,
     values: impl IntoIterator<Item = (Key, Value)>,
-    sender_id: Id,
-    broadcast_self: bool,
 ) -> Result<()> {
     let mut restart_mumblelink = false;
     let mut restart_client = false;
@@ -324,8 +328,6 @@ async fn update_config(
         backend.db().set_config_value(key, value.clone()).await?;
 
         backend.broadcast(BackendEvent::ConfigUpdate(LocalConfigEvent {
-            sender_id,
-            broadcast_self,
             body: api::ConfigUpdateBody { key, value },
         }));
     }

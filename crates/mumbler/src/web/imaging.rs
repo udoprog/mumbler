@@ -1,16 +1,32 @@
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
+use api::CropRegion;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, imageops};
 
 /// Process raw image bytes into a square `size x size` PNG.
 ///
-/// The image is first downscaled so its longer side equals `size`, then
-/// composited onto a square canvas filled with the average colour of the
-/// resized image.
-pub(crate) fn process(data: &[u8], size: u32) -> Result<Vec<u8>> {
+/// If `crop` is provided the image is first cropped to that region;
+/// otherwise the full image is used. The cropped (or full) image is then
+/// downscaled so its longer side equals `size` and composited onto a square
+/// canvas filled with the average colour of the resized image.
+pub(crate) fn process(data: &[u8], crop: Option<CropRegion>, size: u32) -> Result<Vec<u8>> {
     let image = image::load_from_memory(data)?;
+
+    // Apply crop before anything else.
+    let image = if let Some(c) = crop {
+        let img_w = image.width();
+        let img_h = image.height();
+        let x = c.x1.min(img_w.saturating_sub(1));
+        let y = c.y1.min(img_h.saturating_sub(1));
+        let w = c.x2.saturating_sub(c.x1).min(img_w - x).max(1);
+        let h = c.y2.saturating_sub(c.y1).min(img_h - y).max(1);
+        image.crop_imm(x, y, w, h)
+    } else {
+        image
+    };
+
     let rgba = image.to_rgba8();
 
     let (w, h) = rgba.dimensions();

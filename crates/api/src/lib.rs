@@ -104,9 +104,6 @@ pub struct UpdateRequest {
     pub object_id: Id,
     pub key: Key,
     pub value: Value,
-    /// Whether the update should be broadcasted to the current connection.
-    /// Normally this is false, since updates are handled on the frontend.
-    pub broadcast_self: bool,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -122,6 +119,18 @@ pub struct UploadImageRequest {
     pub content_type: String,
     /// Raw bytes of the image file.
     pub data: Vec<u8>,
+    /// Optional crop to apply before resizing. If absent the full image is used.
+    pub crop: Option<CropRegion>,
+}
+
+/// A square crop region expressed in the source image's natural pixel space.
+#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct CropRegion {
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
 }
 
 /// Response returned after successfully uploading an image.
@@ -132,7 +141,7 @@ pub struct UploadImageResponse {
     pub id: Id,
 }
 
-#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Span {
     /// Start of the span.
@@ -149,7 +158,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, Copy, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Extent {
     /// Extent along the x axis.
@@ -181,7 +190,7 @@ impl Extent {
 }
 
 /// Represents a 2D pan offset in canvas pixels.
-#[derive(Clone, Copy, Debug, Default, Encode, Decode)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Pan {
     pub x: f64,
@@ -264,7 +273,7 @@ impl IntoIterator for Properties {
     }
 }
 
-#[derive(Clone, Copy, Default, Encode, Decode)]
+#[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
     /// The x coordinate in meters from the origin (left / right).
@@ -317,7 +326,7 @@ impl Vec3 {
 }
 
 /// Represents a position and orientation in 3D space.
-#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Transform {
     /// The position in world coordinates.
@@ -417,7 +426,6 @@ pub struct DeleteImageRequest {
 #[musli(crate = musli_core)]
 pub struct UpdateConfigRequest {
     pub values: Vec<(Key, Value)>,
-    pub broadcast_self: bool,
 }
 
 /// Request to restart the mumble link connection.

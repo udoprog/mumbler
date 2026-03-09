@@ -21,16 +21,14 @@ use tracing::{Instrument, Level};
 use crate::backend::{Backend, BackendEvent, LocalUpdateEvent, RemoteUpdateEvent};
 
 struct Handler<'a> {
-    sender_id: Id,
     backend: Backend,
     database_updates: HashMap<(Id, Key), Value>,
     database_updates_notify: &'a Notify,
 }
 
 impl<'a> Handler<'a> {
-    fn new(sender_id: Id, backend: Backend, database_updates_notify: &'a Notify) -> Self {
+    fn new(backend: Backend, database_updates_notify: &'a Notify) -> Self {
         Self {
-            sender_id,
             backend,
             database_updates: HashMap::new(),
             database_updates_notify,
@@ -75,8 +73,6 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        sender_id: self.sender_id,
-                        broadcast_self: request.broadcast_self,
                         body: LocalUpdateBody::Update {
                             object_id: request.object_id,
                             key: request.key,
@@ -116,8 +112,6 @@ impl ws::Handler for Handler<'_> {
                 let object = self.backend.create_object().await?;
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        sender_id: self.sender_id,
-                        broadcast_self: true,
                         body: LocalUpdateBody::Create { object },
                     }));
                 outgoing.write(api::Empty);
@@ -130,8 +124,6 @@ impl ws::Handler for Handler<'_> {
                 self.backend.delete_object(request.id).await?;
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        sender_id: self.sender_id,
-                        broadcast_self: true,
                         body: LocalUpdateBody::Delete {
                             object_id: request.id,
                         },
@@ -151,13 +143,7 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UpdateConfigRequest>()
                     .context("missing request")?;
 
-                super::update_config(
-                    &self.backend,
-                    request.values,
-                    self.sender_id,
-                    request.broadcast_self,
-                )
-                .await?;
+                super::update_config(&self.backend, request.values).await?;
                 outgoing.write(api::Empty);
             }
             api::Request::MumbleRestart => {
@@ -197,10 +183,8 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("Connected");
 
-            let sender_id = Id::new(rand::random());
-
             let database_updates_notify = Notify::new();
-            let mut server = axum08::server(socket, Handler::new(sender_id, backend.clone(), &database_updates_notify));
+            let mut server = axum08::server(socket, Handler::new(backend.clone(), &database_updates_notify));
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
 
@@ -255,17 +239,9 @@ pub(super) async fn entry(
 
                         let result = match event {
                             BackendEvent::ConfigUpdate(event) => {
-                                if event.sender_id == sender_id && !event.broadcast_self {
-                                    continue;
-                                }
-
                                 server.broadcast(event.body).context("send config update")
                             }
                             BackendEvent::LocalUpdate(event) => {
-                                if event.sender_id == sender_id && !event.broadcast_self {
-                                    continue;
-                                }
-
                                 server.broadcast(event.body).context("send local update")
                             }
                             BackendEvent::RemoteUpdate(body) => {

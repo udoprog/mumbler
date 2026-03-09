@@ -3,21 +3,23 @@ use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, File, HtmlCanvasElement, HtmlInputElement, Url};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url};
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
+use crate::state::State;
 
+use super::CropModal;
 use super::render;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
     AvatarImageSelected(Event),
-    AvatarImageUpload(MouseEvent),
-    AvatarImageClear(MouseEvent),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
+    CropConfirmed(api::CropRegion),
+    CropCancelled,
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     SelectImage(api::Id),
@@ -43,12 +45,12 @@ pub(crate) struct Props {
 
 pub(crate) struct ObjectSettings {
     state: ws::State,
-    image: Option<api::Id>,
-    color: Option<api::Color>,
-    name: Option<String>,
+    image: State<Option<api::Id>>,
+    color: State<Option<api::Color>>,
+    name: State<Option<String>>,
     images: Vec<api::Image>,
-    file: Option<File>,
-    preview_url: Option<String>,
+    crop_source_url: Option<String>,
+    crop_source_data: Option<(String, Vec<u8>)>,
     preview_canvas: NodeRef,
     preview_images: Images<Self>,
     log: log::Log,
@@ -94,12 +96,12 @@ impl Component for ObjectSettings {
 
         let mut this = Self {
             state,
-            image: None,
-            color: None,
-            name: None,
+            image: State::new(None),
+            color: State::new(None),
+            name: State::new(None),
             images: Vec::new(),
-            file: None,
-            preview_url: None,
+            crop_source_url: None,
+            crop_source_data: None,
             preview_canvas: NodeRef::default(),
             preview_images: Images::new(),
             log,
@@ -143,7 +145,7 @@ impl Component for ObjectSettings {
             let on_delete = ctx.link().callback(move |_: MouseEvent| Msg::DeleteImage(id));
             let classes = classes!(
                 "avatar",
-                (self.image == Some(id)).then_some("selected"),
+                (*self.image == Some(id)).then_some("selected"),
                 "clickable"
             );
 
@@ -155,30 +157,10 @@ impl Component for ObjectSettings {
             }
         });
 
-        let choose_classes = classes!(
-            "btn",
-            self.file.is_some().then_some("hidden"),
-            self.image_uploading.then_some("disabled")
-        );
-        let choose_disabled = self.file.is_some() || self.image_uploading;
-
-        let ok = self
-            .file
-            .is_some()
-            .then(|| ctx.link().callback(Msg::AvatarImageUpload));
-
-        let ok_classes = classes!("btn", ok.is_none().then_some("hidden"));
-
-        let cancel = self
-            .file
-            .is_some()
-            .then(|| ctx.link().callback(Msg::AvatarImageClear));
-
-        let cancel_classes = classes!("btn", "danger", cancel.is_none().then_some("hidden"));
-
         let color = self.color.unwrap_or_else(Color::neutral);
 
         html! {
+            <>
             <div id="content" class="row">
                 <div class="col-8 rows">
                     <h2>{"Name"}</h2>
@@ -188,24 +170,20 @@ impl Component for ObjectSettings {
                             id="avatar-name"
                             type="text"
                             placeholder="Enter name"
-                            value={self.name.clone().unwrap_or_default()}
+                            value={(*self.name).clone().unwrap_or_default()}
                             onchange={ctx.link().callback(Msg::NameChanged)}
                             />
                     </section>
 
                     <h2>{"Image"}</h2>
 
-                    if let Some(url) = &self.preview_url {
-                        <section class="image-entry">
-                            <img src={url.clone()} alt="Preview" class="avatar" />
-                        </section>
-                    }
-
                     <section>
                         <div class="btn-group">
-                            <label for="avatar-file" class={choose_classes} disabled={choose_disabled}>{"Upload image"}</label>
-                            <button onclick={ok} class={ok_classes}>{"Ok"}</button>
-                            <button onclick={cancel} class={cancel_classes}>{"Cancel"}</button>
+                            <label for="avatar-file"
+                                class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}
+                                disabled={self.image_uploading}>
+                                {"Upload image"}
+                            </label>
                         </div>
 
                         <input
@@ -243,6 +221,16 @@ impl Component for ObjectSettings {
                     </section>
                 </div>
             </div>
+
+            if let Some(src) = &self.crop_source_url {
+                <CropModal
+                    source_url={src.clone()}
+                    ratio={1.0}
+                    on_confirm={ctx.link().callback(Msg::CropConfirmed)}
+                    on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
+                />
+            }
+            </>
         }
     }
 }
@@ -268,9 +256,10 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::AvatarImageSelected(e) => {
-                if let Some(url) = self.preview_url.take() {
+                if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
+                self.crop_source_data = None;
 
                 let input = e
                     .target()
@@ -282,58 +271,55 @@ impl ObjectSettings {
                 let file = files.get(0).ok_or("no file selected")?;
 
                 if let Ok(url) = Url::create_object_url_with_blob(&file) {
-                    self.preview_url = Some(url);
-                }
-
-                self.file = Some(file);
-                Ok(true)
-            }
-            Msg::AvatarImageUpload(_e) => {
-                let Some(file) = self.file.take() else {
-                    return Err("no file selected".into());
-                };
-
-                if let Some(url) = self.preview_url.take() {
-                    let _ = Url::revoke_object_url(&url);
+                    self.crop_source_url = Some(url);
                 }
 
                 let content_type = file.type_();
                 let gloo_file = gloo::file::File::from(file);
                 let link = ctx.link().clone();
-
                 self._file_reader = Some(read_as_bytes(&gloo_file, move |res| {
                     link.send_message(Msg::AvatarImageData(content_type.clone(), res));
                 }));
 
                 Ok(true)
             }
-            Msg::AvatarImageClear(_e) => {
-                self.file = None;
-
-                if let Some(url) = self.preview_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                Ok(true)
-            }
             Msg::AvatarImageData(content_type, result) => {
                 self._file_reader = None;
-
                 let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
-
+                self.crop_source_data = Some((content_type, data));
+                Ok(false)
+            }
+            Msg::CropConfirmed(crop) => {
+                let Some((content_type, data)) = self.crop_source_data.take() else {
+                    return Err("image data not ready".into());
+                };
                 self.upload_image = ctx
                     .props()
                     .ws
                     .request()
-                    .body(api::UploadImageRequest { content_type, data })
+                    .body(api::UploadImageRequest {
+                        content_type,
+                        data,
+                        crop: Some(crop),
+                    })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
-
                 self.image_uploading = true;
-                Ok(false)
+                Ok(true)
+            }
+            Msg::CropCancelled => {
+                if let Some(url) = self.crop_source_url.take() {
+                    let _ = Url::revoke_object_url(&url);
+                }
+                self.crop_source_data = None;
+                self._file_reader = None;
+                Ok(true)
             }
             Msg::ImageUploaded(result) => {
                 self.image_uploading = false;
+                if let Some(url) = self.crop_source_url.take() {
+                    let _ = Url::revoke_object_url(&url);
+                }
                 let result = result?;
                 _ = result.decode()?;
                 self.refresh(ctx);
@@ -359,12 +345,11 @@ impl ObjectSettings {
                         object_id: ctx.props().id,
                         key: Key::IMAGE_ID,
                         value: Value::from(id),
-                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::SelectImageResult))
                     .send();
 
-                self.image = Some(id);
+                *self.image = Some(id);
                 self.load_preview_image(ctx);
                 Ok(true)
             }
@@ -410,12 +395,11 @@ impl ObjectSettings {
                         object_id: ctx.props().id,
                         key: Key::COLOR,
                         value: Value::from(color),
-                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::SelectColorResult))
                     .send();
 
-                self.color = Some(color);
+                *self.color = Some(color);
                 Ok(true)
             }
             Msg::SelectColorResult(result) => {
@@ -436,6 +420,7 @@ impl ObjectSettings {
                 Ok(false)
             }
             Msg::UpdateName(name) => {
+                *self.name = name.clone();
                 self._update_name = ctx
                     .props()
                     .ws
@@ -444,7 +429,6 @@ impl ObjectSettings {
                         object_id: ctx.props().id,
                         key: Key::NAME,
                         value: Value::from(name.clone()),
-                        broadcast_self: true,
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateNameResult))
                     .send();
@@ -468,7 +452,7 @@ impl ObjectSettings {
                 let body = body?;
                 let body = body.decode()?;
 
-                match body {
+                let changed = match body {
                     api::LocalUpdateBody::Update {
                         object_id,
                         key,
@@ -478,36 +462,36 @@ impl ObjectSettings {
                             return Ok(false);
                         }
 
-                        self.update_property(ctx, key, value);
+                        self.update_property(ctx, key, value)
                     }
-                    _ => {}
-                }
+                    _ => return Ok(false),
+                };
 
-                Ok(true)
+                Ok(changed)
             }
         }
     }
 
-    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) {
+    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                self.image = value.as_id();
-                self.load_preview_image(ctx);
+                if self.image.update(value.as_id()) {
+                    self.load_preview_image(ctx);
+                    true
+                } else {
+                    false
+                }
             }
-            Key::COLOR => {
-                self.color = value.as_color();
-            }
-            Key::NAME => {
-                self.name = value.as_string().map(str::to_owned);
-            }
-            _ => {}
+            Key::COLOR => self.color.update(value.as_color()),
+            Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
+            _ => false,
         }
     }
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
 
-        if let Some(id) = self.image {
+        if let Some(id) = *self.image {
             self.preview_images.load(ctx, id);
         }
     }
@@ -526,7 +510,7 @@ impl ObjectSettings {
         let avatar = render::RenderAvatar {
             transform: api::Transform::origin(),
             look_at: None,
-            image: self.image,
+            image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             name: self.name.as_deref(),
             player: true,

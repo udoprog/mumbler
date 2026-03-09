@@ -3,6 +3,9 @@ pub(crate) use self::map::Map;
 
 pub(crate) mod render;
 
+mod crop_modal;
+pub(crate) use self::crop_modal::CropModal;
+
 mod settings;
 pub(crate) use self::settings::Settings;
 
