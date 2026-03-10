@@ -119,6 +119,6 @@ jobs:
     - uses: actions/download-artifact@v7
       with: {pattern: "packages-*", merge-multiple: true, path: packages}
     - uses: udoprog/kick@nightly
-    - run: kick github-release --github-action --upload "packages/*"
+    - run: kick gh release --github-action --upload "packages/*"
       env:
         GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
