@@ -69,11 +69,11 @@ async fn main() -> Result<()> {
 
     let addr = client.addr()?;
 
-    tracing::info!(tls = opts.tls, ?addr, "Connected");
+    tracing::info!(tls = opts.tls, ?addr, "connected");
 
     let values = Vec::new();
 
-    let mut peer = Peer::new(addr, client);
+    let mut peer = Peer::new(client);
     peer.connect(opts.room.as_bytes(), values)?;
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
             result = peer.ready() => {
                 result?;
 
-                while let Some((event, body)) = peer.handle::<Event>()? {
+                while let Some((event, body)) = peer.read::<Event>()? {
                     tracing::debug!(?event, "Received event");
 
                     match event {

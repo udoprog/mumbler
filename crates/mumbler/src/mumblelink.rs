@@ -101,12 +101,12 @@ pub async fn managed(b: Backend) -> Result<()> {
 
     let build = |enabled| {
         if enabled {
-            tracing::info!("Starting");
-            b.notify_info(COMPONENT, "Starting");
+            tracing::info!("enabled");
+            b.notify_info(COMPONENT, "enabled");
             Fuse::new(run(b.clone()))
         } else {
-            tracing::info!("Disabled");
-            b.notify_info(COMPONENT, "Disabled");
+            tracing::info!("disabled");
+            b.notify_info(COMPONENT, "disabled");
             Fuse::empty()
         }
     };
@@ -126,11 +126,11 @@ pub async fn managed(b: Backend) -> Result<()> {
 
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 } else {
-                    tracing::info!("Mumble Link Stopped");
-                    b.notify_info(COMPONENT, "Mumble Link Stopped");
+                    tracing::info!("stopped");
+                    b.notify_info(COMPONENT, "stopped");
                 }
 
-                tracing::info!("Reconnecting in 5s");
+                tracing::info!("reconnecting in 5s");
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
             }
             _ = reconnect.as_mut() => {

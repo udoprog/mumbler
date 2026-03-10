@@ -1543,7 +1543,6 @@ impl Map {
 
                 // Face the movement direction unless a look_at target is active.
                 if o.data.look_at().is_none() {
-                    tracing::info!("LOOKING AT???");
                     o.data.transform.front = p.direction_to(target).xyz(0.0);
                 }
 

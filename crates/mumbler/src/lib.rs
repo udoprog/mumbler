@@ -31,11 +31,15 @@ use tokio::net::TcpListener;
 
 use self::web::default_bind;
 
-pub async fn run(b: Backend, dev: bool, bind: &str) -> Result<()> {
+pub async fn run(b: Backend, dev: bool, bind: &str, no_open: bool) -> Result<()> {
     let (host, port, open_port) = default_bind(dev, bind)?;
 
-    tracing::info!("Listening on http://{host}:{port}");
-    webbrowser::open(&format!("http://{host}:{open_port}"))?;
+    tracing::info!("listening on http://{host}:{port}");
+
+    #[cfg(feature = "webbrowser")]
+    if !no_open {
+        webbrowser::open(&format!("http://{host}:{open_port}"))?;
+    }
 
     let listener = TcpListener::bind((host, port)).await?;
     let mut future = pin!(web::setup(listener, b, dev)?);

@@ -182,7 +182,7 @@ pub(super) async fn entry(
         let mut events = backend.subscribe();
 
         let future = async move {
-            tracing::info!("Connected");
+            tracing::info!("connected");
 
             let database_updates_notify = Notify::new();
             let mut server = axum08::server(socket, Handler::new(backend.clone(), &database_updates_notify));
@@ -282,7 +282,7 @@ pub(super) async fn entry(
                 }
 
                 if done {
-                    tracing::info!("Disconnected");
+                    tracing::info!("disconnected");
                     break;
                 }
             }

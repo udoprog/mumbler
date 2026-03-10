@@ -29,10 +29,15 @@ struct Opts {
     /// Work as development server.
     #[arg(long)]
     dev: bool,
+    /// Address to bind the application to.
     #[arg(long, default_value = "127.0.0.1")]
     bind: String,
+    /// Default server string to connect to. This overrides the configured server.
     #[arg(long)]
     connect: Option<String>,
+    /// Don't open the browser on startup.
+    #[arg(long)]
+    no_open: bool,
 }
 
 pub fn main() -> Result<()> {
@@ -89,7 +94,7 @@ pub fn main() -> Result<()> {
         tokio::try_join!(
             client::managed(b.clone(), opts.connect.as_deref()),
             mumblelink::managed(b.clone()),
-            mumbler::run(b, opts.dev, &opts.bind),
+            mumbler::run(b, opts.dev, &opts.bind, opts.no_open),
         )?;
 
         Ok(())

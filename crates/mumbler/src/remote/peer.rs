@@ -1,4 +1,3 @@
-use core::net::SocketAddr;
 use core::task::{Context, Poll};
 
 use std::io;
@@ -30,7 +29,6 @@ enum State {
 
 /// A connected peer.
 pub struct Peer {
-    addr: SocketAddr,
     client: Client,
     read: Buf,
     write: Buf,
@@ -40,20 +38,14 @@ pub struct Peer {
 
 impl Peer {
     /// Constructs a connected peer.
-    pub fn new(addr: SocketAddr, client: Client) -> Self {
+    pub fn new(client: Client) -> Self {
         Self {
-            addr,
             client,
             read: Buf::new(),
             write: Buf::new(),
             scratch: Scratch::new(),
             state: State::Idle,
         }
-    }
-
-    /// Returns the socket address of the peer.
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
     }
 
     /// Returns whether the peer is connected over TLS.
@@ -64,7 +56,7 @@ impl Peer {
     /// Read messages from the peer. Returns `Ok(None)` when no more messages
     /// are currently available.
     #[inline]
-    pub fn handle<M>(&mut self) -> Result<Option<(M, Body<'_>)>>
+    pub fn read<M>(&mut self) -> Result<Option<(M, Body<'_>)>>
     where
         M: musli_web::api::Id,
     {

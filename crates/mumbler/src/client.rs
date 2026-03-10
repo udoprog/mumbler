@@ -23,7 +23,7 @@ async fn handle_peer(
     last_ping: &mut Option<u64>,
     mut ping_timeout: Pin<&mut Sleep>,
 ) -> Result<()> {
-    while let Some((id, body)) = peer.handle::<Event>()? {
+    while let Some((id, body)) = peer.read::<Event>()? {
         match id {
             Event::Pong => {
                 let body = body.decode::<PongBody>()?;
@@ -189,11 +189,11 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         remote.objects.clone()
     };
 
-    tracing::info!(?host, ?port, ?tls, "Connecting to mumbler-server");
+    tracing::info!(?host, ?port, ?tls, "connecting to mumbler-server");
 
     let stream = TcpStream::connect((host, port))
         .await
-        .with_context(|| anyhow!("Connecting to {host}:{port}"))?;
+        .with_context(|| anyhow!("connecting to {host}:{port}"))?;
 
     let client = if tls {
         Client::default_tls_connect(stream, host).await?
@@ -203,7 +203,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
     let addr = client.addr()?;
 
-    tracing::info!(?addr, "Connected");
+    tracing::info!(?addr, "connected");
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
@@ -241,7 +241,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         });
     }
 
-    let mut peer = Peer::new(addr, client);
+    let mut peer = Peer::new(client);
     peer.connect(b"default", objects)?;
 
     loop {
@@ -372,17 +372,17 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
         if enabled {
             if let Some(connect) = &connect {
-                tracing::info!("Restarting");
-                b.notify_info(COMPONENT, "Restarting");
+                tracing::info!("restarting");
+                b.notify_info(COMPONENT, "restarting");
                 Fuse::new(run(b.clone(), connect.to_string(), tls))
             } else {
-                tracing::info!("Enabled, but no server configured");
-                b.notify_info(COMPONENT, "Enabled, but no server configured");
+                tracing::info!("enabled, but no server configured");
+                b.notify_info(COMPONENT, "enabled, but no server configured");
                 Fuse::empty()
             }
         } else {
-            tracing::info!("Disabling");
-            b.notify_info(COMPONENT, "Disabling");
+            tracing::info!("disabling");
+            b.notify_info(COMPONENT, "disabling");
             Fuse::empty()
         }
     };
@@ -402,12 +402,12 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
                     b.notify_error(COMPONENT, format_args!("{error:#}"));
                 } else {
-                    tracing::info!("Remote Client Stopped");
-                    b.notify_info(COMPONENT, "Remote Client Stopped");
+                    tracing::info!("remote client stopped");
+                    b.notify_info(COMPONENT, "remote client stopped");
                 }
 
+                tracing::info!("reconnecting in 5s");
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
-                tracing::info!("Reconnecting in 5s");
             }
             _ = reconnect.as_mut() => {
                 future.set(build(connect.as_deref(), enabled, tls).await);

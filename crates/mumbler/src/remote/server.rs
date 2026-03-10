@@ -39,39 +39,23 @@ async fn accept_tls(tls_acceptor: tls::TlsAcceptor, stream: TcpStream) -> Result
     anyhow::bail!("Cannot accept connection, TLS support is not enabled");
 }
 
-struct PeerState {
+struct Data {
+    /// The socket address of the peer.
+    addr: SocketAddr,
+    /// The peer state.
+    peer: Peer,
     /// The unique identifier of this peer.
     peer_id: PeerId,
-    /// The peer state.
-    peer: Pin<Box<Peer>>,
-    /// If this timeout is reached, the peer is disconnected.
-    ///
-    /// The timeout is reset every time a ping is received.
-    timeout: Pin<Box<Sleep>>,
     /// Objects that the peer has set.
     objects: HashMap<Id, RemoteObject>,
     /// The room the peer is in.
     room: Option<Box<[u8]>>,
 }
 
-impl PeerState {
-    fn new(peer: Peer) -> Self {
-        Self {
-            peer_id: PeerId::new(rand::random()),
-            peer: Box::pin(peer),
-            timeout: Box::pin(time::sleep(Duration::from_secs(5))),
-            objects: HashMap::new(),
-            room: None,
-        }
-    }
-
-    fn send_to_room<F>(
-        &self,
-        mut f: F,
-        rooms: &HashMap<Box<[u8]>, Room>,
-        peers: &mut HashMap<PeerId, PeerState>,
-    ) where
-        F: FnMut(&mut Peer) -> Result<()>,
+impl Data {
+    fn send_to_room<F>(&self, mut f: F, rooms: &HashMap<Box<[u8]>, Room>, peers: &mut Peers)
+    where
+        F: FnMut(Pin<&mut ServerPeer>) -> Result<()>,
     {
         let Some(room) = self.room.as_ref().and_then(|name| rooms.get(name)) else {
             return;
@@ -83,19 +67,60 @@ impl PeerState {
             }
 
             if let Some(peer) = peers.get_mut(id)
-                && let Err(error) = f(&mut peer.peer)
+                && let Err(error) = f(peer)
             {
                 tracing::error!(?id, ?error, "Sending update");
             }
         }
     }
+}
 
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if let Poll::Ready(()) = self.timeout.as_mut().poll(cx) {
+struct ServerPeer {
+    /// If this timeout is reached, the peer is disconnected.
+    ///
+    /// The timeout is reset every time a ping is received.
+    timeout: Sleep,
+    /// Peer data.
+    data: Data,
+}
+
+impl ServerPeer {
+    fn new(addr: SocketAddr, peer: Peer) -> Pin<Box<Self>> {
+        Box::pin(Self {
+            timeout: time::sleep(Duration::from_secs(5)),
+            data: Data {
+                addr,
+                peer,
+                peer_id: PeerId::new(rand::random()),
+                objects: HashMap::new(),
+                room: None,
+            },
+        })
+    }
+
+    #[inline]
+    fn peer_mut(self: Pin<&mut Self>) -> &mut Peer {
+        // SAFETY: Interior Peer is Unpin.
+        let this = unsafe { self.get_unchecked_mut() };
+        &mut this.data.peer
+    }
+
+    #[inline]
+    fn project(self: Pin<&mut Self>) -> (Pin<&mut Sleep>, &mut Data) {
+        unsafe {
+            let this = self.get_unchecked_mut();
+            (Pin::new_unchecked(&mut this.timeout), &mut this.data)
+        }
+    }
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let (timeout, data) = self.project();
+
+        if let Poll::Ready(()) = timeout.poll(cx) {
             return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, "ping timeout")));
         }
 
-        self.peer.as_mut().poll(cx)
+        Pin::new(&mut data.peer).poll(cx)
     }
 }
 
@@ -111,6 +136,40 @@ pub struct ConnectorConfig<'a> {
     pub cert: Option<&'a Path>,
     /// Path to TLS private key in PEM format.
     pub key: Option<&'a Path>,
+}
+
+struct Peers {
+    /// Map of peer ID to peer state.
+    peers: HashMap<PeerId, Pin<Box<ServerPeer>>>,
+}
+
+impl Peers {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            peers: HashMap::new(),
+        }
+    }
+
+    #[inline]
+    fn insert(&mut self, id: PeerId, peer: Pin<Box<ServerPeer>>) {
+        self.peers.insert(id, peer);
+    }
+
+    #[inline]
+    fn get(&self, id: &PeerId) -> Option<&ServerPeer> {
+        self.peers.get(id).map(|b| &**b)
+    }
+
+    #[inline]
+    fn get_mut(&mut self, id: &PeerId) -> Option<Pin<&mut ServerPeer>> {
+        self.peers.get_mut(id).map(|b| b.as_mut())
+    }
+
+    #[inline]
+    fn remove(&mut self, id: &PeerId) -> Option<Pin<Box<ServerPeer>>> {
+        self.peers.remove(id)
+    }
 }
 
 struct Connector {
@@ -153,7 +212,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
         tracing::info!(tls = connector.tls_acceptor.is_some(), addr = ?connector.listener.local_addr()?, "Listening");
     }
 
-    let mut peers = HashMap::new();
+    let mut peers = Peers::new();
     let mut wakers = Wakers::new();
     let mut state = State::new();
     let mut accepting = JoinSet::new();
@@ -195,34 +254,37 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                     }
                 };
 
-                let peer = Peer::new(addr, client);
-                tracing::info!(tls = peer.is_tls(), addr = ?peer.addr(), "Connected");
+                let peer = Peer::new(client);
+                tracing::info!(tls = peer.is_tls(), ?addr, "Connected");
 
-                let peer_state = PeerState::new(peer);
-                let peer_id = peer_state.peer_id;
+                let peer_state = ServerPeer::new(addr, peer);
+                let peer_id = peer_state.data.peer_id;
                 peers.insert(peer_id, peer_state);
                 state.register(peer_id);
             }
-            (id, result) = Peers::new(&mut peers, &mut wakers, &mut state) => {
+            (id, result) = PollPeers::new(&mut peers, &mut wakers, &mut state) => {
                 let Some(mut peer) = peers.remove(&id) else {
                     tracing::warn!(?id, "Peer not found, removed");
                     continue;
                 };
 
+                let span = tracing::info_span!("peer", id = ?id, addr = ?peer.data.addr);
+                let _guard = span.enter();
+
                 let remove = 'out: {
                     if let Err(error) = result {
-                        tracing::error!(addr = ?peer.peer.addr(), %error);
+                        tracing::error!(%error);
                         break 'out true;
                     }
 
-                    if let Err(error) = state.handle(&mut peer, &mut peers).await {
-                        tracing::error!(addr = ?peer.peer.addr(), %error);
+                    if let Err(error) = state.handle(peer.as_mut(), &mut peers).await {
+                        tracing::error!(%error);
                         break 'out true;
                     }
 
                     // We have to re-poll the peer to set it up for future
                     // wakeups.
-                    state.poll.insert(peer.peer_id);
+                    state.poll.insert(peer.data.peer_id);
                     false
                 };
 
@@ -336,53 +398,51 @@ impl State {
         self.poll.insert(peer_id);
     }
 
-    #[tracing::instrument(skip_all, fields(peer_id = ?this.peer_id, addr = ?this.peer.addr()))]
-    async fn handle(
-        &mut self,
-        this: &mut PeerState,
-        peers: &mut HashMap<PeerId, PeerState>,
-    ) -> Result<()> {
-        while let Some((message, body)) = this.peer.handle::<Event>()? {
+    #[tracing::instrument(skip_all)]
+    async fn handle(&mut self, this: Pin<&mut ServerPeer>, peers: &mut Peers) -> Result<()> {
+        let (mut timeout, data) = this.project();
+
+        while let Some((message, body)) = data.peer.read::<Event>()? {
             match message {
                 Event::Ping => {
                     let ping = body.decode::<PingBody>()?;
 
-                    this.timeout
+                    timeout
                         .as_mut()
                         .reset(time::Instant::now() + Duration::from_secs(5));
 
-                    this.peer.pong(ping.payload)?;
+                    data.peer.pong(ping.payload)?;
                 }
                 Event::Connect => {
                     let connect = body.decode::<ConnectBody>()?;
                     tracing::debug!(connect.version, connect.room = ?BStr::new(&connect.room), "Connect");
 
-                    if let Some(old_room) = this.room.replace(connect.room.clone()) {
-                        self.leave_room(&old_room, this.peer_id, peers);
+                    if let Some(old_room) = data.room.replace(connect.room.clone()) {
+                        self.leave_room(&old_room, data.peer_id, peers);
                     }
 
                     for object in connect.objects.iter() {
-                        this.objects.insert(object.id, object.clone());
+                        data.objects.insert(object.id, object.clone());
                     }
 
                     // We have just connected, so send all information about other peers to
                     // the new peer.
-                    self.join_room(this, &connect.room, peers);
+                    self.join_room(data, &connect.room, peers);
                 }
                 Event::Update => {
                     let event = body.decode::<UpdatePeer>()?;
                     tracing::debug!(?event.key, ?event.value, "Update");
 
-                    let Some(object) = this.objects.get_mut(&event.object_id) else {
+                    let Some(object) = data.objects.get_mut(&event.object_id) else {
                         continue;
                     };
 
                     object.properties.insert(event.key, event.value.clone());
 
-                    this.send_to_room(
+                    data.send_to_room(
                         |peer| {
-                            peer.updated_peer(
-                                this.peer_id,
+                            peer.peer_mut().updated_peer(
+                                data.peer_id,
                                 event.object_id,
                                 event.key,
                                 &event.value,
@@ -397,10 +457,13 @@ impl State {
                     tracing::debug!(id = ?event.object.id, "AddObject");
 
                     let object = event.object.clone();
-                    this.objects.insert(object.id, object);
+                    data.objects.insert(object.id, object);
 
-                    this.send_to_room(
-                        |peer| peer.object_added(this.peer_id, event.object.clone()),
+                    data.send_to_room(
+                        |peer| {
+                            peer.peer_mut()
+                                .object_added(data.peer_id, event.object.clone())
+                        },
                         &self.rooms,
                         peers,
                     );
@@ -409,10 +472,13 @@ impl State {
                     let event = body.decode::<RemoveObjectBody>()?;
                     tracing::debug!(id = ?event.object_id, "RemoveObject");
 
-                    this.objects.remove(&event.object_id);
+                    data.objects.remove(&event.object_id);
 
-                    this.send_to_room(
-                        |peer| peer.object_removed(this.peer_id, event.object_id),
+                    data.send_to_room(
+                        |peer| {
+                            peer.peer_mut()
+                                .object_removed(data.peer_id, event.object_id)
+                        },
                         &self.rooms,
                         peers,
                     );
@@ -428,24 +494,21 @@ impl State {
 
     fn remove_peer(
         &mut self,
-        peer: PeerState,
-        peers: &mut HashMap<PeerId, PeerState>,
+        mut peer: Pin<Box<ServerPeer>>,
+        peers: &mut Peers,
         wakers: &mut Wakers,
     ) {
-        if let Some(room) = peer.room {
-            self.leave_room(&room, peer.peer_id, peers);
+        let (_, data) = peer.as_mut().project();
+
+        if let Some(room) = &data.room {
+            self.leave_room(room, data.peer_id, peers);
         }
 
-        self.poll.remove(&peer.peer_id);
-        wakers.remove(peer.peer_id);
+        self.poll.remove(&data.peer_id);
+        wakers.remove(data.peer_id);
     }
 
-    fn leave_room(
-        &mut self,
-        room_name: &[u8],
-        leaving_id: PeerId,
-        peers: &mut HashMap<PeerId, PeerState>,
-    ) {
+    fn leave_room(&mut self, room_name: &[u8], leaving_id: PeerId, peers: &mut Peers) {
         let Some(room) = self.rooms.get_mut(room_name) else {
             return;
         };
@@ -457,7 +520,7 @@ impl State {
                 continue;
             };
 
-            if let Err(e) = peer.peer.leave(leaving_id) {
+            if let Err(e) = peer.peer_mut().leave(leaving_id) {
                 tracing::error!(?id, ?e, "Failed to send leave");
             } else {
                 self.poll.insert(leaving_id);
@@ -471,12 +534,7 @@ impl State {
         }
     }
 
-    fn join_room(
-        &mut self,
-        joining: &mut PeerState,
-        room: &[u8],
-        peers: &mut HashMap<PeerId, PeerState>,
-    ) {
+    fn join_room(&mut self, data: &mut Data, room: &[u8], peers: &mut Peers) {
         let room = self
             .rooms
             .entry(Box::<[u8]>::from(room))
@@ -490,12 +548,12 @@ impl State {
                 continue;
             };
 
-            let objects = joining.objects.values().cloned().collect::<Vec<_>>();
+            let objects = data.objects.values().cloned().collect::<Vec<_>>();
 
-            if let Err(error) = peer.peer.join(joining.peer_id, &objects) {
+            if let Err(error) = peer.peer_mut().join(data.peer_id, &objects) {
                 tracing::error!(?id, %error, "Sending join");
             } else {
-                self.poll.insert(joining.peer_id);
+                self.poll.insert(data.peer_id);
             }
         }
 
@@ -506,17 +564,17 @@ impl State {
                 continue;
             };
 
-            let objects = other.objects.values().cloned().collect::<Vec<_>>();
+            let objects = other.data.objects.values().cloned().collect::<Vec<_>>();
 
-            if let Err(error) = joining.peer.join(other.peer_id, &objects) {
+            if let Err(error) = data.peer.join(other.data.peer_id, &objects) {
                 tracing::error!(?id, %error, "Sending join");
             } else {
-                self.poll.insert(joining.peer_id);
+                self.poll.insert(data.peer_id);
             }
         }
 
-        if !room.members.contains(&joining.peer_id) {
-            room.members.push(joining.peer_id);
+        if !room.members.contains(&data.peer_id) {
+            room.members.push(data.peer_id);
         }
     }
 }
@@ -549,18 +607,14 @@ impl Future for Listen<'_> {
     }
 }
 
-struct Peers<'a> {
-    peers: &'a mut HashMap<PeerId, PeerState>,
+struct PollPeers<'a> {
+    peers: &'a mut Peers,
     wakers: &'a mut Wakers,
     state: &'a mut State,
 }
 
-impl<'a> Peers<'a> {
-    fn new(
-        peers: &'a mut HashMap<PeerId, PeerState>,
-        wakers: &'a mut Wakers,
-        state: &'a mut State,
-    ) -> Self {
+impl<'a> PollPeers<'a> {
+    fn new(peers: &'a mut Peers, wakers: &'a mut Wakers, state: &'a mut State) -> Self {
         Self {
             peers,
             wakers,
@@ -569,7 +623,7 @@ impl<'a> Peers<'a> {
     }
 }
 
-impl Future for Peers<'_> {
+impl Future for PollPeers<'_> {
     type Output = (PeerId, io::Result<()>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -579,7 +633,7 @@ impl Future for Peers<'_> {
             state,
         } = unsafe { self.get_unchecked_mut() };
 
-        wakers.refresh_parent(state, peers, cx.waker());
+        wakers.refresh_parent(state, &peers.peers, cx.waker());
 
         while let Some(id) = state.poll.pop_first() {
             let Some(peer) = peers.get_mut(&id) else {
