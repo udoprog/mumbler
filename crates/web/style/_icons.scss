@@ -1,22 +1,44 @@
 @mixin icon($name) {
     &.#{$name} {
+        mask-image: url('/static/icons/#{$name}.svg');
+        background-color: var(--icon-color);
+    }
+
+    &.invert {
+        background-color: var(--icon-color-invert);
+    }
+}
+
+@mixin color_image($name) {
+    &.#{$name} {
         background-image: url('/static/icons/#{$name}.svg');
     }
 }
 
+.btn > .icon {
+    width: $icon-height;
+    height: $icon-height;
+}
+
+.btn.sm > .icon {
+    width: $icon-height-sm;
+    height: $icon-height-sm;
+}
+
 .icon {
     display: inline-block;
-    width: 1em;
-    height: 1em;
-    background-size: contain;
-    background-repeat: no-repeat;
-    background-position: center;
     vertical-align: middle;
+
+    width: $btn-height;
+    height: $btn-height;
+
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
 
     @include icon('x-mark');
     @include icon('check');
     @include icon('restart');
-    @include icon('mumble');
     @include icon('remote');
     @include icon('signal');
     @include icon('signal-slash');
@@ -27,4 +49,18 @@
     @include icon('cursor-arrow-rays');
     @include icon('arrow-up-on-square');
     @include icon('photo');
+}
+
+.image-icon {
+    display: inline-block;
+    vertical-align: middle;
+
+    width: $btn-height;
+    height: $btn-height;
+
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+
+    @include color_image('mumble');
 }

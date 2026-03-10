@@ -37,13 +37,22 @@ pub(crate) struct IconProps {
     pub(crate) name: String,
     #[prop_or_default]
     pub(crate) title: Option<String>,
+    #[prop_or_default]
+    pub(crate) invert: bool,
 }
 
 #[function_component(Icon)]
 pub(crate) fn icon(props: &IconProps) -> Html {
     let title = props.title.clone();
 
+    let class = match props.name.as_str() {
+        "mumble" => "image-icon",
+        _ => "icon",
+    };
+
+    let class = classes!(class, props.name.clone(), props.invert.then_some("invert"));
+
     html! {
-        <span class={classes!("icon", props.name.clone())} {title} />
+        <span {class} {title} />
     }
 }

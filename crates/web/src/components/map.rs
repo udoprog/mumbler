@@ -32,7 +32,6 @@ const DEFAULT_STATIC_WIDTH: f32 = 1.0;
 const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 const ANIMATION_FPS: u32 = 60;
-const HELP: &str = "Shift to look / Shift + Click to place eye";
 
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
@@ -439,6 +438,18 @@ pub(crate) struct Map {
     _set_mumble_follow_selection: ws::Request,
     /// In-flight visibility toggle requests, per object.
     hide_requests: HashMap<Id, ws::Request>,
+    /// Position and target of the right-click context menu, if visible.
+    context_menu: Option<ContextMenu>,
+}
+
+/// State for the right-click context menu.
+struct ContextMenu {
+    /// Object the menu was opened for.
+    object_id: Id,
+    /// CSS left position (pixels from the map-sizer left edge).
+    x: f64,
+    /// CSS top position (pixels from the map-sizer top edge).
+    y: f64,
 }
 
 pub(crate) enum Msg {
@@ -465,7 +476,7 @@ pub(crate) enum Msg {
     CreateObject,
     CreateStaticObject,
     ConfirmDelete(Id),
-    CancelDelete(Id),
+    CancelDelete,
     DeleteObject(Id),
     ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
@@ -476,6 +487,8 @@ pub(crate) enum Msg {
     ToggleHidden(Id),
     ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
     SetLog(log::Log),
+    ContextMenu(MouseEvent),
+    CloseContextMenu,
 }
 
 impl From<ImageMessage> for Msg {
@@ -575,6 +588,7 @@ impl Component for Map {
             _set_mumble_object: ws::Request::new(),
             _set_mumble_follow_selection: ws::Request::new(),
             hide_requests: HashMap::new(),
+            context_menu: None,
         };
 
         this.refresh(ctx);
@@ -654,22 +668,118 @@ impl Component for Map {
             pos = None;
         }
 
-        let follow_classes = classes! {
-            "btn", "square",
-            self.config.mumble_follow_selection.then_some("success"),
+        let object_list_header = {
+            html! {
+                <div class="control-group">
+                    <button class="btn square primary" title="Add avatar" onclick={ctx.link().callback(|_| Msg::CreateObject)}>
+                        <Icon name="user-plus" title="Add avatar" />
+                    </button>
+                    <button class="btn square" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
+                        <Icon name="square-2-stack" title="Add static" />
+                    </button>
+                </div>
+            }
         };
 
-        let toggle_mumblelink_title = if *self.config.mumble_follow_selection {
-            "Disable MumbleLink selection following"
-        } else {
-            "Enable MumbleLink selection following"
+        let toolbar = {
+            let o = self.selected.and_then(|id| self.objects.get(&id));
+
+            let is_hidden = o.map(|o| o.data.is_hidden()).unwrap_or_default();
+            let is_mumble = o
+                .map(|o| *self.config.mumble_object == Some(o.data.id))
+                .unwrap_or_default();
+
+            let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
+            let eye_title = if is_hidden {
+                "Hidden from others"
+            } else {
+                "Visible to others"
+            };
+
+            let follow_classes = classes! {
+                "btn", "square",
+                self.config.mumble_follow_selection.then_some("success"),
+            };
+
+            let follow_title = if *self.config.mumble_follow_selection {
+                "Disable MumbleLink selection following"
+            } else {
+                "Enable MumbleLink selection following"
+            };
+
+            let settings_classes = classes! {
+                "btn",
+                "square",
+                o.is_some().then_some("primary"),
+                o.is_none().then_some("disabled"),
+            };
+
+            let delete_classes = classes! {
+                "btn",
+                "square",
+                "right",
+                o.is_some().then_some("danger"),
+                o.is_none().then_some("disabled"),
+            };
+
+            let mumble_classes = classes! {
+                "btn", "square",
+                is_mumble.then_some("success"),
+                o.is_none().then_some("disabled"),
+            };
+
+            let hidden_classes = classes! {
+                "btn", "square",
+                is_hidden.then_some("danger"),
+                o.is_none().then_some("disabled"),
+            };
+
+            let settings_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
+            });
+
+            let delete_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ConfirmDelete(id))
+            });
+
+            let mumble_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
+            });
+
+            let hidden_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ToggleHidden(id))
+            });
+
+            html! {
+                <div class="control-group">
+                    <button class={settings_classes} title="Object settings" onclick={settings_click}>
+                        <Icon name="cog" />
+                    </button>
+                    <button class={mumble_classes} title="Toggle as MumbleLink Source" onclick={mumble_click}>
+                        <Icon name="mumble" />
+                    </button>
+                    <button class={follow_classes} title={follow_title} onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
+                        <Icon name="cursor-arrow-rays" />
+                    </button>
+                    <button class={hidden_classes} title={eye_title} onclick={hidden_click}>
+                        <Icon name={eye_icon} />
+                    </button>
+                    <button class={delete_classes} title="Delete object" onclick={delete_click}>
+                        <Icon name="x-mark" />
+                    </button>
+                </div>
+            }
         };
 
         html! {
             <>
             <div class="row">
                 <div class="col-9 rows">
-                    <div class="pre">{HELP}</div>
+                    {toolbar}
 
                     <div class="map-sizer" ref={self.canvas_sizer.clone()}>
                         <canvas id="map" ref={self.canvas_ref.clone()}
@@ -678,110 +788,97 @@ impl Component for Map {
                             onmouseup={ctx.link().callback(Msg::MouseUp)}
                             onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
                             onwheel={ctx.link().callback(Msg::Wheel)}
+                            oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
                         ></canvas>
+
+                        if let Some(menu) = &self.context_menu {
+                            {self.render_context_menu(ctx, menu)}
+                        }
                     </div>
 
                     {pos}
                 </div>
 
                 <div class="col-3 rows">
-                    <div class="object-list-header">
-                        <button class={follow_classes}
-                            title={toggle_mumblelink_title}
-                            onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
-                            <Icon name="cursor-arrow-rays" />
-                        </button>
-                        <button class="btn square primary" title="Add avatar"
-                            onclick={ctx.link().callback(|_| Msg::CreateObject)}>
-                            <Icon name="user-plus" title="Add avatar" />
-                        </button>
-                        <button class="btn square" title="Add static object"
-                            onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
-                            <Icon name="square-2-stack" title="Add static" />
-                        </button>
-                    </div>
+                    {object_list_header}
 
                     <div class="object-list">
                         {for self.objects.values().map(|o| {
                             let object_id = o.data.id;
-
                             let selected = self.selected == Some(object_id);
                             let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(object_id)));
                             let classes = classes!("object-list-item", selected.then_some("selected"));
                             let label = o.data.name().unwrap_or("");
 
-                            if self.delete.contains(&object_id) {
-                                html! {
-                                    <div class={classes}>
-                                        <span class="object-list-item-label">{"Confirm removal?"}</span>
-                                        <button class="btn sm square success" title="Remove"
-                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(object_id))}>
-                                            <Icon name="check" />
-                                        </button>
-                                        <button class="btn sm square danger" title="Cancel"
-                                            onclick={ctx.link().callback(move |_| Msg::CancelDelete(object_id))}>
-                                            <Icon name="x-mark" />
-                                        </button>
-                                    </div>
-                                }
-                            } else {
-                                let is_hidden = o.data.is_hidden();
-                                let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
-                                let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
-                                let is_mumble = *self.config.mumble_object == Some(object_id);
+                            let is_hidden = o.data.is_hidden();
+                            let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
+                            let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
+                            let is_mumble = *self.config.mumble_object == Some(object_id);
 
-                                let mumble_classes = classes! {
-                                    "btn", "sm", "square", "object-list-item-action",
-                                    is_mumble.then_some("success"),
-                                    is_mumble.then_some("active"),
-                                };
+                            let mumble_classes = classes! {
+                                "btn", "sm", "square", "object-list-item-action",
+                                is_mumble.then_some("success"),
+                                is_mumble.then_some("active"),
+                            };
 
-                                let hidden_classes = classes! {
-                                    "btn", "sm", "square", "object-list-item-action",
-                                    is_hidden.then_some("danger"),
-                                    is_hidden.then_some("active"),
-                                };
+                            let hidden_classes = classes! {
+                                "btn", "sm", "square", "object-list-item-action",
+                                is_hidden.then_some("danger"),
+                                is_hidden.then_some("active"),
+                            };
 
-                                html! {
-                                    <div class={classes} onclick={on_click}>
-                                        <span class="object-list-item-label">{label}</span>
-                                        <button class="btn sm square object-list-item-action" title="Object settings"
-                                            onclick={ctx.link().callback(move |e: MouseEvent| {
-                                                e.stop_propagation();
-                                                Msg::OpenObjectSettings(object_id)
-                                            })}>
-                                            <Icon name="cog" />
-                                        </button>
-                                        <button class="btn sm square danger object-list-item-action" title="Delete object"
-                                            onclick={ctx.link().callback(move |e: MouseEvent| {
-                                                e.stop_propagation();
-                                                Msg::ConfirmDelete(object_id)
-                                            })}>
-                                            <Icon name="x-mark" />
-                                        </button>
-                                        <button class={mumble_classes}
-                                            title="Toggle as MumbleLink Source"
-                                            onclick={ctx.link().callback(move |e: MouseEvent| {
-                                                e.stop_propagation();
-                                                Msg::ToggleMumbleObject(object_id)
-                                            })}>
-                                            <Icon name="mumble" />
-                                        </button>
-                                        <button class={hidden_classes}
-                                            title={eye_title}
-                                            onclick={ctx.link().callback(move |e: MouseEvent| {
-                                                e.stop_propagation();
-                                                Msg::ToggleHidden(object_id)
-                                            })}>
-                                            <Icon name={eye_icon} />
-                                        </button>
-                                    </div>
-                                }
+                            html! {
+                                <div class={classes} onclick={on_click}>
+                                    <span class="object-list-item-label">{label}</span>
+                                    <button class={mumble_classes}
+                                        title="Toggle as MumbleLink Source"
+                                        onclick={ctx.link().callback(move |e: MouseEvent| {
+                                            e.stop_propagation();
+                                            Msg::ToggleMumbleObject(object_id)
+                                        })}>
+                                        <Icon name="mumble" />
+                                    </button>
+                                    <button class={hidden_classes}
+                                        title={eye_title}
+                                        onclick={ctx.link().callback(move |e: MouseEvent| {
+                                            e.stop_propagation();
+                                            Msg::ToggleHidden(object_id)
+                                        })}>
+                                        <Icon name={eye_icon} />
+                                    </button>
+                                </div>
                             }
                         })}
                     </div>
                 </div>
             </div>
+
+            if let Some(id) = self.delete.iter().next().copied() {
+                <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                    <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
+                        <div class="modal-header">
+                            <h2>{"Confirm Deletion"}</h2>
+                            <button class="btn sm square danger" title="Cancel"
+                                onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                <Icon name="x-mark" />
+                            </button>
+                        </div>
+                        <div class="modal-body rows">
+                            <p>{format!("Remove \"{}\"?", self.objects.get(&id).and_then(|o| o.data.name()).unwrap_or("unnamed"))}</p>
+                            <div class="btn-group">
+                                <button class="btn danger"
+                                    onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
+                                    {"Delete"}
+                                </button>
+                                <button class="btn"
+                                    onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                    {"Cancel"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
 
             if let Some(id) = self.open_settings {
                 <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
@@ -824,6 +921,7 @@ impl Map {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::OpenObjectSettings(id) => {
+                self.context_menu = None;
                 self.open_settings = Some(id);
                 Ok(true)
             }
@@ -832,6 +930,8 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
+                self.context_menu = None;
+
                 let update = if *self.config.mumble_object == Some(id) {
                     None
                 } else {
@@ -857,6 +957,8 @@ impl Map {
                 Ok(false)
             }
             Msg::ToggleHidden(id) => {
+                self.context_menu = None;
+
                 let Some(object) = self.objects.get_mut(&id) else {
                     return Ok(false);
                 };
@@ -1145,6 +1247,7 @@ impl Map {
             }
             Msg::SelectObject(id) => {
                 self.selected = id;
+                self.context_menu = None;
 
                 if let Some(id) = id {
                     self.delete.remove(&id);
@@ -1231,11 +1334,13 @@ impl Map {
                 Ok(true)
             }
             Msg::ConfirmDelete(id) => {
+                self.context_menu = None;
+                self.delete.clear();
                 self.delete.insert(id);
                 Ok(true)
             }
-            Msg::CancelDelete(id) => {
-                self.delete.remove(&id);
+            Msg::CancelDelete => {
+                self.delete.clear();
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -1254,6 +1359,15 @@ impl Map {
                 let result = result?;
                 _ = result.decode()?;
                 Ok(false)
+            }
+            Msg::ContextMenu(e) => {
+                e.prevent_default();
+                self.on_context_menu(ctx, e)?;
+                Ok(true)
+            }
+            Msg::CloseContextMenu => {
+                self.context_menu = None;
+                Ok(true)
             }
         }
     }
@@ -1415,7 +1529,90 @@ impl Map {
             .send();
     }
 
+    fn on_context_menu(&mut self, _ctx: &Context<Self>, e: MouseEvent) -> Result<(), Error> {
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
+
+        let t = ViewTransform::new(&canvas, &self.config);
+        let (wx, wz) = t.canvas_to_world(e.offset_x() as f64, e.offset_y() as f64);
+
+        let hit = self
+            .objects
+            .values()
+            .find(|o| {
+                let p = o.data.transform.position;
+                let r = o.data.click_radius();
+                let dx = p.x - wx;
+                let dz = p.z - wz;
+                dx * dx + dz * dz <= r * r
+            })
+            .map(|o| o.data.id);
+
+        if let Some(object_id) = hit {
+            self.selected = Some(object_id);
+            self.context_menu = Some(ContextMenu {
+                object_id,
+                x: e.offset_x() as f64,
+                y: e.offset_y() as f64,
+            });
+        } else {
+            self.context_menu = None;
+        }
+
+        Ok(())
+    }
+
+    fn render_context_menu(&self, ctx: &Context<Self>, menu: &ContextMenu) -> Html {
+        let object_id = menu.object_id;
+        let style = format!("left: {}px; top: {}px;", menu.x, menu.y);
+
+        let Some(o) = self.objects.get(&object_id) else {
+            return html! {};
+        };
+
+        let is_hidden = o.data.is_hidden();
+        let eye_label = if is_hidden { "Show" } else { "Hide" };
+        let eye_icon = if is_hidden { "eye" } else { "eye-slash" };
+        let is_mumble = *self.config.mumble_object == Some(object_id);
+        let mumble_label = if is_mumble {
+            "Unset MumbleLink"
+        } else {
+            "Set as MumbleLink"
+        };
+
+        html! {
+            <div class="context-menu-backdrop" onclick={ctx.link().callback(|_| Msg::CloseContextMenu)}>
+                <div class="context-menu" {style} onclick={|e: MouseEvent| e.stop_propagation()}>
+                    <button class="context-menu-item"
+                        onclick={ctx.link().callback(move |_| Msg::OpenObjectSettings(object_id))}>
+                        <Icon name="cog" invert={true} />
+                        {"Settings"}
+                    </button>
+                    <button class="context-menu-item"
+                        onclick={ctx.link().callback(move |_| Msg::ToggleHidden(object_id))}>
+                        <Icon name={eye_icon} invert={true} />
+                        {eye_label}
+                    </button>
+                    <button class="context-menu-item"
+                        onclick={ctx.link().callback(move |_| Msg::ToggleMumbleObject(object_id))}>
+                        <Icon name="mumble" invert={true} />
+                        {mumble_label}
+                    </button>
+                    <div class="context-menu-separator" />
+                    <button class="context-menu-item danger"
+                        onclick={ctx.link().callback(move |_| Msg::ConfirmDelete(object_id))}>
+                        <Icon name="x-mark" invert={true} />
+                        {"Delete"}
+                    </button>
+                </div>
+            </div>
+        }
+    }
+
     fn on_mouse_down(&mut self, ctx: &Context<Self>, e: MouseEvent) -> Result<(), Error> {
+        self.context_menu = None;
+
         let needs_redraw = 'out: {
             match e.button() {
                 0 => {
