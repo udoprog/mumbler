@@ -55,6 +55,7 @@ jobs:
       with: {name: dist-frontend, path: dist}
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
+    - run: dnf install --assumeyes gcc gcc-c++ git
     - uses: udoprog/kick@nightly
     - run: kick define --github-action
       id: release
