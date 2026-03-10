@@ -431,7 +431,7 @@ pub(crate) struct Map {
     /// In-flight delete-object request.
     _delete_object: ws::Request,
     /// Index of the object pending delete confirmation.
-    delete: HashSet<Id>,
+    delete: Option<Id>,
     /// Object whose settings modal is currently open.
     open_settings: Option<Id>,
     _set_mumble_object: ws::Request,
@@ -583,7 +583,7 @@ impl Component for Map {
             _create_object: ws::Request::new(),
             _create_static_object: ws::Request::new(),
             _delete_object: ws::Request::new(),
-            delete: HashSet::new(),
+            delete: None,
             open_settings: None,
             _set_mumble_object: ws::Request::new(),
             _set_mumble_follow_selection: ws::Request::new(),
@@ -853,7 +853,7 @@ impl Component for Map {
                 </div>
             </div>
 
-            if let Some(id) = self.delete.iter().next().copied() {
+            if let Some(id) = self.delete {
                 <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
                     <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
                         <div class="modal-header">
@@ -1249,8 +1249,8 @@ impl Map {
                 self.selected = id;
                 self.context_menu = None;
 
-                if let Some(id) = id {
-                    self.delete.remove(&id);
+                if id == self.delete {
+                    self.delete = None;
                 }
 
                 if *self.config.mumble_follow_selection && *self.config.mumble_object != id {
@@ -1335,12 +1335,11 @@ impl Map {
             }
             Msg::ConfirmDelete(id) => {
                 self.context_menu = None;
-                self.delete.clear();
-                self.delete.insert(id);
+                self.delete = Some(id);
                 Ok(true)
             }
             Msg::CancelDelete => {
-                self.delete.clear();
+                self.delete = None;
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -1352,7 +1351,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
-                self.delete.remove(&id);
+                self.delete = None;
                 Ok(false)
             }
             Msg::ObjectDeleted(result) => {
@@ -1640,7 +1639,7 @@ impl Map {
                         && self.selected != Some(hit_id)
                     {
                         ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
-                        self.delete.remove(&hit_id);
+                        self.delete = None;
                         break 'out true;
                     }
 
@@ -1896,16 +1895,17 @@ impl Map {
     }
 
     fn redraw(&self) -> Result<(), Error> {
-        let canvas = self
-            .canvas_ref
-            .cast::<HtmlCanvasElement>()
-            .ok_or("missing canvas")?;
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
 
-        let cx = canvas.get_context("2d")?.ok_or("missing canvas context")?;
+        let Some(cx) = canvas.get_context("2d")? else {
+            return Ok(());
+        };
 
-        let cx = cx
-            .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(|_| "invalid canvas context")?;
+        let Ok(cx) = cx.dyn_into::<CanvasRenderingContext2d>() else {
+            return Ok(());
+        };
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 

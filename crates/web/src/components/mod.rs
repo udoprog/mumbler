@@ -1,3 +1,6 @@
+mod macros;
+use self::macros::into_target;
+
 mod map;
 pub(crate) use self::map::Map;
 

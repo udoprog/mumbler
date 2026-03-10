@@ -15,7 +15,7 @@ use crate::state::State;
 
 use super::CropModal;
 use super::ImageGalleryModal;
-use super::render;
+use super::{into_target, render};
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -286,16 +286,13 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::AvatarImageSelected(e) => {
+                let input = into_target!(e, HtmlInputElement);
+
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
-                self.crop_source_data = None;
 
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                self.crop_source_data = None;
 
                 let files = input.files().ok_or("no file list")?;
                 let file = files.get(0).ok_or("no file selected")?;
@@ -323,6 +320,7 @@ impl ObjectSettings {
                 let Some((content_type, data)) = self.crop_source_data.take() else {
                     return Err("image data not ready".into());
                 };
+
                 self.upload_image = ctx
                     .props()
                     .ws
@@ -335,6 +333,7 @@ impl ObjectSettings {
                     })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
+
                 self.image_uploading = true;
                 Ok(true)
             }
@@ -346,13 +345,17 @@ impl ObjectSettings {
                 self._file_reader = None;
                 Ok(true)
             }
-            Msg::ImageUploaded(result) => {
+            Msg::ImageUploaded(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
                 self.image_uploading = false;
+
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
-                let result = result?;
-                _ = result.decode()?;
+
+                ctx.link().send_message(Msg::SelectImage(body.id));
                 self.refresh(ctx);
                 Ok(false)
             }
@@ -389,11 +392,7 @@ impl ObjectSettings {
                 Ok(false)
             }
             Msg::ColorChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let hex_string = input.value();
                 if let Some(color) = api::Color::from_hex(&hex_string) {
@@ -407,11 +406,7 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::NameChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let value = input.value();
                 let name = if value.is_empty() { None } else { Some(value) };
@@ -424,11 +419,7 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::RadiusChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let value = 'done: {
                     let Ok(radius) = input.value().parse::<f32>() else {
@@ -444,11 +435,7 @@ impl ObjectSettings {
                 Ok(value)
             }
             Msg::SpeedChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let value = 'done: {
                     let Ok(speed) = input.value().parse::<f32>() else {
@@ -539,11 +526,13 @@ impl ObjectSettings {
             return Ok(());
         };
 
-        let cx = canvas.get_context("2d")?.ok_or("missing canvas context")?;
+        let Some(cx) = canvas.get_context("2d")? else {
+            return Ok(());
+        };
 
-        let cx = cx
-            .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(|_| "invalid canvas context")?;
+        let Ok(cx) = cx.dyn_into::<CanvasRenderingContext2d>() else {
+            return Ok(());
+        };
 
         let avatar = render::RenderAvatar {
             transform: api::Transform::origin(),

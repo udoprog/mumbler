@@ -13,9 +13,7 @@ use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::state::State;
 
-use super::CropModal;
-use super::ImageGalleryModal;
-use super::render;
+use super::{CropModal, ImageGalleryModal, into_target, render};
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -289,13 +287,10 @@ impl StaticSettings {
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
+
                 self.crop_source_data = None;
 
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let files = input.files().ok_or("no file list")?;
                 let file = files.get(0).ok_or("no file selected")?;
@@ -335,6 +330,7 @@ impl StaticSettings {
                     })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
+
                 self.image_uploading = true;
                 Ok(true)
             }
@@ -346,13 +342,17 @@ impl StaticSettings {
                 self._file_reader = None;
                 Ok(true)
             }
-            Msg::ImageUploaded(result) => {
+            Msg::ImageUploaded(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
                 self.image_uploading = false;
+
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
-                let result = result?;
-                _ = result.decode()?;
+
+                ctx.link().send_message(Msg::SelectImage(body.id));
                 self.refresh(ctx);
                 Ok(false)
             }
@@ -389,16 +389,14 @@ impl StaticSettings {
                 Ok(false)
             }
             Msg::ColorChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let hex_string = input.value();
+
                 if let Some(color) = api::Color::from_hex(&hex_string) {
                     ctx.link().send_message(Msg::SelectColor(color));
                 }
+
                 Ok(false)
             }
             Msg::SelectColor(color) => {
@@ -407,11 +405,7 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::NameChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let value = input.value();
                 let name = if value.is_empty() { None } else { Some(value) };
@@ -424,11 +418,7 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::WidthChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let changed = 'done: {
                     let Ok(width) = input.value().parse::<f32>() else {
@@ -444,11 +434,7 @@ impl StaticSettings {
                 Ok(changed)
             }
             Msg::HeightChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let changed = 'done: {
                     let Ok(height) = input.value().parse::<f32>() else {
@@ -539,11 +525,13 @@ impl StaticSettings {
             return Ok(());
         };
 
-        let cx = canvas.get_context("2d")?.ok_or("missing canvas context")?;
+        let Some(cx) = canvas.get_context("2d")? else {
+            return Ok(());
+        };
 
-        let cx = cx
-            .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(|_| "invalid canvas context")?;
+        let Ok(cx) = cx.dyn_into::<CanvasRenderingContext2d>() else {
+            return Ok(());
+        };
 
         let s = render::RenderStatic {
             transform: api::Transform::origin(),

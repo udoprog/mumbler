@@ -9,6 +9,8 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
+use super::into_target;
+
 pub(crate) enum Msg {
     StateChanged(ws::State),
     ServerChanged(Event),
@@ -138,11 +140,7 @@ impl Settings {
                 Ok(true)
             }
             Msg::ServerChanged(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let value = input.value();
                 let value = value.trim();
@@ -168,11 +166,7 @@ impl Settings {
                 Ok(false)
             }
             Msg::TlsToggled(e) => {
-                let input = e
-                    .target()
-                    .ok_or("no target")?
-                    .dyn_into::<HtmlInputElement>()
-                    .map_err(|_| "target is not an input element")?;
+                let input = into_target!(e, HtmlInputElement);
 
                 let remote_server_tls = input.checked();
                 *self.remote_server_tls = remote_server_tls;
