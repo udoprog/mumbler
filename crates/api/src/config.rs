@@ -91,6 +91,9 @@ keys! {
     STATIC_WIDTH: Float = 19,
     /// Height of a static object in world units.
     STATIC_HEIGHT: Float = 20,
+    /// An object is locked from further interaction. This prevents clicking on
+    /// it in the map.
+    LOCKED: Boolean = 22,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

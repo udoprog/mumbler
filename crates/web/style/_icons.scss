@@ -52,6 +52,8 @@
     @include icon('squares-plus');
     @include icon('squares-2x2');
     @include icon('user');
+    @include icon('lock-open');
+    @include icon('lock-closed');
 }
 
 .image-icon {

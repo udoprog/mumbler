@@ -188,6 +188,7 @@ pub(crate) enum ObjectKind {
 pub(crate) struct ObjectData {
     pub(crate) id: Id,
     pub(crate) transform: State<Transform>,
+    pub(crate) locked: State<bool>,
     pub(crate) kind: ObjectKind,
 }
 
@@ -279,6 +280,13 @@ impl ObjectData {
                     .as_transform()
                     .unwrap_or_else(Transform::origin),
             ),
+            locked: State::new(
+                remote
+                    .properties
+                    .get(Key::LOCKED)
+                    .as_bool()
+                    .unwrap_or(false),
+            ),
             kind,
         }
     }
@@ -288,6 +296,7 @@ impl ObjectData {
             Key::TRANSFORM => self
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             key => match &mut self.kind {
                 ObjectKind::Token(token) => token.update(key, value),
                 ObjectKind::Static(s) => s.update(key, value),
@@ -379,6 +388,11 @@ impl ObjectData {
             ObjectKind::Unknown => false,
         }
     }
+
+    #[inline]
+    fn is_locked(&self) -> bool {
+        *self.locked
+    }
 }
 
 pub(crate) struct Map {
@@ -436,7 +450,8 @@ pub(crate) struct Map {
     delete: Option<Id>,
     /// Object whose settings modal is currently open.
     open_settings: Option<Id>,
-    _set_mumble_object: ws::Request,
+    _toggle_mumble_request: ws::Request,
+    _toggle_locked_request: ws::Request,
     _set_mumble_follow_selection: ws::Request,
     /// In-flight visibility toggle requests, per object.
     hide_requests: HashMap<Id, ws::Request>,
@@ -484,6 +499,7 @@ pub(crate) enum Msg {
     OpenObjectSettings(Id),
     CloseObjectSettings,
     ToggleMumbleObject(Id),
+    ToggleLocked(Id),
     SetConfig(Result<Packet<api::UpdateConfig>, ws::Error>),
     ToggleFollowMumbleSelection,
     ToggleHidden(Id),
@@ -587,7 +603,8 @@ impl Component for Map {
             _delete_object: ws::Request::new(),
             delete: None,
             open_settings: None,
-            _set_mumble_object: ws::Request::new(),
+            _toggle_mumble_request: ws::Request::new(),
+            _toggle_locked_request: ws::Request::new(),
             _set_mumble_follow_selection: ws::Request::new(),
             hide_requests: HashMap::new(),
             context_menu: None,
@@ -687,16 +704,25 @@ impl Component for Map {
             let o = self.selected.and_then(|id| self.objects.get(&id));
 
             let is_hidden = o.map(|o| o.data.is_hidden()).unwrap_or_default();
+            let is_locked = o.map(|o| *o.data.locked).unwrap_or_default();
             let is_mumble = o
                 .map(|o| *self.config.mumble_object == Some(o.data.id))
                 .unwrap_or_default();
 
-            let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
-            let eye_title = if is_hidden {
+            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
+            let locked_icon = if is_locked {
+                "lock-closed"
+            } else {
+                "lock-open"
+            };
+
+            let hidden_title = if is_hidden {
                 "Hidden from others"
             } else {
                 "Visible to others"
             };
+
+            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
 
             let follow_classes = classes! {
                 "btn", "square",
@@ -736,6 +762,12 @@ impl Component for Map {
                 o.is_none().then_some("disabled"),
             };
 
+            let locked_classes = classes! {
+                "btn", "square",
+                is_locked.then_some("danger"),
+                o.is_none().then_some("disabled"),
+            };
+
             let settings_click = o.map(|o| {
                 let id = o.data.id;
                 ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
@@ -756,6 +788,11 @@ impl Component for Map {
                 ctx.link().callback(move |_| Msg::ToggleHidden(id))
             });
 
+            let locked_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ToggleLocked(id))
+            });
+
             html! {
                 <div class="control-group">
                     <button class={settings_classes} title="Object settings" onclick={settings_click}>
@@ -767,8 +804,11 @@ impl Component for Map {
                     <button class={follow_classes} title={follow_title} onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
                         <Icon name="cursor-arrow-rays" />
                     </button>
-                    <button class={hidden_classes} title={eye_title} onclick={hidden_click}>
-                        <Icon name={eye_icon} />
+                    <button class={hidden_classes} title={hidden_title} onclick={hidden_click}>
+                        <Icon name={hidden_icon} />
+                    </button>
+                    <button class={locked_classes} title={locked_title} onclick={locked_click}>
+                        <Icon name={locked_icon} />
                     </button>
                     <button class={delete_classes} title="Delete object" onclick={delete_click}>
                         <Icon name="x-mark" />
@@ -813,8 +853,11 @@ impl Component for Map {
                             let label = o.data.name().unwrap_or("");
 
                             let is_hidden = o.data.is_hidden();
-                            let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
-                            let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
+                            let is_locked = o.data.is_locked();
+                            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
+                            let hidden_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
+                            let locked_icon = if is_locked { "lock-closed" } else { "lock-open" };
+                            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
                             let is_mumble = *self.config.mumble_object == Some(object_id);
 
                             let mumble_classes = classes! {
@@ -827,6 +870,12 @@ impl Component for Map {
                                 "btn", "sm", "square", "object-list-item-action",
                                 is_hidden.then_some("danger"),
                                 is_hidden.then_some("active"),
+                            };
+
+                            let locked_classes = classes! {
+                                "btn", "sm", "square", "object-list-item-action",
+                                is_locked.then_some("danger"),
+                                is_locked.then_some("active"),
                             };
 
                             let icon_name = match o.data.kind {
@@ -849,12 +898,20 @@ impl Component for Map {
                                         <Icon name="mumble" />
                                     </button>
                                     <button class={hidden_classes}
-                                        title={eye_title}
+                                        title={hidden_title}
                                         onclick={ctx.link().callback(move |ev: MouseEvent| {
                                             ev.stop_propagation();
                                             Msg::ToggleHidden(object_id)
                                         })}>
-                                        <Icon name={eye_icon} />
+                                        <Icon name={hidden_icon} />
+                                    </button>
+                                    <button class={locked_classes}
+                                        title={locked_title}
+                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                            ev.stop_propagation();
+                                            Msg::ToggleLocked(object_id)
+                                        })}>
+                                        <Icon name={locked_icon} />
                                     </button>
                                 </div>
                             }
@@ -950,12 +1007,34 @@ impl Map {
 
                 *self.config.mumble_object = update;
 
-                self._set_mumble_object = ctx
+                self._toggle_mumble_request = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
                         values: vec![(Key::MUMBLE_OBJECT, Value::from(update))],
+                    })
+                    .on_packet(ctx.link().callback(Msg::SetConfig))
+                    .send();
+
+                Ok(true)
+            }
+            Msg::ToggleLocked(id) => {
+                let Some(object) = self.objects.get_mut(&id) else {
+                    return Ok(false);
+                };
+
+                let locked = !*object.data.locked;
+                *object.data.locked = locked;
+
+                self._toggle_locked_request = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdateRequest {
+                        object_id: id,
+                        key: Key::LOCKED,
+                        value: Value::from(locked),
                     })
                     .on_packet(ctx.link().callback(Msg::SetConfig))
                     .send();
@@ -1266,7 +1345,7 @@ impl Map {
                 if *self.config.mumble_follow_selection && *self.config.mumble_object != id {
                     *self.config.mumble_object = id;
 
-                    self._set_mumble_object = ctx
+                    self._toggle_mumble_request = ctx
                         .props()
                         .ws
                         .request()
@@ -1546,7 +1625,10 @@ impl Map {
         let hit = self
             .objects
             .values()
-            .find(|o| o.data.transform.position.xz().dist(w) < o.data.click_radius())
+            .find(|o| {
+                o.data.transform.position.xz().dist(w) < o.data.click_radius()
+                    && !o.data.is_locked()
+            })
             .map(|o| o.data.id);
 
         if let Some(object_id) = hit {
@@ -1631,6 +1713,7 @@ impl Map {
                             .values()
                             .find(|o| {
                                 o.data.transform.position.xz().dist(e) < o.data.click_radius()
+                                    && !o.data.is_locked()
                             })
                             .map(|o| o.data.id);
 
@@ -1805,6 +1888,7 @@ impl Map {
             .selected
             .and_then(|id| self.objects.get(&id))
             .and_then(|o| o.arrow_target);
+
         let needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
 
         self.pan_anchor = None;
