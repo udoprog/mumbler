@@ -33,6 +33,7 @@ pub(crate) enum Msg {
     UpdateName(Option<String>),
     WidthChanged(Event),
     HeightChanged(Event),
+    FixedRatioChanged(Event),
     UpdateResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
@@ -54,6 +55,7 @@ pub(crate) struct StaticSettings {
     name: State<Option<String>>,
     width: State<f32>,
     height: State<f32>,
+    ratio: State<Option<f32>>,
     images: Vec<api::Image>,
     gallery_open: bool,
     crop_source_url: Option<String>,
@@ -72,6 +74,7 @@ pub(crate) struct StaticSettings {
     _select_color: ws::Request,
     _update_name: ws::Request,
     _update_dimensions: ws::Request,
+    _update_fixed_ratio: ws::Request,
     _local_update_listener: ws::Listener,
 }
 
@@ -109,6 +112,7 @@ impl Component for StaticSettings {
             name: State::new(None),
             width: State::new(1.0),
             height: State::new(1.0),
+            ratio: State::new(None),
             images: Vec::new(),
             gallery_open: false,
             crop_source_url: None,
@@ -127,6 +131,7 @@ impl Component for StaticSettings {
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
             _update_dimensions: ws::Request::new(),
+            _update_fixed_ratio: ws::Request::new(),
             _local_update_listener,
         };
 
@@ -152,6 +157,12 @@ impl Component for StaticSettings {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let color = self.color.unwrap_or_else(Color::neutral);
+
+        let current_ratio = if let Some(ratio) = *self.ratio {
+            html! { <span class="fixed-ratio"> {format!("{:.2}:1", ratio)} </span> }
+        } else {
+            html! {}
+        };
 
         html! {
             <>
@@ -198,18 +209,33 @@ impl Component for StaticSettings {
                             />
                     </section>
 
+                    if self.ratio.is_none() {
+                        <section class="input-group">
+                            <label for="static-height">{"Height:"}</label>
+
+                            <input
+                                id="static-height"
+                                type="number"
+                                min="0.05"
+                                max="50"
+                                step="0.05"
+                                value={format!("{}", *self.height)}
+                                onchange={ctx.link().callback(Msg::HeightChanged)}
+                                />
+                        </section>
+                    }
+
                     <section class="input-group">
-                        <label for="static-height">{"Height:"}</label>
+                        <label for="static-fixed-ratio">{"Fixed Ratio:"}</label>
 
                         <input
-                            id="static-height"
-                            type="number"
-                            min="0.05"
-                            max="50"
-                            step="0.05"
-                            value={format!("{}", *self.height)}
-                            onchange={ctx.link().callback(Msg::HeightChanged)}
+                            id="static-fixed-ratio"
+                            type="checkbox"
+                            checked={self.ratio.is_some()}
+                            onchange={ctx.link().callback(Msg::FixedRatioChanged)}
                             />
+
+                        {current_ratio}
                     </section>
 
                     <section class="btn-group">
@@ -348,12 +374,15 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::Rescale(ratio) => {
+                self._update_fixed_ratio = send_update(ctx, Key::RATIO, ratio);
+
                 let Some(ratio) = ratio else {
                     return Ok(false);
                 };
 
                 *self.width = *self.height * ratio as f32;
                 self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, *self.width);
+
                 Ok(true)
             }
             Msg::ImageUploaded(body) => {
@@ -442,6 +471,13 @@ impl StaticSettings {
                     let width = width.clamp(0.05, 50.0);
                     *self.width = width;
                     self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, width);
+
+                    if let Some(ratio) = *self.ratio {
+                        *self.height = (*self.width / ratio).clamp(0.05, 50.0);
+                        self._update_dimensions =
+                            send_update(ctx, Key::STATIC_HEIGHT, *self.height);
+                    }
+
                     true
                 };
 
@@ -458,10 +494,31 @@ impl StaticSettings {
                     let height = height.clamp(0.05, 50.0);
                     *self.height = height;
                     self._update_dimensions = send_update(ctx, Key::STATIC_HEIGHT, height);
+
+                    if let Some(ratio) = *self.ratio {
+                        *self.width = (*self.height * ratio).clamp(0.05, 50.0);
+                        self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, *self.width);
+                    }
+
                     true
                 };
 
                 Ok(changed)
+            }
+            Msg::FixedRatioChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+
+                let fixed_ratio = input.checked();
+
+                if fixed_ratio {
+                    let ratio = *self.width / *self.height;
+                    *self.ratio = Some((ratio * 100.0).round() / 100.0);
+                } else {
+                    *self.ratio = None;
+                };
+
+                self._update_fixed_ratio = send_update(ctx, Key::RATIO, *self.ratio);
+                Ok(true)
             }
             Msg::ImageLoaded(msg) => {
                 self.preview_images.update(msg);
@@ -519,9 +576,10 @@ impl StaticSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
+            Key::NAME => self.name.update(value.as_str().map(str::to_owned)),
             Key::STATIC_WIDTH => self.width.update(value.as_f32().unwrap_or(1.0)),
             Key::STATIC_HEIGHT => self.height.update(value.as_f32().unwrap_or(1.0)),
+            Key::RATIO => self.ratio.update(value.as_f32()),
             _ => false,
         }
     }

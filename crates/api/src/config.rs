@@ -91,6 +91,8 @@ keys! {
     STATIC_WIDTH: Float = 19,
     /// Height of a static object in world units.
     STATIC_HEIGHT: Float = 20,
+    /// Whether to maintain a fixed aspect ratio when resizing a static object.
+    RATIO: Float = 23,
     /// An object is locked from further interaction. This prevents clicking on
     /// it in the map.
     LOCKED: Boolean = 22,

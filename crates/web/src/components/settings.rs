@@ -216,7 +216,7 @@ impl Settings {
         match key {
             Key::REMOTE_SERVER => Ok(self
                 .remote_server
-                .update(value.as_string().unwrap_or_default().to_string())),
+                .update(value.as_str().unwrap_or_default().to_string())),
             Key::REMOTE_TLS => Ok(self
                 .remote_server_tls
                 .update(value.as_bool().unwrap_or_default())),

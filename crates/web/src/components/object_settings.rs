@@ -507,7 +507,7 @@ impl ObjectSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
+            Key::NAME => self.name.update(value.as_str().map(str::to_owned)),
             Key::TOKEN_RADIUS => self.token_radius.update(value.as_f32().unwrap_or(0.25)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(5.0)),
             _ => false,

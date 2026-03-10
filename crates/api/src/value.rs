@@ -56,7 +56,7 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_string(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<&str> {
         match &self.kind {
             ValueKind::String(s) => Some(s),
             _ => None,

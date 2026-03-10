@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use api::{
     Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
-    Transform, Value, Vec3, VecXZ,
+    RemoteUpdateBody, Transform, Value, Vec3, VecXZ,
 };
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
@@ -120,8 +120,14 @@ impl LocalObject {
         }
     }
 
+    #[inline]
     fn image(&self) -> Option<Id> {
         self.data.image()
+    }
+
+    #[inline]
+    fn order(&self) -> (Option<String>, Id) {
+        (self.data.name().map(str::to_owned), self.data.id)
     }
 }
 
@@ -200,13 +206,7 @@ impl ObjectData {
                     look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
                     image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
                     color: State::new(remote.properties.get(Key::COLOR).as_color()),
-                    name: State::new(
-                        remote
-                            .properties
-                            .get(Key::NAME)
-                            .as_string()
-                            .map(str::to_owned),
-                    ),
+                    name: State::new(remote.properties.get(Key::NAME).as_str().map(str::to_owned)),
                     hidden: State::new(
                         remote
                             .properties
@@ -236,13 +236,7 @@ impl ObjectData {
                 let s = StaticObject {
                     image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
                     color: State::new(remote.properties.get(Key::COLOR).as_color()),
-                    name: State::new(
-                        remote
-                            .properties
-                            .get(Key::NAME)
-                            .as_string()
-                            .map(str::to_owned),
-                    ),
+                    name: State::new(remote.properties.get(Key::NAME).as_str().map(str::to_owned)),
                     hidden: State::new(
                         remote
                             .properties
@@ -420,10 +414,13 @@ pub(crate) struct Map {
     update_world: bool,
     /// The selected object.
     selected: Option<Id>,
+    /// The list of local objects used to iterate over them in a consistent
+    /// order.
+    order: BTreeSet<(Option<String>, Id)>,
     /// The list of local objects.
-    objects: BTreeMap<Id, LocalObject>,
+    objects: HashMap<Id, LocalObject>,
     /// The list of remote objects.
-    peers: BTreeMap<(PeerId, Id), PeerObject>,
+    peers: HashMap<(PeerId, Id), PeerObject>,
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
@@ -585,8 +582,9 @@ impl Component for Map {
             canvas_ref: NodeRef::default(),
             config: Config::default(),
             selected: None,
-            objects: BTreeMap::new(),
-            peers: BTreeMap::new(),
+            order: BTreeSet::new(),
+            objects: HashMap::new(),
+            peers: HashMap::new(),
             update_transform_ids: HashSet::new(),
             update_look_at_ids: HashSet::new(),
             update_world: false,
@@ -845,7 +843,11 @@ impl Component for Map {
                     {object_list_header}
 
                     <div class="object-list">
-                        {for self.objects.values().map(|o| {
+                        {for self.order.iter().flat_map(|(_, id)| {
+                            let Some(o) = self.objects.get(id) else {
+                                return None;
+                            };
+
                             let object_id = o.data.id;
                             let selected = self.selected == Some(object_id);
                             let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(object_id)));
@@ -883,7 +885,7 @@ impl Component for Map {
                                 _ => "squares-2x2",
                             };
 
-                            html! {
+                            let node = html! {
                                 <div class={classes} onclick={on_click}>
                                     <Icon name={icon_name} invert={true} />
 
@@ -914,7 +916,9 @@ impl Component for Map {
                                         <Icon name={locked_icon} />
                                     </button>
                                 </div>
-                            }
+                            };
+
+                            Some(node)
                         })}
                     </div>
                 </div>
@@ -1102,6 +1106,8 @@ impl Map {
                     .map(|o| (o.data.id, (o)))
                     .collect();
 
+                self.order.extend(self.objects.values().map(|o| o.order()));
+
                 self.peers = body
                     .remote_objects
                     .iter()
@@ -1131,9 +1137,9 @@ impl Map {
 
                 let update = match body {
                     LocalUpdateBody::Create { object } => {
-                        self.objects
-                            .insert(object.id, LocalObject::from_remote(&object));
-
+                        let o = LocalObject::from_remote(&object);
+                        self.order.insert(o.order());
+                        self.objects.insert(o.data.id, o);
                         true
                     }
                     LocalUpdateBody::Delete { object_id } => {
@@ -1155,11 +1161,13 @@ impl Map {
                         value,
                     } => {
                         'done: {
-                            let Some(a) = self.objects.get_mut(&object_id) else {
+                            let Some(o) = self.objects.get_mut(&object_id) else {
                                 break 'done false;
                             };
 
-                            match key {
+                            tracing::warn!(?key);
+
+                            let update = match key {
                                 // Don't support local updates of transform and
                                 // look at because they cause feedback loops
                                 // which are laggy.
@@ -1169,7 +1177,7 @@ impl Map {
                                 Key::IMAGE_ID => {
                                     let new = value.as_id();
 
-                                    let Some(image) = a.data.as_image_mut() else {
+                                    let Some(image) = o.data.as_image_mut() else {
                                         break 'done false;
                                     };
 
@@ -1184,11 +1192,19 @@ impl Map {
                                     if let Some(old) = old {
                                         self.images.remove(old);
                                     }
-                                }
-                                _ => {}
-                            }
 
-                            a.data.update(key, value)
+                                    false
+                                }
+                                Key::NAME => {
+                                    self.order.retain(|&(_, id)| id != o.data.id);
+                                    self.order
+                                        .insert((value.as_str().map(str::to_owned), o.data.id));
+                                    true
+                                }
+                                _ => false,
+                            };
+
+                            o.data.update(key, value) || update
                         }
                     }
                 };
@@ -1203,10 +1219,10 @@ impl Map {
                 tracing::debug!(?body, "Remote update");
 
                 match body {
-                    api::RemoteUpdateBody::RemoteLost => {
+                    RemoteUpdateBody::RemoteLost => {
                         self.peers.clear();
                     }
-                    api::RemoteUpdateBody::Join {
+                    RemoteUpdateBody::Join {
                         peer_id, objects, ..
                     } => {
                         for object in objects {
@@ -1220,10 +1236,10 @@ impl Map {
                                 .insert((peer_id, data.id), PeerObject { peer_id, data });
                         }
                     }
-                    api::RemoteUpdateBody::Leave { peer_id } => {
+                    RemoteUpdateBody::Leave { peer_id } => {
                         self.peers.retain(|&(pid, _), _| pid != peer_id);
                     }
-                    api::RemoteUpdateBody::Update {
+                    RemoteUpdateBody::Update {
                         object_id,
                         peer_id,
                         key,
@@ -1258,7 +1274,7 @@ impl Map {
 
                         a.data.update(key, value);
                     }
-                    api::RemoteUpdateBody::ObjectAdded { peer_id, object } => {
+                    RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
 
                         if let Some(id) = data.image() {
@@ -1268,7 +1284,7 @@ impl Map {
                         self.peers
                             .insert((peer_id, data.id), PeerObject { peer_id, data });
                     }
-                    api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
+                    RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
                         if let Some(removed) = self.peers.remove(&(peer_id, object_id))
                             && let Some(id) = removed.data.image()
                         {
