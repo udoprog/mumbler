@@ -132,6 +132,10 @@ pub struct UploadImageRequest {
     pub data: Vec<u8>,
     /// Optional crop to apply before resizing. If absent the full image is used.
     pub crop: Option<CropRegion>,
+    /// When `true` the result is padded to a square canvas. When `false` the
+    /// result preserves the crop's aspect ratio.
+    #[musli(default)]
+    pub square: bool,
 }
 
 /// A square crop region expressed in the source image's natural pixel space.
@@ -402,7 +406,7 @@ pub struct InitializeMapEvent {
 #[musli(crate = musli_core)]
 pub struct GetConfigRequest;
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Image {
     /// The unique identifier of the image.

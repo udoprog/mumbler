@@ -5,13 +5,21 @@ use api::CropRegion;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, imageops};
 
-/// Process raw image bytes into a square `size x size` PNG.
+/// Process raw image bytes into a PNG.
 ///
 /// If `crop` is provided the image is first cropped to that region;
 /// otherwise the full image is used. The cropped (or full) image is then
-/// downscaled so its longer side equals `size` and composited onto a square
-/// canvas filled with the average colour of the resized image.
-pub(crate) fn process(data: &[u8], crop: Option<CropRegion>, size: u32) -> Result<Vec<u8>> {
+/// downscaled so its longer side equals `size`.
+///
+/// When `square` is `true` the result is composited onto a `size × size`
+/// canvas filled with the average colour of the resized image.  When
+/// `false` the resized image is returned as-is, preserving aspect ratio.
+pub(crate) fn process(
+    data: &[u8],
+    crop: Option<CropRegion>,
+    size: u32,
+    square: bool,
+) -> Result<(u32, u32, Vec<u8>)> {
     let image = image::load_from_memory(data)?;
 
     // Apply crop before anything else.
@@ -62,14 +70,21 @@ pub(crate) fn process(data: &[u8], crop: Option<CropRegion>, size: u32) -> Resul
         (a / count) as u8,
     ]);
 
-    // Create a `size×size` canvas filled with the average colour and center
-    // the resized image onto it.
-    let mut canvas = image::RgbaImage::from_pixel(size, size, avg);
-    let x_offset = ((size - new_w) / 2) as i64;
-    let y_offset = ((size - new_h) / 2) as i64;
-    imageops::overlay(&mut canvas, &small, x_offset, y_offset);
+    let (out_w, out_h) = if square { (size, size) } else { (new_w, new_h) };
+
+    let output = if square {
+        // Create a `size×size` canvas filled with the average colour and center
+        // the resized image onto it.
+        let mut canvas = image::RgbaImage::from_pixel(size, size, avg);
+        let x_offset = ((size - new_w) / 2) as i64;
+        let y_offset = ((size - new_h) / 2) as i64;
+        imageops::overlay(&mut canvas, &small, x_offset, y_offset);
+        DynamicImage::ImageRgba8(canvas)
+    } else {
+        DynamicImage::ImageRgba8(small)
+    };
 
     let mut bytes = Cursor::new(Vec::new());
-    DynamicImage::ImageRgba8(canvas).write_to(&mut bytes, ImageFormat::Png)?;
-    Ok(bytes.into_inner())
+    output.write_to(&mut bytes, ImageFormat::Png)?;
+    Ok((out_w, out_h, bytes.into_inner()))
 }

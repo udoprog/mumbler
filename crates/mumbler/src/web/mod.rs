@@ -195,10 +195,12 @@ async fn upload_image(
 ) -> Result<api::UploadImageResponse> {
     tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
 
-    let task = task::spawn_blocking(move || imaging::process(&request.data, request.crop, 128));
+    let square = request.square;
+    let task =
+        task::spawn_blocking(move || imaging::process(&request.data, request.crop, 128, square));
 
-    let bytes = task.await??;
-    let id = backend.db().save_image(128, 128, bytes).await?;
+    let (w, h, bytes) = task.await??;
+    let id = backend.db().save_image(w, h, bytes).await?;
     Ok(api::UploadImageResponse { id })
 }
 

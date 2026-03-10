@@ -16,6 +16,8 @@ pub struct Type {
 impl Type {
     /// The avatar type.
     pub const AVATAR: Self = Self::new(0x1000);
+    /// The static object type (furniture, props, etc.).
+    pub const STATIC: Self = Self::new(0x1001);
 
     #[inline]
     const fn new(raw: u64) -> Self {
@@ -28,6 +30,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::AVATAR => write!(f, "AVATAR"),
+            Self::STATIC => write!(f, "STATIC"),
             _ => write!(f, "UNKNOWN({:08x})", self.raw),
         }
     }
@@ -38,6 +41,7 @@ impl fmt::Debug for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::AVATAR => write!(f, "AVATAR"),
+            Self::STATIC => write!(f, "STATIC"),
             _ => write!(f, "UNKNOWN({:08x})", self.raw),
         }
     }

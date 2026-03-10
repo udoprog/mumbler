@@ -22,12 +22,14 @@ use crate::log;
 use crate::state::State;
 use crate::ws;
 
-use super::ObjectSettings;
-use super::render::{self, RenderAvatar, ViewTransform};
+use super::render::{self, RenderAvatar, RenderStatic, ViewTransform};
+use super::{ObjectSettings, StaticSettings};
 
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const DEFAULT_SPEED: f32 = 5.0;
+const DEFAULT_STATIC_WIDTH: f32 = 1.0;
+const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 const ANIMATION_FPS: u32 = 60;
 const HELP: &str = "Shift to look / Shift + Click to place eye";
@@ -117,10 +119,7 @@ impl LocalObject {
     }
 
     fn image(&self) -> Option<Id> {
-        match &self.data.kind {
-            ObjectKind::Avatar(avatar) => *avatar.image,
-            ObjectKind::Unknown => None,
-        }
+        self.data.image()
     }
 }
 
@@ -151,8 +150,36 @@ impl Avatar {
     }
 }
 
+pub(crate) struct StaticObject {
+    pub(crate) image: State<Option<Id>>,
+    pub(crate) color: State<Option<Color>>,
+    pub(crate) name: State<Option<String>>,
+    pub(crate) hidden: State<bool>,
+    pub(crate) width: State<f32>,
+    pub(crate) height: State<f32>,
+}
+
+impl StaticObject {
+    fn update(&mut self, key: Key, value: Value) -> bool {
+        match key {
+            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::COLOR => self.color.update(value.as_color()),
+            Key::NAME => self.name.update(value.into_string()),
+            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            Key::STATIC_WIDTH => self
+                .width
+                .update(value.as_float().unwrap_or(DEFAULT_STATIC_WIDTH)),
+            Key::STATIC_HEIGHT => self
+                .height
+                .update(value.as_float().unwrap_or(DEFAULT_STATIC_HEIGHT)),
+            _ => false,
+        }
+    }
+}
+
 pub(crate) enum ObjectKind {
     Avatar(Avatar),
+    Static(StaticObject),
     Unknown,
 }
 
@@ -202,6 +229,42 @@ impl ObjectData {
 
                 ObjectKind::Avatar(avatar)
             }
+            api::Type::STATIC => {
+                let s = StaticObject {
+                    image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
+                    color: State::new(remote.properties.get(Key::COLOR).as_color()),
+                    name: State::new(
+                        remote
+                            .properties
+                            .get(Key::NAME)
+                            .as_string()
+                            .map(str::to_owned),
+                    ),
+                    hidden: State::new(
+                        remote
+                            .properties
+                            .get(Key::HIDDEN)
+                            .as_bool()
+                            .unwrap_or(false),
+                    ),
+                    width: State::new(
+                        remote
+                            .properties
+                            .get(Key::STATIC_WIDTH)
+                            .as_float()
+                            .unwrap_or(DEFAULT_STATIC_WIDTH),
+                    ),
+                    height: State::new(
+                        remote
+                            .properties
+                            .get(Key::STATIC_HEIGHT)
+                            .as_float()
+                            .unwrap_or(DEFAULT_STATIC_HEIGHT),
+                    ),
+                };
+
+                ObjectKind::Static(s)
+            }
             _ => ObjectKind::Unknown,
         };
 
@@ -225,6 +288,7 @@ impl ObjectData {
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             key => match &mut self.kind {
                 ObjectKind::Avatar(avatar) => avatar.update(key, value),
+                ObjectKind::Static(s) => s.update(key, value),
                 ObjectKind::Unknown => false,
             },
         }
@@ -234,15 +298,22 @@ impl ObjectData {
     fn click_radius(&self) -> f32 {
         match &self.kind {
             ObjectKind::Avatar(avatar) => *avatar.token_radius,
+            ObjectKind::Static(s) => (*s.width).hypot(*s.height) / 2.0,
             ObjectKind::Unknown => 0.5,
         }
+    }
+
+    /// Returns `true` if this is a static object (rectangle, snap movement).
+    #[inline]
+    fn is_static(&self) -> bool {
+        matches!(&self.kind, ObjectKind::Static(_))
     }
 
     #[inline]
     fn look_at(&self) -> Option<&Option<Vec3>> {
         match &self.kind {
             ObjectKind::Avatar(avatar) => Some(&*avatar.look_at),
-            ObjectKind::Unknown => None,
+            ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
 
@@ -250,7 +321,7 @@ impl ObjectData {
     fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
         match &mut self.kind {
             ObjectKind::Avatar(avatar) => Some(&mut avatar.look_at),
-            ObjectKind::Unknown => None,
+            ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
 
@@ -258,6 +329,7 @@ impl ObjectData {
     fn as_image_mut(&mut self) -> Option<&mut State<Option<Id>>> {
         match &mut self.kind {
             ObjectKind::Avatar(avatar) => Some(&mut avatar.image),
+            ObjectKind::Static(s) => Some(&mut s.image),
             ObjectKind::Unknown => None,
         }
     }
@@ -266,6 +338,7 @@ impl ObjectData {
     fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
             ObjectKind::Avatar(avatar) => Some(&mut avatar.hidden),
+            ObjectKind::Static(s) => Some(&mut s.hidden),
             ObjectKind::Unknown => None,
         }
     }
@@ -274,7 +347,7 @@ impl ObjectData {
     fn speed(&self) -> Option<f32> {
         match &self.kind {
             ObjectKind::Avatar(avatar) => Some(*avatar.speed),
-            ObjectKind::Unknown => None,
+            ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
 
@@ -282,6 +355,7 @@ impl ObjectData {
     fn name(&self) -> Option<&str> {
         match &self.kind {
             ObjectKind::Avatar(avatar) => avatar.name.as_deref(),
+            ObjectKind::Static(s) => s.name.as_deref(),
             ObjectKind::Unknown => None,
         }
     }
@@ -290,6 +364,7 @@ impl ObjectData {
     fn image(&self) -> Option<Id> {
         match &self.kind {
             ObjectKind::Avatar(avatar) => *avatar.image,
+            ObjectKind::Static(s) => *s.image,
             ObjectKind::Unknown => None,
         }
     }
@@ -298,6 +373,7 @@ impl ObjectData {
     fn is_hidden(&self) -> bool {
         match &self.kind {
             ObjectKind::Avatar(avatar) => *avatar.hidden,
+            ObjectKind::Static(s) => *s.hidden,
             ObjectKind::Unknown => false,
         }
     }
@@ -351,6 +427,8 @@ pub(crate) struct Map {
     _keyup_listener: EventListener,
     /// In-flight create-object request.
     _create_object: ws::Request,
+    /// In-flight create-static-object request.
+    _create_static_object: ws::Request,
     /// In-flight delete-object request.
     _delete_object: ws::Request,
     /// Index of the object pending delete confirmation.
@@ -373,6 +451,7 @@ pub(crate) enum Msg {
     UpdateResult(Result<Packet<api::Update>, ws::Error>),
     WorldUpdated(Result<Packet<api::UpdateConfig>, ws::Error>),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
+    StaticObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     StateChanged(ws::State),
     Resized,
     ImageMessage(ImageMessage),
@@ -384,6 +463,7 @@ pub(crate) enum Msg {
     AnimationFrame,
     SelectObject(Option<Id>),
     CreateObject,
+    CreateStaticObject,
     ConfirmDelete(Id),
     CancelDelete(Id),
     DeleteObject(Id),
@@ -488,6 +568,7 @@ impl Component for Map {
             _keydown_listener,
             _keyup_listener,
             _create_object: ws::Request::new(),
+            _create_static_object: ws::Request::new(),
             _delete_object: ws::Request::new(),
             delete: HashSet::new(),
             open_settings: None,
@@ -610,9 +691,13 @@ impl Component for Map {
                             onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
                             <Icon name="cursor-arrow-rays" />
                         </button>
-                        <button class="btn square primary" title="Add object"
+                        <button class="btn square primary" title="Add avatar"
                             onclick={ctx.link().callback(|_| Msg::CreateObject)}>
-                            <Icon name="user-plus" title="Add object" />
+                            <Icon name="user-plus" title="Add avatar" />
+                        </button>
+                        <button class="btn square" title="Add static object"
+                            onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
+                            <Icon name="square-2-stack" title="Add static" />
                         </button>
                     </div>
 
@@ -709,7 +794,11 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body">
-                            <ObjectSettings ws={ctx.props().ws.clone()} {id} />
+                            if self.objects.get(&id).is_some_and(|o| o.data.is_static()) {
+                                <StaticSettings ws={ctx.props().ws.clone()} {id} />
+                            } else {
+                                <ObjectSettings ws={ctx.props().ws.clone()} {id} />
+                            }
                         </div>
                     </div>
                 </div>
@@ -1117,6 +1206,30 @@ impl Map {
                 _ = result.decode()?;
                 Ok(true)
             }
+            Msg::CreateStaticObject => {
+                self._create_static_object = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::CreateObjectRequest {
+                        ty: api::Type::STATIC,
+                        properties: api::Properties::from([
+                            (Key::NAME, Value::from("Object")),
+                            (Key::HIDDEN, Value::from(false)),
+                            (Key::STATIC_WIDTH, Value::from(1.0_f32)),
+                            (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
+                        ]),
+                    })
+                    .on_packet(ctx.link().callback(Msg::StaticObjectCreated))
+                    .send();
+
+                Ok(false)
+            }
+            Msg::StaticObjectCreated(result) => {
+                let result = result?;
+                _ = result.decode()?;
+                Ok(true)
+            }
             Msg::ConfirmDelete(id) => {
                 self.delete.insert(id);
                 Ok(true)
@@ -1347,11 +1460,19 @@ impl Map {
 
                         self.start_press = Some((px, py, true));
 
-                        if let Some(look_at) = o.data.as_look_at_mut() {
+                        if o.data.is_static() {
+                            // Shift-drag on a static object rotates it.
+                            self.look_at(px, py, ex, ey);
+                        } else if let Some(look_at) = o.data.as_look_at_mut() {
                             **look_at = Some(Vec3::new(ex, 0.0, ey));
                             self.look_at(px, py, ex, ey);
                             self.update_look_at_ids.insert(object_id);
                         }
+                    } else if o.data.is_static() {
+                        // Static objects snap immediately to where they are dropped.
+                        self.start_press = Some((ex, ey, false));
+                        o.data.transform.position = Vec3::new(ex, 0.0, ey);
+                        self.update_transform_ids.insert(object_id);
                     } else {
                         self.start_press = Some((ex, ey, false));
                         o.move_target = Some(Vec3::new(ex, 0.0, ey));
@@ -1403,7 +1524,10 @@ impl Map {
                 let dist = (mx - px).hypot(my - py);
 
                 if dist >= ARROW_THRESHOLD {
-                    if let Some(look_at) = o.data.as_look_at_mut() {
+                    if o.data.is_static() {
+                        // Shift-drag rotates a static object.
+                        self.look_at(px, py, mx, my);
+                    } else if let Some(look_at) = o.data.as_look_at_mut() {
                         **look_at = Some(Vec3::new(mx, 0.0, my));
                         self.update_look_at_ids.insert(o.data.id);
                         self.look_at(px, py, mx, my);
@@ -1411,6 +1535,11 @@ impl Map {
 
                     needs_redraw = true;
                 }
+            } else if o.data.is_static() {
+                // Static objects snap immediately while dragging.
+                o.data.transform.position = Vec3::new(mx, 0.0, my);
+                self.update_transform_ids.insert(o.data.id);
+                needs_redraw = true;
             } else {
                 o.move_target = Some(Vec3::new(mx, 0.0, my));
                 needs_redraw = true;
@@ -1588,6 +1717,22 @@ impl Map {
         render::draw_grid(&cx, &t, &self.config.extent, *self.config.zoom);
 
         let selected = self.selected;
+
+        // Draw static objects first (behind avatars).
+        for o in self.objects.values() {
+            if let Some(mut s) = RenderStatic::from_data(&o.data) {
+                s.selected = selected == Some(o.data.id);
+                render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
+            }
+        }
+        // Draw remote static objects.
+        for o in self.peers.values() {
+            if let Some(s) = RenderStatic::from_data(&o.data) {
+                if !s.hidden {
+                    render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
+                }
+            }
+        }
 
         let renders = || {
             let remotes = self

@@ -1,4 +1,4 @@
-use std::f64::consts::{FRAC_PI_6, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
 use api::{Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
@@ -37,6 +37,35 @@ impl<'a> RenderAvatar<'a> {
             selected: false,
             hidden: *avatar.hidden,
             token_radius: *avatar.token_radius,
+        })
+    }
+}
+
+pub(crate) struct RenderStatic {
+    pub(crate) transform: api::Transform,
+    pub(crate) image: Option<Id>,
+    pub(crate) color: api::Color,
+    pub(crate) selected: bool,
+    pub(crate) hidden: bool,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl RenderStatic {
+    pub(crate) fn from_data(data: &ObjectData) -> Option<Self> {
+        let s = match &data.kind {
+            ObjectKind::Static(s) => s,
+            _ => return None,
+        };
+
+        Some(Self {
+            transform: *data.transform,
+            image: *s.image,
+            color: s.color.unwrap_or_else(api::Color::neutral),
+            selected: false,
+            hidden: *s.hidden,
+            width: *s.width,
+            height: *s.height,
         })
     }
 }
@@ -334,6 +363,80 @@ pub(crate) fn draw_avatar_token(
 
     if a.hidden {
         draw_hidden_badge(cx, x, y, token_radius)?;
+    }
+
+    Ok(())
+}
+pub(crate) fn draw_static_token(
+    cx: &CanvasRenderingContext2d,
+    t: &ViewTransform,
+    s: &RenderStatic,
+    get_image: impl Fn(Id) -> Option<HtmlImageElement>,
+) -> Result<(), Error> {
+    let (cx_pos, cy_pos) = t.world_to_canvas(s.transform.position.x, s.transform.position.z);
+
+    let hw = s.width as f64 / 2.0 * t.scale;
+    let hh = s.height as f64 / 2.0 * t.scale;
+
+    let angle = (-s.transform.front.z as f64).atan2(s.transform.front.x as f64);
+    let rotation = angle - FRAC_PI_2;
+
+    let color = s.color.to_css_string();
+
+    cx.save();
+    cx.translate(cx_pos, cy_pos)?;
+    cx.rotate(rotation)?;
+
+    let image_drawn = 'draw: {
+        let Some(id) = s.image else {
+            break 'draw false;
+        };
+
+        let Some(img) = get_image(id) else {
+            break 'draw false;
+        };
+
+        let iw = img.natural_width() as f64;
+        let ih = img.natural_height() as f64;
+
+        let sx = (hw * 2.0) / iw;
+        let sy = (hh * 2.0) / ih;
+        let scale = sx.max(sy);
+        let dw = iw * scale;
+        let dh = ih * scale;
+
+        cx.save();
+        cx.rect(-hw, -hh, hw * 2.0, hh * 2.0);
+        cx.clip();
+
+        cx.draw_image_with_html_image_element_and_dw_and_dh(&img, -dw / 2.0, -dh / 2.0, dw, dh)?;
+
+        cx.restore();
+        true
+    };
+
+    if !image_drawn {
+        cx.set_fill_style_str(&color);
+        cx.fill_rect(-hw, -hh, hw * 2.0, hh * 2.0);
+    }
+
+    if s.selected {
+        cx.set_stroke_style_str("#ffffff");
+        cx.set_line_width(t.scale * 0.025);
+        cx.stroke_rect(-hw, -hh, hw * 2.0, hh * 2.0);
+    }
+
+    cx.restore();
+
+    if s.hidden {
+        let badge_size = hw.hypot(hh) * 0.38;
+
+        draw_hidden_badge(
+            cx,
+            cx_pos + hw * 0.7 + hh * 0.3,
+            cy_pos - hh * 0.7 - hw * 0.3,
+            badge_size,
+        )?;
     }
 
     Ok(())

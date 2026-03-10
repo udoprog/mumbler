@@ -85,6 +85,10 @@ keys! {
     TOKEN_RADIUS: Float = 17,
     /// Per-object movement speed.
     SPEED: Float = 18,
+    /// Width of a static object in world units.
+    STATIC_WIDTH: Float = 19,
+    /// Height of a static object in world units.
+    STATIC_HEIGHT: Float = 20,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

@@ -6,11 +6,17 @@ pub(crate) mod render;
 mod crop_modal;
 pub(crate) use self::crop_modal::CropModal;
 
+mod image_gallery_modal;
+pub(crate) use self::image_gallery_modal::ImageGalleryModal;
+
 mod settings;
 pub(crate) use self::settings::Settings;
 
 mod object_settings;
 pub(crate) use self::object_settings::ObjectSettings;
+
+mod static_settings;
+pub(crate) use self::static_settings::StaticSettings;
 
 mod mumble_status;
 pub(crate) use self::mumble_status::MumbleStatus;

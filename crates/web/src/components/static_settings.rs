@@ -19,8 +19,8 @@ use super::render;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
-    AvatarImageSelected(Event),
-    AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
+    ImageSelected(Event),
+    ImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     CropConfirmed(api::CropRegion),
     CropCancelled,
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
@@ -32,8 +32,8 @@ pub(crate) enum Msg {
     SelectColor(api::Color),
     NameChanged(Event),
     UpdateName(Option<String>),
-    RadiusChanged(Event),
-    SpeedChanged(Event),
+    WidthChanged(Event),
+    HeightChanged(Event),
     UpdateResult(Result<Packet<api::Update>, ws::Error>),
     ImageLoaded(ImageMessage),
     SetLog(log::Log),
@@ -48,13 +48,13 @@ pub(crate) struct Props {
     pub(crate) id: Id,
 }
 
-pub(crate) struct ObjectSettings {
+pub(crate) struct StaticSettings {
     state: ws::State,
     image: State<Option<api::Id>>,
     color: State<Option<api::Color>>,
     name: State<Option<String>>,
-    token_radius: State<f32>,
-    speed: State<f32>,
+    width: State<f32>,
+    height: State<f32>,
     images: Vec<api::Image>,
     gallery_open: bool,
     crop_source_url: Option<String>,
@@ -72,7 +72,7 @@ pub(crate) struct ObjectSettings {
     _delete_image: ws::Request,
     _select_color: ws::Request,
     _update_name: ws::Request,
-    _update_radius: ws::Request,
+    _update_dimensions: ws::Request,
     _local_update_listener: ws::Listener,
 }
 
@@ -83,7 +83,7 @@ impl From<ImageMessage> for Msg {
     }
 }
 
-impl Component for ObjectSettings {
+impl Component for StaticSettings {
     type Message = Msg;
     type Properties = Props;
 
@@ -108,8 +108,8 @@ impl Component for ObjectSettings {
             image: State::new(None),
             color: State::new(None),
             name: State::new(None),
-            token_radius: State::new(0.25),
-            speed: State::new(5.0),
+            width: State::new(1.0),
+            height: State::new(1.0),
             images: Vec::new(),
             gallery_open: false,
             crop_source_url: None,
@@ -127,7 +127,7 @@ impl Component for ObjectSettings {
             _delete_image: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
-            _update_radius: ws::Request::new(),
+            _update_dimensions: ws::Request::new(),
             _local_update_listener,
         };
 
@@ -139,7 +139,7 @@ impl Component for ObjectSettings {
         match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
-                self.log.error("object_settings::update", error);
+                self.log.error("static_settings::update", error);
                 true
             }
         }
@@ -147,7 +147,7 @@ impl Component for ObjectSettings {
 
     fn rendered(&mut self, _ctx: &Context<Self>, _first_render: bool) {
         if let Err(error) = self.redraw_preview() {
-            self.log.error("object_settings::redraw_preview", error);
+            self.log.error("static_settings::redraw_preview", error);
         }
     }
 
@@ -159,10 +159,10 @@ impl Component for ObjectSettings {
             <div id="content" class="row">
                 <div class="col-8 rows">
                     <section class="input-group">
-                        <label for="avatar-name">{"Name:"}</label>
+                        <label for="static-name">{"Name:"}</label>
 
                         <input
-                            id="avatar-name"
+                            id="static-name"
                             type="text"
                             placeholder="Enter name"
                             value={(*self.name).clone().unwrap_or_default()}
@@ -171,13 +171,13 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-color">
+                        <label for="static-color">
                             {"Color:"}
                             <span class="color-preview" style={format!("--color: {}", color.to_css_string())} />
                         </label>
 
                         <input
-                            id="avatar-color"
+                            id="static-color"
                             class="hidden"
                             type="color"
                             value={color.to_css_string()}
@@ -186,51 +186,51 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-radius">{"Radius:"}</label>
+                        <label for="static-width">{"Width:"}</label>
 
                         <input
-                            id="avatar-radius"
+                            id="static-width"
                             type="number"
                             min="0.05"
-                            max="10"
+                            max="50"
                             step="0.05"
-                            value={format!("{}", *self.token_radius)}
-                            onchange={ctx.link().callback(Msg::RadiusChanged)}
+                            value={format!("{}", *self.width)}
+                            onchange={ctx.link().callback(Msg::WidthChanged)}
                             />
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-speed">{"Speed:"}</label>
+                        <label for="static-height">{"Height:"}</label>
 
                         <input
-                            id="avatar-speed"
+                            id="static-height"
                             type="number"
-                            min="0.5"
-                            max="100"
-                            step="0.5"
-                            value={format!("{}", *self.speed)}
-                            onchange={ctx.link().callback(Msg::SpeedChanged)}
+                            min="0.05"
+                            max="50"
+                            step="0.05"
+                            value={format!("{}", *self.height)}
+                            onchange={ctx.link().callback(Msg::HeightChanged)}
                             />
                     </section>
 
-                    <section class="input-group">
+                    <section class="btn-group">
                         <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
                             {"Choose Image"}
                             <Icon name="photo" />
                         </button>
 
-                        <label for="avatar-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
+                        <label for="static-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
                             {"Upload Image"}
                             <Icon name="arrow-up-on-square" />
                         </label>
 
                         <input
-                            id="avatar-file"
+                            id="static-file"
                             class="hidden"
                             title="Upload image"
                             type="file"
                             accept="image/*"
-                            onchange={ctx.link().callback(Msg::AvatarImageSelected)}
+                            onchange={ctx.link().callback(Msg::ImageSelected)}
                             />
                     </section>
                 </div>
@@ -255,7 +255,7 @@ impl Component for ObjectSettings {
             if let Some(src) = &self.crop_source_url {
                 <CropModal
                     source_url={src.clone()}
-                    ratio={1.0}
+                    ratio={(*self.width / *self.height) as f64}
                     on_confirm={ctx.link().callback(Msg::CropConfirmed)}
                     on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
                 />
@@ -265,7 +265,7 @@ impl Component for ObjectSettings {
     }
 }
 
-impl ObjectSettings {
+impl StaticSettings {
     fn refresh(&mut self, ctx: &Context<Self>) {
         if matches!(self.state, ws::State::Open) {
             self._list_settings = ctx
@@ -285,7 +285,7 @@ impl ObjectSettings {
                 self.refresh(ctx);
                 Ok(true)
             }
-            Msg::AvatarImageSelected(e) => {
+            Msg::ImageSelected(e) => {
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
@@ -308,12 +308,12 @@ impl ObjectSettings {
                 let gloo_file = gloo::file::File::from(file);
                 let link = ctx.link().clone();
                 self._file_reader = Some(read_as_bytes(&gloo_file, move |res| {
-                    link.send_message(Msg::AvatarImageData(content_type.clone(), res));
+                    link.send_message(Msg::ImageData(content_type.clone(), res));
                 }));
 
                 Ok(true)
             }
-            Msg::AvatarImageData(content_type, result) => {
+            Msg::ImageData(content_type, result) => {
                 self._file_reader = None;
                 let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
                 self.crop_source_data = Some((content_type, data));
@@ -331,7 +331,7 @@ impl ObjectSettings {
                         content_type,
                         data,
                         crop: Some(crop),
-                        square: true,
+                        square: false,
                     })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
@@ -423,45 +423,45 @@ impl ObjectSettings {
                 self._update_name = send_update(ctx, Key::NAME, name);
                 Ok(true)
             }
-            Msg::RadiusChanged(e) => {
+            Msg::WidthChanged(e) => {
                 let input = e
                     .target()
                     .ok_or("no target")?
                     .dyn_into::<HtmlInputElement>()
                     .map_err(|_| "target is not an input element")?;
 
-                let value = 'done: {
-                    let Ok(radius) = input.value().parse::<f32>() else {
+                let changed = 'done: {
+                    let Ok(width) = input.value().parse::<f32>() else {
                         break 'done false;
                     };
 
-                    let radius = radius.clamp(0.05, 10.0);
-                    *self.token_radius = radius;
-                    self._update_radius = send_update(ctx, Key::TOKEN_RADIUS, radius);
+                    let width = width.clamp(0.05, 50.0);
+                    *self.width = width;
+                    self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, width);
                     true
                 };
 
-                Ok(value)
+                Ok(changed)
             }
-            Msg::SpeedChanged(e) => {
+            Msg::HeightChanged(e) => {
                 let input = e
                     .target()
                     .ok_or("no target")?
                     .dyn_into::<HtmlInputElement>()
                     .map_err(|_| "target is not an input element")?;
 
-                let value = 'done: {
-                    let Ok(speed) = input.value().parse::<f32>() else {
+                let changed = 'done: {
+                    let Ok(height) = input.value().parse::<f32>() else {
                         break 'done false;
                     };
 
-                    let speed = speed.clamp(0.5, 100.0);
-                    *self.speed = speed;
-                    self._update_radius = send_update(ctx, Key::SPEED, speed);
+                    let height = height.clamp(0.05, 50.0);
+                    *self.height = height;
+                    self._update_dimensions = send_update(ctx, Key::STATIC_HEIGHT, height);
                     true
                 };
 
-                Ok(value)
+                Ok(changed)
             }
             Msg::ImageLoaded(msg) => {
                 self.preview_images.update(msg);
@@ -520,8 +520,8 @@ impl ObjectSettings {
             }
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
-            Key::TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.25)),
-            Key::SPEED => self.speed.update(value.as_float().unwrap_or(5.0)),
+            Key::STATIC_WIDTH => self.width.update(value.as_float().unwrap_or(1.0)),
+            Key::STATIC_HEIGHT => self.height.update(value.as_float().unwrap_or(1.0)),
             _ => false,
         }
     }
@@ -545,31 +545,27 @@ impl ObjectSettings {
             .dyn_into::<CanvasRenderingContext2d>()
             .map_err(|_| "invalid canvas context")?;
 
-        let avatar = render::RenderAvatar {
+        let s = render::RenderStatic {
             transform: api::Transform::origin(),
-            look_at: None,
             image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
-            name: self.name.as_deref(),
-            player: true,
             selected: false,
             hidden: false,
-            token_radius: 1.0,
+            width: (*self.width).min(*self.height * 3.0),
+            height: (*self.height).min(*self.width * 3.0),
         };
 
         let t = ViewTransform::preview(&canvas);
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        render::draw_avatar_token(&cx, &t, &avatar, None, |id| {
-            self.preview_images.get(id).cloned()
-        })?;
+        render::draw_static_token(&cx, &t, &s, |id| self.preview_images.get(id).cloned())?;
 
         Ok(())
     }
 }
 
-fn send_update(ctx: &Context<ObjectSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn send_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
