@@ -125,17 +125,34 @@ pub struct UpdateLookAtRequest {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
+pub enum ImageSizing {
+    /// The crop region determines the sizing.
+    Crop,
+    /// Square the image padding by average color.
+    Square,
+}
+
+impl ImageSizing {
+    /// If the image should be squared.
+    #[inline]
+    pub fn is_square(&self) -> bool {
+        matches!(self, Self::Square)
+    }
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
 pub struct UploadImageRequest {
     /// MIME type of the uploaded image (e.g. "image/png").
     pub content_type: String,
     /// Raw bytes of the image file.
     pub data: Vec<u8>,
-    /// Optional crop to apply before resizing. If absent the full image is used.
-    pub crop: Option<CropRegion>,
-    /// When `true` the result is padded to a square canvas. When `false` the
-    /// result preserves the crop's aspect ratio.
-    #[musli(default)]
-    pub square: bool,
+    /// The crop region to apply to the source image.
+    pub crop: CropRegion,
+    /// Requested image sizing.
+    pub sizing: ImageSizing,
+    /// The requested maximum size.
+    pub size: u32,
 }
 
 /// A square crop region expressed in the source image's natural pixel space.
@@ -146,6 +163,14 @@ pub struct CropRegion {
     pub y1: u32,
     pub x2: u32,
     pub y2: u32,
+}
+
+impl CropRegion {
+    /// If the region is the whole image.
+    #[inline]
+    pub fn is_whole_image(&self, width: u32, height: u32) -> bool {
+        self.x1 == 0 && self.y1 == 0 && self.x2 == width && self.y2 == height
+    }
 }
 
 /// Response returned after successfully uploading an image.
@@ -314,12 +339,18 @@ impl VecXZ {
         Self { x, z }
     }
 
-    /// Calculate the direction from `self` to `m` as a unit vector.
-    pub fn look_at(&self, m: Self) -> Self {
-        let angle_rad = (m.z - self.z).atan2(m.x - self.x);
+    /// Calculate the direction from `self` to `other` as a unit vector.
+    pub fn direction_to(&self, other: Self) -> Self {
+        let angle_rad = (other.z - self.z).atan2(other.x - self.x);
         let dir_x = angle_rad.cos();
         let dir_z = angle_rad.sin();
         Self::new(dir_x, dir_z)
+    }
+
+    /// Calculate the distance between this and another point in the xz plane.
+    #[inline]
+    pub fn dist(&self, other: Self) -> f32 {
+        (other.x - self.x).hypot(other.z - self.z)
     }
 
     /// Calculate the angle at which the XZ vector is facing in the xz plane
@@ -440,7 +471,7 @@ pub struct RemoteObject {
 #[musli(crate = musli_core)]
 pub struct InitializeMapEvent {
     pub objects: Vec<RemoteObject>,
-    pub remote_avatars: Vec<RemotePeerObject>,
+    pub remote_objects: Vec<RemotePeerObject>,
     pub config: Properties,
 }
 

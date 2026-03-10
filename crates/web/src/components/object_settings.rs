@@ -159,10 +159,10 @@ impl Component for ObjectSettings {
             <div id="content" class="row">
                 <div class="col-8 rows">
                     <section class="input-group">
-                        <label for="avatar-name">{"Name:"}</label>
+                        <label for="token-name">{"Name:"}</label>
 
                         <input
-                            id="avatar-name"
+                            id="token-name"
                             type="text"
                             placeholder="Enter name"
                             value={(*self.name).clone().unwrap_or_default()}
@@ -171,13 +171,13 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-color">
+                        <label for="token-color">
                             {"Color:"}
                             <span class="color-preview" style={format!("--color: {}", color.to_css_string())} />
                         </label>
 
                         <input
-                            id="avatar-color"
+                            id="token-color"
                             class="hidden"
                             type="color"
                             value={color.to_css_string()}
@@ -186,10 +186,10 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-radius">{"Radius:"}</label>
+                        <label for="token-radius">{"Radius:"}</label>
 
                         <input
-                            id="avatar-radius"
+                            id="token-radius"
                             type="number"
                             min="0.05"
                             max="10"
@@ -200,10 +200,10 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="avatar-speed">{"Speed:"}</label>
+                        <label for="token-speed">{"Speed:"}</label>
 
                         <input
-                            id="avatar-speed"
+                            id="token-speed"
                             type="number"
                             min="0.5"
                             max="100"
@@ -214,16 +214,18 @@ impl Component for ObjectSettings {
                     </section>
 
                     <section class="input-group">
-                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            <Icon name="photo" />
-                        </button>
-
-                        <label for="avatar-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
+                        <label for="token-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
+                            {"Upload"}
                             <Icon name="arrow-up-on-square" />
                         </label>
 
+                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
+                            {"Gallery"}
+                            <Icon name="photo" />
+                        </button>
+
                         <input
-                            id="avatar-file"
+                            id="token-file"
                             class="hidden"
                             title="Upload image"
                             type="file"
@@ -234,7 +236,7 @@ impl Component for ObjectSettings {
                 </div>
 
                 <div class="col-4 rows">
-                    <section class="avatar-preview">
+                    <section class="token-preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
                     </section>
                 </div>
@@ -326,8 +328,9 @@ impl ObjectSettings {
                     .body(api::UploadImageRequest {
                         content_type,
                         data,
-                        crop: Some(crop),
-                        square: true,
+                        crop,
+                        sizing: api::ImageSizing::Square,
+                        size: 128,
                     })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
@@ -532,7 +535,7 @@ impl ObjectSettings {
             return Ok(());
         };
 
-        let avatar = render::RenderAvatar {
+        let token = render::RenderAvatar {
             transform: api::Transform::origin(),
             look_at: None,
             image: *self.image,
@@ -548,7 +551,7 @@ impl ObjectSettings {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        render::draw_avatar_token(&cx, &t, &avatar, None, |id| {
+        render::draw_token_token(&cx, &t, &token, None, |id| {
             self.preview_images.get(id).cloned()
         })?;
 

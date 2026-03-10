@@ -295,6 +295,8 @@ pub(crate) struct Props {
     pub(crate) on_confirm: Callback<api::CropRegion>,
     pub(crate) on_cancel: Callback<()>,
     #[prop_or_default]
+    pub(crate) rescale: Option<Callback<Option<f64>>>,
+    #[prop_or_default]
     pub(crate) ratio: Option<f64>,
 }
 
@@ -306,6 +308,7 @@ pub(crate) enum Msg {
     DragEnd(PointerEvent),
     ClearSelection,
     SelectAll,
+    Rescale,
     Confirm,
     Cancel,
 }
@@ -394,7 +397,7 @@ impl Component for CropModal {
                                 }
                             </div>
                         </div>
-                        <div class="btn-group" onclick={|e: MouseEvent| e.stop_propagation()}>
+                        <div class="control-group" onclick={|e: MouseEvent| e.stop_propagation()}>
                             <button class="btn primary" disabled={confirm_disabled}
                                 onclick={ctx.link().callback(|_| Msg::Confirm)}>
                                 {"Upload"}
@@ -403,7 +406,17 @@ impl Component for CropModal {
                                 onclick={ctx.link().callback(|_| Msg::SelectAll)}>
                                 {"Select All"}
                             </button>
-                            <button class="btn danger"
+                            {if ctx.props().rescale.is_some() {
+                                html! {
+                                    <button class="btn" title="Rescale to original aspect ratio"
+                                        onclick={ctx.link().callback(|_| Msg::Rescale)}>
+                                        {"Rescale"}
+                                    </button>
+                                }
+                            } else {
+                                html! {}
+                            }}
+                            <button class="btn danger right"
                                 onclick={ctx.link().callback(|_| Msg::Cancel)}>
                                 {"Cancel"}
                             </button>
@@ -455,6 +468,18 @@ impl CropModal {
                 let sel = Selection::max_centered(self.image_bounds(), self.ratio);
                 self.drag = Some(sel.to_drag());
                 Ok(true)
+            }
+            Msg::Rescale => {
+                let bounds = self.image_bounds();
+                self.ratio = Some(bounds.x / bounds.y);
+
+                if let Some(rescale) = ctx.props().rescale.as_ref() {
+                    rescale.emit(self.ratio);
+                }
+
+                let sel = Selection::max_centered(bounds, self.ratio);
+                self.drag = Some(sel.to_drag());
+                Ok(false)
             }
             Msg::Confirm => {
                 self.on_confirm(ctx)?;

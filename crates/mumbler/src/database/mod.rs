@@ -457,6 +457,7 @@ impl Database {
                     continue;
                 };
 
+                tracing::debug!(?id, ?key, "Loading property");
                 let value = value_from_blob(ty, value)?;
                 properties.push((key, value));
             }
@@ -496,7 +497,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
     let value = match ty {
         ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
-        ValueType::Float => Value::from(descriptive::from_slice::<f32>(blog)?),
+        ValueType::Float => Value::from(descriptive::from_slice::<f64>(blog)?),
         ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
         ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
         ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),

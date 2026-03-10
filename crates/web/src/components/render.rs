@@ -1,4 +1,4 @@
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
+use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
 use api::{Extent, Id, Vec3, VecXZ};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
@@ -22,21 +22,21 @@ pub(crate) struct RenderAvatar<'a> {
 
 impl<'a> RenderAvatar<'a> {
     pub(crate) fn from_data(data: &'a ObjectData) -> Option<Self> {
-        let avatar = match &data.kind {
-            ObjectKind::Avatar(avatar) => avatar,
+        let token = match &data.kind {
+            ObjectKind::Token(token) => token,
             _ => return None,
         };
 
         Some(Self {
             transform: *data.transform,
-            look_at: *avatar.look_at,
-            image: *avatar.image,
-            color: avatar.color.unwrap_or_else(api::Color::neutral),
-            name: avatar.name.as_deref(),
+            look_at: *token.look_at,
+            image: *token.image,
+            color: token.color.unwrap_or_else(api::Color::neutral),
+            name: token.name.as_deref(),
             player: false,
             selected: false,
-            hidden: *avatar.hidden,
-            token_radius: *avatar.token_radius,
+            hidden: *token.hidden,
+            token_radius: *token.token_radius,
         })
     }
 }
@@ -218,8 +218,8 @@ fn draw_hidden_badge(
     token_radius: f64,
 ) -> Result<(), Error> {
     let badge_r = token_radius * 0.38;
-    let bx = x + token_radius * std::f64::consts::FRAC_1_SQRT_2;
-    let by = y - token_radius * std::f64::consts::FRAC_1_SQRT_2;
+    let bx = x + token_radius * FRAC_1_SQRT_2;
+    let by = y - token_radius * FRAC_1_SQRT_2;
 
     cx.save();
 
@@ -255,7 +255,7 @@ pub(crate) fn draw_look_at(
     color: &api::Color,
     zoom: f64,
 ) -> Result<(), Error> {
-    let radius = 10.0 * zoom;
+    let radius = 5.0 * zoom;
 
     let color = color.to_transparent_rgba(0.5);
 
@@ -270,7 +270,7 @@ pub(crate) fn draw_look_at(
     Ok(())
 }
 
-pub(crate) fn draw_avatar_token(
+pub(crate) fn draw_token_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
     a: &RenderAvatar,
@@ -337,7 +337,7 @@ pub(crate) fn draw_avatar_token(
     let front = if a.player
         && let Some(m) = arrow_target
     {
-        a.transform.position.xz().look_at(m).xyz(0.0)
+        a.transform.position.xz().direction_to(m).xyz(0.0)
     } else {
         a.transform.front
     };
@@ -441,12 +441,7 @@ pub(crate) fn draw_static_token(
     if s.hidden {
         let badge_size = hw.hypot(hh) * 0.38;
 
-        draw_hidden_badge(
-            cx,
-            pos.x + hw * 0.7 + hh * 0.3,
-            pos.y - hh * 0.7 - hw * 0.3,
-            badge_size,
-        )?;
+        draw_hidden_badge(cx, pos.x, pos.y, badge_size)?;
     }
 
     Ok(())

@@ -21,6 +21,7 @@ pub(crate) enum Msg {
     ImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     CropConfirmed(api::CropRegion),
     CropCancelled,
+    Rescale(Option<f64>),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     SelectImage(api::Id),
@@ -212,13 +213,15 @@ impl Component for StaticSettings {
                     </section>
 
                     <section class="btn-group">
-                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            <Icon name="photo" />
-                        </button>
-
                         <label for="static-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
+                            {"Upload"}
                             <Icon name="arrow-up-on-square" />
                         </label>
+
+                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
+                            {"Gallery"}
+                            <Icon name="photo" />
+                        </button>
 
                         <input
                             id="static-file"
@@ -232,7 +235,7 @@ impl Component for StaticSettings {
                 </div>
 
                 <div class="col-4 rows">
-                    <section class="avatar-preview">
+                    <section class="token-preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
                     </section>
                 </div>
@@ -254,6 +257,7 @@ impl Component for StaticSettings {
                     ratio={(*self.width / *self.height) as f64}
                     on_confirm={ctx.link().callback(Msg::CropConfirmed)}
                     on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
+                    rescale={ctx.link().callback(Msg::Rescale)}
                 />
             }
             </>
@@ -316,6 +320,7 @@ impl StaticSettings {
                 let Some((content_type, data)) = self.crop_source_data.take() else {
                     return Err("image data not ready".into());
                 };
+
                 self.upload_image = ctx
                     .props()
                     .ws
@@ -323,8 +328,9 @@ impl StaticSettings {
                     .body(api::UploadImageRequest {
                         content_type,
                         data,
-                        crop: Some(crop),
-                        square: false,
+                        crop,
+                        sizing: api::ImageSizing::Crop,
+                        size: 512,
                     })
                     .on_packet(ctx.link().callback(Msg::ImageUploaded))
                     .send();
@@ -336,8 +342,18 @@ impl StaticSettings {
                 if let Some(url) = self.crop_source_url.take() {
                     let _ = Url::revoke_object_url(&url);
                 }
+
                 self.crop_source_data = None;
                 self._file_reader = None;
+                Ok(true)
+            }
+            Msg::Rescale(ratio) => {
+                let Some(ratio) = ratio else {
+                    return Ok(false);
+                };
+
+                *self.width = *self.height * ratio as f32;
+                self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, *self.width);
                 Ok(true)
             }
             Msg::ImageUploaded(body) => {

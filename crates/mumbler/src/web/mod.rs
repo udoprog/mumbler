@@ -147,7 +147,7 @@ async fn image(
 
 async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let mut objects = Vec::new();
-    let mut remote_avatars = Vec::new();
+    let mut remote_objects = Vec::new();
 
     {
         let state = b.client_state().await;
@@ -162,7 +162,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
         for (peer_id, peer) in state.peers.iter() {
             for object in peer.objects.values() {
-                remote_avatars.push(api::RemotePeerObject {
+                remote_objects.push(api::RemotePeerObject {
                     peer_id: *peer_id,
                     object: api::RemoteObject {
                         ty: object.ty,
@@ -182,7 +182,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
     let ev = api::InitializeMapEvent {
         objects,
-        remote_avatars,
+        remote_objects,
         config,
     };
 
@@ -195,9 +195,9 @@ async fn upload_image(
 ) -> Result<api::UploadImageResponse> {
     tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
 
-    let square = request.square;
-    let task =
-        task::spawn_blocking(move || imaging::process(&request.data, request.crop, 128, square));
+    let task = task::spawn_blocking(move || {
+        imaging::process(&request.data, request.crop, request.sizing, request.size)
+    });
 
     let (w, h, bytes) = task.await??;
     let id = backend.db().save_image(w, h, bytes).await?;

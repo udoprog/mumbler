@@ -125,7 +125,7 @@ impl LocalObject {
     }
 }
 
-pub(crate) struct Avatar {
+pub(crate) struct Token {
     pub(crate) look_at: State<Option<Vec3>>,
     pub(crate) image: State<Option<Id>>,
     pub(crate) color: State<Option<Color>>,
@@ -135,7 +135,7 @@ pub(crate) struct Avatar {
     pub(crate) speed: State<f32>,
 }
 
-impl Avatar {
+impl Token {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
@@ -180,7 +180,7 @@ impl StaticObject {
 }
 
 pub(crate) enum ObjectKind {
-    Avatar(Avatar),
+    Token(Token),
     Static(StaticObject),
     Unknown,
 }
@@ -194,8 +194,8 @@ pub(crate) struct ObjectData {
 impl ObjectData {
     fn from_remote(remote: &RemoteObject) -> Self {
         let kind = match remote.ty {
-            api::Type::AVATAR => {
-                let avatar = Avatar {
+            api::Type::TOKEN => {
+                let token = Token {
                     look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
                     image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
                     color: State::new(remote.properties.get(Key::COLOR).as_color()),
@@ -229,7 +229,7 @@ impl ObjectData {
                     ),
                 };
 
-                ObjectKind::Avatar(avatar)
+                ObjectKind::Token(token)
             }
             api::Type::STATIC => {
                 let s = StaticObject {
@@ -289,7 +289,7 @@ impl ObjectData {
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             key => match &mut self.kind {
-                ObjectKind::Avatar(avatar) => avatar.update(key, value),
+                ObjectKind::Token(token) => token.update(key, value),
                 ObjectKind::Static(s) => s.update(key, value),
                 ObjectKind::Unknown => false,
             },
@@ -299,7 +299,7 @@ impl ObjectData {
     #[inline]
     fn click_radius(&self) -> f32 {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => *avatar.token_radius,
+            ObjectKind::Token(token) => *token.token_radius,
             ObjectKind::Static(s) => (*s.width).hypot(*s.height) / 2.0,
             ObjectKind::Unknown => 0.5,
         }
@@ -312,9 +312,9 @@ impl ObjectData {
     }
 
     #[inline]
-    fn look_at(&self) -> Option<&Option<Vec3>> {
+    fn look_at(&self) -> Option<&Vec3> {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => Some(&*avatar.look_at),
+            ObjectKind::Token(token) => token.look_at.as_ref(),
             ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
@@ -322,7 +322,7 @@ impl ObjectData {
     #[inline]
     fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
         match &mut self.kind {
-            ObjectKind::Avatar(avatar) => Some(&mut avatar.look_at),
+            ObjectKind::Token(token) => Some(&mut token.look_at),
             ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
@@ -330,7 +330,7 @@ impl ObjectData {
     #[inline]
     fn as_image_mut(&mut self) -> Option<&mut State<Option<Id>>> {
         match &mut self.kind {
-            ObjectKind::Avatar(avatar) => Some(&mut avatar.image),
+            ObjectKind::Token(token) => Some(&mut token.image),
             ObjectKind::Static(s) => Some(&mut s.image),
             ObjectKind::Unknown => None,
         }
@@ -339,7 +339,7 @@ impl ObjectData {
     #[inline]
     fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
-            ObjectKind::Avatar(avatar) => Some(&mut avatar.hidden),
+            ObjectKind::Token(token) => Some(&mut token.hidden),
             ObjectKind::Static(s) => Some(&mut s.hidden),
             ObjectKind::Unknown => None,
         }
@@ -348,7 +348,7 @@ impl ObjectData {
     #[inline]
     fn speed(&self) -> Option<f32> {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => Some(*avatar.speed),
+            ObjectKind::Token(token) => Some(*token.speed),
             ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
@@ -356,7 +356,7 @@ impl ObjectData {
     #[inline]
     fn name(&self) -> Option<&str> {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => avatar.name.as_deref(),
+            ObjectKind::Token(token) => token.name.as_deref(),
             ObjectKind::Static(s) => s.name.as_deref(),
             ObjectKind::Unknown => None,
         }
@@ -365,7 +365,7 @@ impl ObjectData {
     #[inline]
     fn image(&self) -> Option<Id> {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => *avatar.image,
+            ObjectKind::Token(token) => *token.image,
             ObjectKind::Static(s) => *s.image,
             ObjectKind::Unknown => None,
         }
@@ -374,7 +374,7 @@ impl ObjectData {
     #[inline]
     fn is_hidden(&self) -> bool {
         match &self.kind {
-            ObjectKind::Avatar(avatar) => *avatar.hidden,
+            ObjectKind::Token(token) => *token.hidden,
             ObjectKind::Static(s) => *s.hidden,
             ObjectKind::Unknown => false,
         }
@@ -416,8 +416,7 @@ pub(crate) struct Map {
     start_press: Option<(VecXZ, bool)>,
     /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
-    /// Loaded avatar images, keyed by image id.
-    /// The closure must be kept alive alongside the element for the onload callback to fire.
+    /// Cache of loaded images.
     images: Images<Self>,
     /// Animation interval for smooth movement.
     animation_interval: Option<Interval>,
@@ -430,7 +429,7 @@ pub(crate) struct Map {
     /// In-flight create-object request.
     _create_object: ws::Request,
     /// In-flight create-static-object request.
-    _create_static_object: ws::Request,
+    _create_static: ws::Request,
     /// In-flight delete-object request.
     _delete_object: ws::Request,
     /// Index of the object pending delete confirmation.
@@ -476,8 +475,8 @@ pub(crate) enum Msg {
     Wheel(WheelEvent),
     AnimationFrame,
     SelectObject(Option<Id>),
-    CreateObject,
-    CreateStaticObject,
+    CreateToken,
+    CreateStatic,
     ConfirmDelete(Id),
     CancelDelete,
     DeleteObject(Id),
@@ -584,7 +583,7 @@ impl Component for Map {
             _keydown_listener,
             _keyup_listener,
             _create_object: ws::Request::new(),
-            _create_static_object: ws::Request::new(),
+            _create_static: ws::Request::new(),
             _delete_object: ws::Request::new(),
             delete: None,
             open_settings: None,
@@ -674,10 +673,10 @@ impl Component for Map {
         let object_list_header = {
             html! {
                 <div class="control-group">
-                    <button class="btn square primary" title="Add avatar" onclick={ctx.link().callback(|_| Msg::CreateObject)}>
-                        <Icon name="user-plus" title="Add avatar" />
+                    <button class="btn square primary" title="Add token" onclick={ctx.link().callback(|_| Msg::CreateToken)}>
+                        <Icon name="user-plus" title="Add token" />
                     </button>
-                    <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
+                    <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStatic)}>
                         <Icon name="squares-plus" title="Add static" />
                     </button>
                 </div>
@@ -830,9 +829,17 @@ impl Component for Map {
                                 is_hidden.then_some("active"),
                             };
 
+                            let icon_name = match o.data.kind {
+                                ObjectKind::Token(..) => "user",
+                                _ => "squares-2x2",
+                            };
+
                             html! {
                                 <div class={classes} onclick={on_click}>
+                                    <Icon name={icon_name} invert={true} />
+
                                     <span class="object-list-item-label">{label}</span>
+
                                     <button class={mumble_classes}
                                         title="Toggle as MumbleLink Source"
                                         onclick={ctx.link().callback(move |ev: MouseEvent| {
@@ -1013,7 +1020,7 @@ impl Map {
                     .collect();
 
                 self.peers = body
-                    .remote_avatars
+                    .remote_objects
                     .iter()
                     .map(PeerObject::from_peer)
                     .map(|peer| ((peer.peer_id, peer.data.id), peer))
@@ -1110,7 +1117,7 @@ impl Map {
                 let body = body?;
                 let body = body.decode()?;
 
-                tracing::debug!(?body, "Remote avatar update");
+                tracing::debug!(?body, "Remote update");
 
                 match body {
                     api::RemoteUpdateBody::RemoteLost => {
@@ -1290,13 +1297,13 @@ impl Map {
 
                 Ok(true)
             }
-            Msg::CreateObject => {
+            Msg::CreateToken => {
                 self._create_object = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::CreateObjectRequest {
-                        ty: api::Type::AVATAR,
+                        ty: api::Type::TOKEN,
                         properties: api::Properties::from([
                             (Key::NAME, Value::from("Owlbear")),
                             (Key::HIDDEN, Value::from(true)),
@@ -1312,8 +1319,8 @@ impl Map {
                 _ = result.decode()?;
                 Ok(true)
             }
-            Msg::CreateStaticObject => {
-                self._create_static_object = ctx
+            Msg::CreateStatic => {
+                self._create_static = ctx
                     .props()
                     .ws
                     .request()
@@ -1321,7 +1328,7 @@ impl Map {
                         ty: api::Type::STATIC,
                         properties: api::Properties::from([
                             (Key::NAME, Value::from("Object")),
-                            (Key::HIDDEN, Value::from(false)),
+                            (Key::HIDDEN, Value::from(true)),
                             (Key::STATIC_WIDTH, Value::from(1.0_f32)),
                             (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
                         ]),
@@ -1457,19 +1464,20 @@ impl Map {
 
                 // Face the movement direction unless a look_at target is active.
                 if o.data.look_at().is_none() {
-                    o.data.transform.front = p.look_at(target).xyz(0.0);
+                    tracing::info!("LOOKING AT???");
+                    o.data.transform.front = p.direction_to(target).xyz(0.0);
                 }
 
                 self.update_transform_ids.insert(o.data.id);
             };
 
             'look_done: {
-                let Some(t) = o.data.look_at().and_then(|look_at| *look_at) else {
+                let Some(t) = o.data.look_at() else {
                     break 'look_done;
                 };
 
                 o.arrow_target = Some(t.xz());
-                o.data.transform.front = p.look_at(t.xz()).xyz(0.0);
+                o.data.transform.front = p.direction_to(t.xz()).xyz(0.0);
                 self.update_transform_ids.insert(o.data.id);
             };
         }
@@ -1538,13 +1546,7 @@ impl Map {
         let hit = self
             .objects
             .values()
-            .find(|o| {
-                let p = o.data.transform.position;
-                let r = o.data.click_radius();
-                let dx = p.x - w.x;
-                let dz = p.z - w.z;
-                dx * dx + dz * dz <= r * r
-            })
+            .find(|o| o.data.transform.position.xz().dist(w) < o.data.click_radius())
             .map(|o| o.data.id);
 
         if let Some(object_id) = hit {
@@ -1621,28 +1623,30 @@ impl Map {
                     let t = ViewTransform::new(&canvas, &self.config);
                     let e = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
 
-                    let hit = self
-                        .objects
-                        .values()
-                        .find(|o| {
-                            let p = o.data.transform.position;
-                            let r = o.data.click_radius();
-                            let dx = p.x - e.x;
-                            let dz = p.z - e.z;
-                            dx * dx + dz * dz <= r * r
-                        })
-                        .map(|o| o.data.id);
+                    let mut hit_something = false;
 
-                    if let Some(hit_id) = hit
-                        && self.selected != Some(hit_id)
-                    {
-                        ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
-                        self.delete = None;
-                        break 'out true;
+                    if !ev.shift_key() {
+                        let hit = self
+                            .objects
+                            .values()
+                            .find(|o| {
+                                o.data.transform.position.xz().dist(e) < o.data.click_radius()
+                            })
+                            .map(|o| o.data.id);
+
+                        if let Some(hit_id) = hit
+                            && self.selected != Some(hit_id)
+                        {
+                            ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
+                            self.delete = None;
+                            break 'out true;
+                        }
+
+                        hit_something = hit.is_some();
                     }
 
                     let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
-                        break 'out hit.is_some();
+                        break 'out hit_something;
                     };
 
                     o.arrow_target = None;
@@ -1721,7 +1725,7 @@ impl Map {
             };
 
             if shift_key {
-                let dist = (m.x - p.x).hypot(m.z - p.z);
+                let dist = p.dist(m);
 
                 if dist < ARROW_THRESHOLD {
                     break 'done;
@@ -1765,7 +1769,7 @@ impl Map {
 
         let id = o.data.id;
         o.arrow_target = Some(m);
-        o.data.transform.front = p.look_at(m).xyz(0.0);
+        o.data.transform.front = p.direction_to(m).xyz(0.0);
         self.update_transform_ids.insert(id);
     }
 
@@ -1922,7 +1926,7 @@ impl Map {
 
         let selected = self.selected;
 
-        // Draw static objects first (behind avatars).
+        // Draw static objects first (behind tokens).
         for o in self.objects.values() {
             if let Some(mut s) = RenderStatic::from_data(&o.data) {
                 s.selected = selected == Some(o.data.id);
@@ -1931,10 +1935,10 @@ impl Map {
         }
         // Draw remote static objects.
         for o in self.peers.values() {
-            if let Some(s) = RenderStatic::from_data(&o.data) {
-                if !s.hidden {
-                    render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
-                }
+            if let Some(s) = RenderStatic::from_data(&o.data)
+                && !s.hidden
+            {
+                render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
             }
         }
 
@@ -1946,10 +1950,10 @@ impl Map {
                 .filter(|a| !a.hidden);
 
             let locals = self.objects.values().flat_map(move |a| {
-                let mut avatar = RenderAvatar::from_data(&a.data)?;
-                avatar.player = true;
-                avatar.selected = selected == Some(a.data.id);
-                Some(avatar)
+                let mut token = RenderAvatar::from_data(&a.data)?;
+                token.player = true;
+                token.selected = selected == Some(a.data.id);
+                Some(token)
             });
 
             remotes.chain(locals)
@@ -1962,7 +1966,7 @@ impl Map {
 
         for a in renders() {
             let arrow = a.selected.then_some(selected_arrow).flatten();
-            render::draw_avatar_token(&cx, &t, &a, arrow, |id| self.images.get(id).cloned())?;
+            render::draw_token_token(&cx, &t, &a, arrow, |id| self.images.get(id).cloned())?;
         }
 
         for a in renders() {

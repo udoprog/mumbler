@@ -151,9 +151,13 @@ impl Backend {
         let mut hidden = HashSet::new();
 
         for (id, ty) in database.objects().await? {
+            tracing::debug!(?id, ?ty, "Loading object");
+
             let mut properties = Properties::new();
 
             for (key, value) in database.properties(id).await? {
+                tracing::debug!(?id, ?key, ?value, "Loading property");
+
                 match key {
                     Key::HIDDEN => {
                         if value.as_bool().unwrap_or_default() {

@@ -60,7 +60,7 @@ impl Component for ImageGalleryModal {
                 })
             };
             let classes = classes!(
-                "avatar",
+                "token",
                 (ctx.props().selected == Some(id)).then_some("selected"),
                 "clickable"
             );

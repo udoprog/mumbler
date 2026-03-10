@@ -345,7 +345,7 @@ canvas#map {
     }
 }
 
-.avatar {
+.token {
     width: 128px;
     height: 128px;
     object-fit: contain;
@@ -373,12 +373,12 @@ canvas#map {
     }
 }
 
-.avatar.selected {
+.token.selected {
     border: 2px solid var(--link-color);
     border-radius: $border-radius;
 }
 
-.avatar.clickable:not(.selected) {
+.token.clickable:not(.selected) {
     cursor: pointer;
 }
 

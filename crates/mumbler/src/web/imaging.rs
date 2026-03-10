@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
-use api::CropRegion;
+use api::{CropRegion, ImageSizing};
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, imageops};
 
@@ -16,20 +16,19 @@ use image::{DynamicImage, ImageFormat, imageops};
 /// `false` the resized image is returned as-is, preserving aspect ratio.
 pub(crate) fn process(
     data: &[u8],
-    crop: Option<CropRegion>,
+    crop: CropRegion,
+    sizing: ImageSizing,
     size: u32,
-    square: bool,
 ) -> Result<(u32, u32, Vec<u8>)> {
     let image = image::load_from_memory(data)?;
 
-    // Apply crop before anything else.
-    let image = if let Some(c) = crop {
+    let image = if !crop.is_whole_image(image.width(), image.height()) {
         let img_w = image.width();
         let img_h = image.height();
-        let x = c.x1.min(img_w.saturating_sub(1));
-        let y = c.y1.min(img_h.saturating_sub(1));
-        let w = c.x2.saturating_sub(c.x1).min(img_w - x).max(1);
-        let h = c.y2.saturating_sub(c.y1).min(img_h - y).max(1);
+        let x = crop.x1.min(img_w.saturating_sub(1));
+        let y = crop.y1.min(img_h.saturating_sub(1));
+        let w = crop.x2.saturating_sub(crop.x1).min(img_w - x).max(1);
+        let h = crop.y2.saturating_sub(crop.y1).min(img_h - y).max(1);
         image.crop_imm(x, y, w, h)
     } else {
         image
@@ -70,9 +69,13 @@ pub(crate) fn process(
         (a / count) as u8,
     ]);
 
-    let (out_w, out_h) = if square { (size, size) } else { (new_w, new_h) };
+    let (out_w, out_h) = if sizing.is_square() {
+        (size, size)
+    } else {
+        (new_w, new_h)
+    };
 
-    let output = if square {
+    let output = if sizing.is_square() {
         // Create a `size×size` canvas filled with the average colour and center
         // the resized image onto it.
         let mut canvas = image::RgbaImage::from_pixel(size, size, avg);
