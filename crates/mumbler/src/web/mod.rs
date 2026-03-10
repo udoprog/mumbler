@@ -154,6 +154,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
         for (id, object) in state.objects.iter() {
             objects.push(api::RemoteObject {
+                ty: object.ty,
                 id: *id,
                 properties: object.properties.clone(),
             });
@@ -164,6 +165,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                 remote_avatars.push(api::RemotePeerObject {
                     peer_id: *peer_id,
                     object: api::RemoteObject {
+                        ty: object.ty,
                         id: object.id,
                         properties: object.properties.clone(),
                     },
@@ -219,6 +221,7 @@ async fn get_object_settings(
         let object = state.objects.get(&request.id).context("object not found")?;
 
         api::RemoteObject {
+            ty: object.ty,
             id: request.id,
             properties: object.properties.clone(),
         }

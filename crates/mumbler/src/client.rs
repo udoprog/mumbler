@@ -234,7 +234,11 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
             properties.insert(key, value);
         }
 
-        objects.push(RemoteObject { id, properties });
+        objects.push(RemoteObject {
+            ty: object.ty,
+            id,
+            properties,
+        });
     }
 
     let mut peer = Peer::new(addr, client);
@@ -302,7 +306,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         properties.insert(key, value);
                     }
 
-                    peer.add_object(RemoteObject { id, properties })?;
+                    peer.add_object(RemoteObject { ty: object.ty, id, properties })?;
                 }
 
                 for id in object_deleted.drain() {

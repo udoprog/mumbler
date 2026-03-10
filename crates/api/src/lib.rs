@@ -284,6 +284,18 @@ impl IntoIterator for Properties {
     }
 }
 
+impl<const N: usize> From<[(Key, Value); N]> for Properties {
+    fn from(values: [(Key, Value); N]) -> Self {
+        let mut properties = Properties::new();
+
+        for (key, value) in values {
+            properties.insert(key, value);
+        }
+
+        properties
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
@@ -365,10 +377,15 @@ pub struct RemotePeerObject {
     pub object: RemoteObject,
 }
 
+// The definition of a remote object.
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct RemoteObject {
+    /// The type of the object.
+    pub ty: Type,
+    /// The identifier of the object.
     pub id: Id,
+    /// The properties of the object.
     pub properties: Properties,
 }
 
@@ -416,7 +433,12 @@ pub struct GetObjectSettingsResponse {
 /// Request to create a new local object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct CreateObjectRequest;
+pub struct CreateObjectRequest {
+    /// The type of object to create.
+    pub ty: Type,
+    /// The initial properties of the object.
+    pub properties: Properties,
+}
 
 /// Request to delete a local object.
 #[derive(Debug, Encode, Decode)]

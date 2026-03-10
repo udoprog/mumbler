@@ -220,6 +220,15 @@ impl From<bool> for Value {
     }
 }
 
+impl From<&str> for Value {
+    #[inline]
+    fn from(value: &str) -> Self {
+        Self {
+            kind: ValueKind::String(value.to_string()),
+        }
+    }
+}
+
 impl From<String> for Value {
     #[inline]
     fn from(value: String) -> Self {

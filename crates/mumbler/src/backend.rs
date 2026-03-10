@@ -65,6 +65,7 @@ pub(crate) enum BackendEvent {
 /// State for the backend.
 #[derive(Debug, Clone)]
 pub(crate) struct LocalObject {
+    pub(crate) ty: Type,
     pub(crate) properties: Properties,
     pub(crate) changed: HashSet<Key>,
 }
@@ -149,7 +150,7 @@ impl Backend {
         let mut objects = HashMap::new();
         let mut hidden = HashSet::new();
 
-        for id in database.objects(api::Type::AVATAR).await? {
+        for (id, ty) in database.objects().await? {
             let mut properties = Properties::new();
 
             for (key, value) in database.properties(id).await? {
@@ -168,6 +169,7 @@ impl Backend {
             objects.insert(
                 id,
                 LocalObject {
+                    ty,
                     properties,
                     changed: HashSet::new(),
                 },
@@ -335,14 +337,14 @@ impl Backend {
 
     /// Create a new local object, persisting it to the database and inserting
     /// it into the in-memory client state.  Returns the new object's ID.
-    pub(crate) async fn create_object(&self) -> Result<RemoteObject> {
+    pub(crate) async fn create_object(
+        &self,
+        ty: Type,
+        properties: Properties,
+    ) -> Result<RemoteObject> {
         let id = Id::new(rand::random());
 
-        let mut properties = Properties::new();
-        properties.insert(Key::NAME, Value::from("Anonymous Owlbear".to_string()));
-        properties.insert(Key::HIDDEN, Value::from(true));
-
-        self.db().insert_object(id, Type::AVATAR).await?;
+        self.db().insert_object(id, ty).await?;
 
         for (key, value) in properties.iter() {
             self.db().set_property_value(id, key, value.clone()).await?;
@@ -353,6 +355,7 @@ impl Backend {
         state.objects.insert(
             id,
             LocalObject {
+                ty,
                 properties: properties.clone(),
                 changed: HashSet::new(),
             },
@@ -362,6 +365,7 @@ impl Backend {
         self.inner.client_notify.notify_one();
 
         Ok(RemoteObject {
+            ty,
             id,
             properties: properties.clone(),
         })
@@ -376,7 +380,7 @@ impl Backend {
             self.set_mumblelink_transform(None).await;
         }
 
-        self.db().delete_object(id, Type::AVATAR).await?;
+        self.db().delete_object(id).await?;
         let mut state = self.inner.client_state.lock().await;
         state.objects.remove(&id);
         state.objects_changed.remove(&id);

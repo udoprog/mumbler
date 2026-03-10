@@ -115,11 +115,16 @@ impl LocalObject {
             arrow_target: None,
         }
     }
+
+    fn image(&self) -> Option<Id> {
+        match &self.data.kind {
+            ObjectKind::Avatar(avatar) => *avatar.image,
+            ObjectKind::Unknown => None,
+        }
+    }
 }
 
-pub(crate) struct ObjectData {
-    pub(crate) id: Id,
-    pub(crate) transform: State<Transform>,
+pub(crate) struct Avatar {
     pub(crate) look_at: State<Option<Vec3>>,
     pub(crate) image: State<Option<Id>>,
     pub(crate) color: State<Option<Color>>,
@@ -129,56 +134,9 @@ pub(crate) struct ObjectData {
     pub(crate) speed: State<f32>,
 }
 
-impl ObjectData {
-    fn from_remote(remote: &RemoteObject) -> Self {
-        Self {
-            id: remote.id,
-            transform: State::new(
-                remote
-                    .properties
-                    .get(Key::TRANSFORM)
-                    .as_transform()
-                    .unwrap_or_else(Transform::origin),
-            ),
-            look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
-            image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
-            color: State::new(remote.properties.get(Key::COLOR).as_color()),
-            name: State::new(
-                remote
-                    .properties
-                    .get(Key::NAME)
-                    .as_string()
-                    .map(str::to_owned),
-            ),
-            hidden: State::new(
-                remote
-                    .properties
-                    .get(Key::HIDDEN)
-                    .as_bool()
-                    .unwrap_or(false),
-            ),
-            token_radius: State::new(
-                remote
-                    .properties
-                    .get(Key::TOKEN_RADIUS)
-                    .as_float()
-                    .unwrap_or(DEFAULT_TOKEN_RADIUS),
-            ),
-            speed: State::new(
-                remote
-                    .properties
-                    .get(Key::SPEED)
-                    .as_float()
-                    .unwrap_or(DEFAULT_SPEED),
-            ),
-        }
-    }
-
+impl Avatar {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::TRANSFORM => self
-                .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
@@ -189,6 +147,158 @@ impl ObjectData {
                 .update(value.as_float().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_float().unwrap_or(DEFAULT_SPEED)),
             _ => false,
+        }
+    }
+}
+
+pub(crate) enum ObjectKind {
+    Avatar(Avatar),
+    Unknown,
+}
+
+pub(crate) struct ObjectData {
+    pub(crate) id: Id,
+    pub(crate) transform: State<Transform>,
+    pub(crate) kind: ObjectKind,
+}
+
+impl ObjectData {
+    fn from_remote(remote: &RemoteObject) -> Self {
+        let kind = match remote.ty {
+            api::Type::AVATAR => {
+                let avatar = Avatar {
+                    look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
+                    image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
+                    color: State::new(remote.properties.get(Key::COLOR).as_color()),
+                    name: State::new(
+                        remote
+                            .properties
+                            .get(Key::NAME)
+                            .as_string()
+                            .map(str::to_owned),
+                    ),
+                    hidden: State::new(
+                        remote
+                            .properties
+                            .get(Key::HIDDEN)
+                            .as_bool()
+                            .unwrap_or(false),
+                    ),
+                    token_radius: State::new(
+                        remote
+                            .properties
+                            .get(Key::TOKEN_RADIUS)
+                            .as_float()
+                            .unwrap_or(DEFAULT_TOKEN_RADIUS),
+                    ),
+                    speed: State::new(
+                        remote
+                            .properties
+                            .get(Key::SPEED)
+                            .as_float()
+                            .unwrap_or(DEFAULT_SPEED),
+                    ),
+                };
+
+                ObjectKind::Avatar(avatar)
+            }
+            _ => ObjectKind::Unknown,
+        };
+
+        Self {
+            id: remote.id,
+            transform: State::new(
+                remote
+                    .properties
+                    .get(Key::TRANSFORM)
+                    .as_transform()
+                    .unwrap_or_else(Transform::origin),
+            ),
+            kind,
+        }
+    }
+
+    fn update(&mut self, key: Key, value: Value) -> bool {
+        match key {
+            Key::TRANSFORM => self
+                .transform
+                .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            key => match &mut self.kind {
+                ObjectKind::Avatar(avatar) => avatar.update(key, value),
+                ObjectKind::Unknown => false,
+            },
+        }
+    }
+
+    #[inline]
+    fn click_radius(&self) -> f32 {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => *avatar.token_radius,
+            ObjectKind::Unknown => 0.5,
+        }
+    }
+
+    #[inline]
+    fn look_at(&self) -> Option<&Option<Vec3>> {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => Some(&*avatar.look_at),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
+        match &mut self.kind {
+            ObjectKind::Avatar(avatar) => Some(&mut avatar.look_at),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn as_image_mut(&mut self) -> Option<&mut State<Option<Id>>> {
+        match &mut self.kind {
+            ObjectKind::Avatar(avatar) => Some(&mut avatar.image),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
+        match &mut self.kind {
+            ObjectKind::Avatar(avatar) => Some(&mut avatar.hidden),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn speed(&self) -> Option<f32> {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => Some(*avatar.speed),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn name(&self) -> Option<&str> {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => avatar.name.as_deref(),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn image(&self) -> Option<Id> {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => *avatar.image,
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn is_hidden(&self) -> bool {
+        match &self.kind {
+            ObjectKind::Avatar(avatar) => *avatar.hidden,
+            ObjectKind::Unknown => false,
         }
     }
 }
@@ -513,7 +623,7 @@ impl Component for Map {
                             let selected = self.selected == Some(object_id);
                             let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(object_id)));
                             let classes = classes!("object-list-item", selected.then_some("selected"));
-                            let label = o.data.name.as_deref().unwrap_or("");
+                            let label = o.data.name().unwrap_or("");
 
                             if self.delete.contains(&object_id) {
                                 html! {
@@ -530,7 +640,7 @@ impl Component for Map {
                                     </div>
                                 }
                             } else {
-                                let is_hidden = *o.data.hidden;
+                                let is_hidden = o.data.is_hidden();
                                 let eye_icon = if is_hidden { "eye-slash" } else { "eye" };
                                 let eye_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
                                 let is_mumble = *self.config.mumble_object == Some(object_id);
@@ -662,8 +772,12 @@ impl Map {
                     return Ok(false);
                 };
 
-                *object.data.hidden = !*object.data.hidden;
-                let new_hidden = *object.data.hidden;
+                let Some(hidden) = object.data.as_hidden_mut() else {
+                    return Ok(false);
+                };
+
+                let new_hidden = !**hidden;
+                **hidden = new_hidden;
 
                 let req = ctx
                     .props()
@@ -740,7 +854,7 @@ impl Map {
                     }
                     LocalUpdateBody::Delete { object_id } => {
                         if let Some(removed) = self.objects.remove(&object_id)
-                            && let Some(id) = *removed.data.image
+                            && let Some(id) = removed.data.image()
                         {
                             self.images.remove(id);
                         }
@@ -771,7 +885,11 @@ impl Map {
                                 Key::IMAGE_ID => {
                                     let new = value.as_id();
 
-                                    let Some(old) = a.data.image.replace(new) else {
+                                    let Some(image) = a.data.as_image_mut() else {
+                                        break 'done false;
+                                    };
+
+                                    let Some(old) = image.replace(new) else {
                                         break 'done false;
                                     };
 
@@ -810,7 +928,7 @@ impl Map {
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
 
-                            if let Some(id) = *data.image {
+                            if let Some(id) = data.image() {
                                 self.images.load(ctx, id);
                             }
 
@@ -835,7 +953,11 @@ impl Map {
                             Key::IMAGE_ID => {
                                 let new = value.as_id();
 
-                                let Some(old) = a.data.image.replace(new) else {
+                                let Some(image) = a.data.as_image_mut() else {
+                                    break 'done;
+                                };
+
+                                let Some(old) = image.replace(new) else {
                                     break 'done;
                                 };
 
@@ -855,7 +977,7 @@ impl Map {
                     api::RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
 
-                        if let Some(id) = *data.image {
+                        if let Some(id) = data.image() {
                             self.images.load(ctx, id);
                         }
 
@@ -864,7 +986,7 @@ impl Map {
                     }
                     api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
                         if let Some(removed) = self.peers.remove(&(peer_id, object_id))
-                            && let Some(id) = *removed.data.image
+                            && let Some(id) = removed.data.image()
                         {
                             self.images.remove(id);
                         }
@@ -978,9 +1100,16 @@ impl Map {
                     .props()
                     .ws
                     .request()
-                    .body(api::CreateObjectRequest)
+                    .body(api::CreateObjectRequest {
+                        ty: api::Type::AVATAR,
+                        properties: api::Properties::from([
+                            (Key::NAME, Value::from("Owlbear")),
+                            (Key::HIDDEN, Value::from(true)),
+                        ]),
+                    })
                     .on_packet(ctx.link().callback(Msg::ObjectCreated))
                     .send();
+
                 Ok(false)
             }
             Msg::ObjectCreated(result) => {
@@ -1029,12 +1158,16 @@ impl Map {
             return Ok(());
         };
 
-        let object_id = o.data.id;
-        *o.data.look_at = None;
         o.arrow_target = None;
-
-        self.update_look_at_ids.insert(object_id);
         self.start_press = None;
+
+        let object_id = o.data.id;
+
+        if let Some(look_at) = o.data.as_look_at_mut() {
+            **look_at = None;
+            self.update_look_at_ids.insert(object_id);
+        }
+
         self.redraw()?;
         Ok(())
     }
@@ -1053,12 +1186,15 @@ impl Map {
         };
 
         let object_id = o.data.id;
-        *o.data.look_at = Some(Vec3::new(mx, 0.0, my));
+
+        if let Some(look_at) = o.data.as_look_at_mut() {
+            **look_at = Some(Vec3::new(mx, 0.0, my));
+            self.update_look_at_ids.insert(object_id);
+        }
 
         let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
         self.start_press = Some((px, py, true));
         self.look_at(px, py, mx, my);
-        self.update_look_at_ids.insert(object_id);
         self.redraw()?;
         Ok(())
     }
@@ -1068,7 +1204,7 @@ impl Map {
             let p = o.data.transform.position;
 
             'move_done: {
-                let Some(target) = o.move_target else {
+                let (Some(target), Some(speed)) = (o.move_target, o.data.speed()) else {
                     break 'move_done;
                 };
 
@@ -1083,7 +1219,7 @@ impl Map {
                     break 'move_done;
                 }
 
-                let step = *o.data.speed / ANIMATION_FPS as f32;
+                let step = speed / ANIMATION_FPS as f32;
                 let move_distance = step.min(distance);
                 let ratio = move_distance / distance;
 
@@ -1091,7 +1227,7 @@ impl Map {
                 o.data.transform.position.z += dz * ratio;
 
                 // Face the movement direction unless a look_at target is active.
-                if o.data.look_at.is_none() {
+                if o.data.look_at().is_none() {
                     let angle_rad = dz.atan2(dx);
                     o.data.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
                 }
@@ -1100,7 +1236,7 @@ impl Map {
             };
 
             'look_done: {
-                let Some(target) = *o.data.look_at else {
+                let Some(target) = o.data.look_at().and_then(|look_at| *look_at) else {
                     break 'look_done;
                 };
 
@@ -1145,7 +1281,11 @@ impl Map {
                 continue;
             };
 
-            let req = send_update(ctx, id, Key::LOOK_AT, *o.data.look_at);
+            let Some(look_at) = o.data.look_at() else {
+                continue;
+            };
+
+            let req = send_update(ctx, id, Key::LOOK_AT, *look_at);
             self.look_at_requests.insert(id, req);
         }
     }
@@ -1179,7 +1319,7 @@ impl Map {
                         .values()
                         .find(|o| {
                             let p = o.data.transform.position;
-                            let r = *o.data.token_radius;
+                            let r = o.data.click_radius();
                             let dx = p.x - ex;
                             let dz = p.z - ey;
                             dx * dx + dz * dz <= r * r
@@ -1206,9 +1346,12 @@ impl Map {
                         let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
 
                         self.start_press = Some((px, py, true));
-                        *o.data.look_at = Some(Vec3::new(ex, 0.0, ey));
-                        self.look_at(px, py, ex, ey);
-                        self.update_look_at_ids.insert(object_id);
+
+                        if let Some(look_at) = o.data.as_look_at_mut() {
+                            **look_at = Some(Vec3::new(ex, 0.0, ey));
+                            self.look_at(px, py, ex, ey);
+                            self.update_look_at_ids.insert(object_id);
+                        }
                     } else {
                         self.start_press = Some((ex, ey, false));
                         o.move_target = Some(Vec3::new(ex, 0.0, ey));
@@ -1258,10 +1401,14 @@ impl Map {
         {
             if shift_key {
                 let dist = (mx - px).hypot(my - py);
+
                 if dist >= ARROW_THRESHOLD {
-                    self.update_look_at_ids.insert(o.data.id);
-                    *o.data.look_at = Some(Vec3::new(mx, 0.0, my));
-                    self.look_at(px, py, mx, my);
+                    if let Some(look_at) = o.data.as_look_at_mut() {
+                        **look_at = Some(Vec3::new(mx, 0.0, my));
+                        self.update_look_at_ids.insert(o.data.id);
+                        self.look_at(px, py, mx, my);
+                    }
+
                     needs_redraw = true;
                 }
             } else {
@@ -1374,8 +1521,8 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.objects.values().filter_map(|o| *o.data.image);
-        let ids = ids.chain(self.peers.values().filter_map(|a| *a.data.image));
+        let ids = self.objects.values().filter_map(|o| o.image());
+        let ids = ids.chain(self.peers.values().filter_map(|a| a.data.image()));
 
         for id in ids {
             self.images.load(ctx, id);
@@ -1446,14 +1593,14 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
-                .filter(|a| !*a.data.hidden)
-                .map(|a| RenderAvatar::from_data(&a.data));
+                .flat_map(|a| RenderAvatar::from_data(&a.data))
+                .filter(|a| !a.hidden);
 
-            let locals = self.objects.values().map(move |a| {
-                let mut avatar = RenderAvatar::from_data(&a.data);
+            let locals = self.objects.values().flat_map(move |a| {
+                let mut avatar = RenderAvatar::from_data(&a.data)?;
                 avatar.player = true;
                 avatar.selected = selected == Some(a.data.id);
-                avatar
+                Some(avatar)
             });
 
             remotes.chain(locals)

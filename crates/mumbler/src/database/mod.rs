@@ -79,7 +79,7 @@ struct Inner {
     list_configs: SendStatement,
     insert_object: SendStatement,
     delete_object: SendStatement,
-    list_objects_by_type: SendStatement,
+    list_objects: SendStatement,
 }
 
 /// A database connection.
@@ -175,8 +175,8 @@ impl Database {
                 delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
                 list_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
-                delete_object: c.prepare("DELETE FROM objects WHERE id = ? AND type = ?")?.into_send()?,
-                list_objects_by_type: c.prepare("SELECT id FROM objects WHERE type = ?")?.into_send()?,
+                delete_object: c.prepare("DELETE FROM objects WHERE id = ?")?.into_send()?,
+                list_objects: c.prepare("SELECT id, type FROM objects")?.into_send()?,
             }
         };
 
@@ -412,27 +412,27 @@ impl Database {
         task.await?
     }
 
-    pub async fn delete_object(&self, id: Id, ty: Type) -> Result<()> {
+    pub async fn delete_object(&self, id: Id) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.delete_object.execute((id, ty))?;
+            inner.delete_object.execute((id,))?;
             Ok(())
         });
 
         task.await?
     }
 
-    pub async fn objects(&self, ty: Type) -> Result<Vec<Id>> {
+    pub async fn objects(&self) -> Result<Vec<(Id, Type)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_objects_by_type.bind((ty,))?;
+            inner.list_objects.reset()?;
 
             let mut objects = Vec::new();
 
-            while let Some(id) = inner.list_objects_by_type.next::<Id>()? {
-                objects.push(id);
+            while let Some((id, ty)) = inner.list_objects.next::<(Id, Type)>()? {
+                objects.push((id, ty));
             }
 
             Ok(objects)
