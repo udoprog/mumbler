@@ -8,7 +8,7 @@ $border-radius2: 8px;
 $btn-height: 28px;
 $btn-height-sm: 24px;
 $input-height: 24px;
-$icon-height: 24px;
+$icon-height: 20px;
 $icon-height-sm: 16px;
 
 @import "_icons";
@@ -28,13 +28,13 @@ $icon-height-sm: 16px;
     --link-hover: #eee;
     --input-color: #2e2e2e;
     --border-color: #333;
-    --danger-color: #e05252;
+    --danger-color: #e07f7f;
     --danger-background-color: #2e1e1e;
     --success-color: #6eb671;
     --warning-color: #ffe992;
-    --primary-color: #97bfff;
+    --primary-color: #9ebdee;
     --secondary-color: #868686;
-    --secondary-color-disabled: #c4c4c4;
+    --secondary-color-disabled: #3e3e3e;
     --info-background-color: #1e2a3b;
 }
 

@@ -54,7 +54,7 @@ impl Config {
 
     fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
-            Key::WORLD_SCALE => self.zoom.update(value.as_float().unwrap_or(2.0)),
+            Key::WORLD_SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
             Key::WORLD_EXTENT => self
                 .extent
@@ -79,7 +79,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            zoom: State::new(1.0),
+            zoom: State::new(2.0),
             pan: State::new(Pan::zero()),
             extent: State::new(Extent::arena()),
             mumble_object: State::new(None),
@@ -142,8 +142,8 @@ impl Avatar {
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             Key::TOKEN_RADIUS => self
                 .token_radius
-                .update(value.as_float().unwrap_or(DEFAULT_TOKEN_RADIUS)),
-            Key::SPEED => self.speed.update(value.as_float().unwrap_or(DEFAULT_SPEED)),
+                .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
+            Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
             _ => false,
         }
     }
@@ -167,10 +167,10 @@ impl StaticObject {
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             Key::STATIC_WIDTH => self
                 .width
-                .update(value.as_float().unwrap_or(DEFAULT_STATIC_WIDTH)),
+                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
             Key::STATIC_HEIGHT => self
                 .height
-                .update(value.as_float().unwrap_or(DEFAULT_STATIC_HEIGHT)),
+                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
             _ => false,
         }
     }
@@ -214,14 +214,14 @@ impl ObjectData {
                         remote
                             .properties
                             .get(Key::TOKEN_RADIUS)
-                            .as_float()
+                            .as_f32()
                             .unwrap_or(DEFAULT_TOKEN_RADIUS),
                     ),
                     speed: State::new(
                         remote
                             .properties
                             .get(Key::SPEED)
-                            .as_float()
+                            .as_f32()
                             .unwrap_or(DEFAULT_SPEED),
                     ),
                 };
@@ -250,14 +250,14 @@ impl ObjectData {
                         remote
                             .properties
                             .get(Key::STATIC_WIDTH)
-                            .as_float()
+                            .as_f32()
                             .unwrap_or(DEFAULT_STATIC_WIDTH),
                     ),
                     height: State::new(
                         remote
                             .properties
                             .get(Key::STATIC_HEIGHT)
-                            .as_float()
+                            .as_f32()
                             .unwrap_or(DEFAULT_STATIC_HEIGHT),
                     ),
                 };
@@ -674,8 +674,8 @@ impl Component for Map {
                     <button class="btn square primary" title="Add avatar" onclick={ctx.link().callback(|_| Msg::CreateObject)}>
                         <Icon name="user-plus" title="Add avatar" />
                     </button>
-                    <button class="btn square" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
-                        <Icon name="square-2-stack" title="Add static" />
+                    <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStaticObject)}>
+                        <Icon name="squares-plus" title="Add static" />
                     </button>
                 </div>
             }

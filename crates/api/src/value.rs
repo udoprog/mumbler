@@ -17,6 +17,7 @@ pub enum ValueType {
     Vec3,
     Color,
     Bytes,
+    Integer,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -63,9 +64,33 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_float(&self) -> Option<f32> {
+    pub fn as_f32(&self) -> Option<f32> {
+        match &self.kind {
+            ValueKind::Float(f) => Some(*f as f32),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_f64(&self) -> Option<f64> {
         match &self.kind {
             ValueKind::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_u32(&self) -> Option<u32> {
+        match &self.kind {
+            ValueKind::Integer(i) => u32::try_from(*i).ok(),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_i64(&self) -> Option<i64> {
+        match &self.kind {
+            ValueKind::Integer(i) => Some(*i),
             _ => None,
         }
     }
@@ -181,7 +206,8 @@ impl fmt::Debug for Value {
 #[musli(crate = musli_core)]
 pub enum ValueKind {
     Id(Id),
-    Float(f32),
+    Float(f64),
+    Integer(i64),
     Boolean(bool),
     String(String),
     Bytes(Vec<u8>),
@@ -205,6 +231,15 @@ impl From<Id> for Value {
 impl From<f32> for Value {
     #[inline]
     fn from(value: f32) -> Self {
+        Self {
+            kind: ValueKind::Float(value as f64),
+        }
+    }
+}
+
+impl From<f64> for Value {
+    #[inline]
+    fn from(value: f64) -> Self {
         Self {
             kind: ValueKind::Float(value),
         }
@@ -291,7 +326,6 @@ impl From<Extent> for Value {
         }
     }
 }
-
 impl<T> From<Option<T>> for Value
 where
     Value: From<T>,
@@ -303,6 +337,24 @@ where
             None => Self {
                 kind: ValueKind::Empty,
             },
+        }
+    }
+}
+
+impl From<i64> for Value {
+    #[inline]
+    fn from(value: i64) -> Self {
+        Self {
+            kind: ValueKind::Integer(value),
+        }
+    }
+}
+
+impl From<i32> for Value {
+    #[inline]
+    fn from(value: i32) -> Self {
+        Self {
+            kind: ValueKind::Integer(value as i64),
         }
     }
 }

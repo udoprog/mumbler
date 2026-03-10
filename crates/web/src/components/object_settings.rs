@@ -215,12 +215,10 @@ impl Component for ObjectSettings {
 
                     <section class="input-group">
                         <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            {"Choose Image"}
                             <Icon name="photo" />
                         </button>
 
                         <label for="avatar-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
-                            {"Upload Image"}
                             <Icon name="arrow-up-on-square" />
                         </label>
 
@@ -507,8 +505,8 @@ impl ObjectSettings {
             }
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
-            Key::TOKEN_RADIUS => self.token_radius.update(value.as_float().unwrap_or(0.25)),
-            Key::SPEED => self.speed.update(value.as_float().unwrap_or(5.0)),
+            Key::TOKEN_RADIUS => self.token_radius.update(value.as_f32().unwrap_or(0.25)),
+            Key::SPEED => self.speed.update(value.as_f32().unwrap_or(5.0)),
             _ => false,
         }
     }

@@ -213,12 +213,10 @@ impl Component for StaticSettings {
 
                     <section class="btn-group">
                         <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            {"Choose Image"}
                             <Icon name="photo" />
                         </button>
 
                         <label for="static-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
-                            {"Upload Image"}
                             <Icon name="arrow-up-on-square" />
                         </label>
 
@@ -506,8 +504,8 @@ impl StaticSettings {
             }
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_string().map(str::to_owned)),
-            Key::STATIC_WIDTH => self.width.update(value.as_float().unwrap_or(1.0)),
-            Key::STATIC_HEIGHT => self.height.update(value.as_float().unwrap_or(1.0)),
+            Key::STATIC_WIDTH => self.width.update(value.as_f32().unwrap_or(1.0)),
+            Key::STATIC_HEIGHT => self.height.update(value.as_f32().unwrap_or(1.0)),
             _ => false,
         }
     }

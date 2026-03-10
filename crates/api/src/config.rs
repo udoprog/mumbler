@@ -66,6 +66,8 @@ keys! {
     TRANSFORM: Transform = 2,
     LOOK_AT: Vec3 = 3,
     NAME: String = 4,
+    /// Manual list order for an object. When defined, determines sorting.
+    ORDER: Integer = 21,
     MUMBLE_ENABLED: Boolean = 5,
     REMOTE_SERVER: String = 6,
     REMOTE_ENABLED: Boolean = 7,

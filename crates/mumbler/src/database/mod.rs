@@ -26,6 +26,9 @@ macro_rules! value_kind_switch {
             ValueKind::Float(value) => {
                 $self.$add($($args),*, value).await?;
             }
+            ValueKind::Integer(value) => {
+                $self.$add($($args),*, value).await?;
+            }
             ValueKind::Boolean(value) => {
                 $self.$add($($args),*, value).await?;
             }
@@ -494,6 +497,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
         ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
         ValueType::Float => Value::from(descriptive::from_slice::<f32>(blog)?),
+        ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
         ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
         ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
         ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
