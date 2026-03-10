@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Extent, Id, Vec3};
+use api::{Extent, Id, Vec3, VecXZ};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::{Config, ObjectData, ObjectKind};
@@ -70,6 +70,20 @@ impl RenderStatic {
     }
 }
 
+/// Two point coordinates in canvas space.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Canvas2 {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+}
+
+impl Canvas2 {
+    #[inline]
+    pub(crate) fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+}
+
 pub(crate) struct ViewTransform {
     pub(crate) scale: f64,
     center_x: f64,
@@ -103,16 +117,16 @@ impl ViewTransform {
         }
     }
 
-    pub(crate) fn world_to_canvas(&self, world_x: f32, world_z: f32) -> (f64, f64) {
+    pub(crate) fn world_to_canvas(&self, world_x: f32, world_z: f32) -> Canvas2 {
         let x = self.center_x + world_x as f64 * self.scale;
         let y = self.center_y - world_z as f64 * self.scale;
-        (x, y)
+        Canvas2::new(x, y)
     }
 
-    pub(crate) fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> (f32, f32) {
+    pub(crate) fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> VecXZ {
         let world_x = ((canvas_x - self.center_x) / self.scale) as f32;
         let world_z = ((self.center_y - canvas_y) / self.scale) as f32;
-        (world_x, world_z)
+        VecXZ::new(world_x, world_z)
     }
 }
 
@@ -147,11 +161,12 @@ pub(crate) fn draw_grid(
 
     while x <= extent.x.end + EPS {
         if x.abs() >= EPS {
-            let (px, py1) = t.world_to_canvas(x, extent.y.start);
-            let (_, py2) = t.world_to_canvas(x, extent.y.end);
+            let c1 = t.world_to_canvas(x, extent.y.start);
+            let c2 = t.world_to_canvas(x, extent.y.end);
+
             cx.begin_path();
-            cx.move_to(px, py1);
-            cx.line_to(px, py2);
+            cx.move_to(c1.x, c1.y);
+            cx.line_to(c1.x, c2.y);
             cx.stroke();
         }
 
@@ -162,11 +177,12 @@ pub(crate) fn draw_grid(
 
     while z <= extent.y.end + EPS {
         if z.abs() >= EPS {
-            let (px1, py) = t.world_to_canvas(extent.x.start, z);
-            let (px2, _) = t.world_to_canvas(extent.x.end, z);
+            let c1 = t.world_to_canvas(extent.x.start, z);
+            let c2 = t.world_to_canvas(extent.x.end, z);
+
             cx.begin_path();
-            cx.move_to(px1, py);
-            cx.line_to(px2, py);
+            cx.move_to(c1.x, c1.y);
+            cx.line_to(c2.x, c1.y);
             cx.stroke();
         }
 
@@ -177,20 +193,20 @@ pub(crate) fn draw_grid(
     cx.set_line_width(zoom as f64 * 1.5);
 
     if extent.x.contains(0.0) {
-        let (px, py1) = t.world_to_canvas(0.0, extent.y.start);
-        let (_, py2) = t.world_to_canvas(0.0, extent.y.end);
+        let c1 = t.world_to_canvas(0.0, extent.y.start);
+        let c2 = t.world_to_canvas(0.0, extent.y.end);
         cx.begin_path();
-        cx.move_to(px, py1);
-        cx.line_to(px, py2);
+        cx.move_to(c1.x, c1.y);
+        cx.line_to(c1.x, c2.y);
         cx.stroke();
     }
 
     if extent.y.contains(0.0) {
-        let (px1, py) = t.world_to_canvas(extent.x.start, 0.0);
-        let (px2, _) = t.world_to_canvas(extent.x.end, 0.0);
+        let c1 = t.world_to_canvas(extent.x.start, 0.0);
+        let c2 = t.world_to_canvas(extent.x.end, 0.0);
         cx.begin_path();
-        cx.move_to(px1, py);
-        cx.line_to(px2, py);
+        cx.move_to(c1.x, c1.y);
+        cx.line_to(c2.x, c1.y);
         cx.stroke();
     }
 }
@@ -243,11 +259,11 @@ pub(crate) fn draw_look_at(
 
     let color = color.to_transparent_rgba(0.5);
 
-    let (ex, ey) = t.world_to_canvas(target.x, target.z);
+    let e = t.world_to_canvas(target.x, target.z);
 
     cx.set_fill_style_str(&color);
     cx.begin_path();
-    cx.arc(ex, ey, radius, 0.0, TAU)?;
+    cx.arc(e.x, e.y, radius, 0.0, TAU)?;
     cx.fill();
 
     cx.restore();
@@ -258,10 +274,11 @@ pub(crate) fn draw_avatar_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
     a: &RenderAvatar,
-    arrow_target: Option<(f32, f32)>,
+    arrow_target: Option<VecXZ>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let (x, y) = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
+    let pos = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
+
     let token_radius = a.token_radius as f64 * t.scale;
 
     let color = a.color.to_css_string();
@@ -274,7 +291,7 @@ pub(crate) fn draw_avatar_token(
 
     cx.set_line_width(token_radius * 0.1);
     cx.begin_path();
-    cx.arc(x, y, token_radius * 1.0, 0.0, PI * 2.0)?;
+    cx.arc(pos.x, pos.y, token_radius * 1.0, 0.0, PI * 2.0)?;
     cx.stroke();
 
     let image_drawn = 'draw: {
@@ -295,13 +312,13 @@ pub(crate) fn draw_avatar_token(
 
         cx.save();
         cx.begin_path();
-        cx.arc(x, y, token_radius, 0.0, TAU)?;
+        cx.arc(pos.x, pos.y, token_radius, 0.0, TAU)?;
         cx.clip();
 
         cx.draw_image_with_html_image_element_and_dw_and_dh(
             &img,
-            x - dw / 2.0,
-            y - dh / 2.0,
+            pos.x - dw / 2.0,
+            pos.y - dh / 2.0,
             dw,
             dh,
         )?;
@@ -313,28 +330,24 @@ pub(crate) fn draw_avatar_token(
     if !image_drawn {
         cx.set_fill_style_str(&color);
         cx.begin_path();
-        cx.arc(x, y, token_radius, 0.0, TAU)?;
+        cx.arc(pos.x, pos.y, token_radius, 0.0, TAU)?;
         cx.fill();
     }
 
     let front = if a.player
-        && let Some((mx, my)) = arrow_target
+        && let Some(m) = arrow_target
     {
-        let (x, y) = (a.transform.position.x, a.transform.position.z);
-        let angle_rad = (my - y).atan2(mx - x);
-        let dir_x = angle_rad.cos();
-        let dir_z = angle_rad.sin();
-        Vec3::new(dir_x, 0.0, dir_z)
+        a.transform.position.xz().look_at(m).xyz(0.0)
     } else {
         a.transform.front
     };
 
     if front.x.hypot(front.z) > 0.01 {
-        let angle = (-front.z as f64).atan2(front.x as f64);
+        let angle = front.xz().angle() as f64;
         let arc_radius = token_radius * 1.5;
         let color = a.color.to_transparent_rgba(0.5);
         cx.set_stroke_style_str(&color);
-        draw_facing_arc(cx, x, y, arc_radius, angle, token_radius * 0.25)?;
+        draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
     }
 
     if let Some(name) = &a.name {
@@ -342,27 +355,24 @@ pub(crate) fn draw_avatar_token(
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
 
-        let facing_up = front.x.hypot(front.z) > 0.01 && {
-            let angle = (-front.z as f64).atan2(front.x as f64);
-            angle.sin() < 0.0
-        };
+        let facing_up = front.x.hypot(front.z) > 0.01 && { front.xz().angle().sin() < 0.0 };
 
         let (name_y, baseline) = if facing_up {
-            (y + token_radius + 4.0, "top")
+            (pos.y + token_radius + 4.0, "top")
         } else {
-            (y - token_radius - 4.0, "bottom")
+            (pos.y - token_radius - 4.0, "bottom")
         };
 
         cx.set_text_baseline(baseline);
         cx.set_shadow_color("rgba(0,0,0,0.8)");
         cx.set_shadow_blur(3.0);
         cx.set_fill_style_str("#ffffff");
-        let _ = cx.fill_text(name, x, name_y);
+        let _ = cx.fill_text(name, pos.x, name_y);
         cx.set_shadow_blur(0.0);
     }
 
     if a.hidden {
-        draw_hidden_badge(cx, x, y, token_radius)?;
+        draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 
     Ok(())
@@ -373,18 +383,18 @@ pub(crate) fn draw_static_token(
     s: &RenderStatic,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let (cx_pos, cy_pos) = t.world_to_canvas(s.transform.position.x, s.transform.position.z);
+    let pos = t.world_to_canvas(s.transform.position.x, s.transform.position.z);
 
     let hw = s.width as f64 / 2.0 * t.scale;
     let hh = s.height as f64 / 2.0 * t.scale;
 
-    let angle = (-s.transform.front.z as f64).atan2(s.transform.front.x as f64);
+    let angle = s.transform.front.xz().angle() as f64;
     let rotation = angle - FRAC_PI_2;
 
     let color = s.color.to_css_string();
 
     cx.save();
-    cx.translate(cx_pos, cy_pos)?;
+    cx.translate(pos.x, pos.y)?;
     cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
@@ -433,8 +443,8 @@ pub(crate) fn draw_static_token(
 
         draw_hidden_badge(
             cx,
-            cx_pos + hw * 0.7 + hh * 0.3,
-            cy_pos - hh * 0.7 - hw * 0.3,
+            pos.x + hw * 0.7 + hh * 0.3,
+            pos.y - hh * 0.7 - hw * 0.3,
             badge_size,
         )?;
     }

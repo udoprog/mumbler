@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use api::{
     Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
-    Transform, Value, Vec3,
+    Transform, Value, Vec3, VecXZ,
 };
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
@@ -24,6 +24,9 @@ use crate::ws;
 
 use super::render::{self, RenderAvatar, RenderStatic, ViewTransform};
 use super::{ObjectSettings, StaticSettings};
+
+const LEFT_MOUSE_BUTTON: i16 = 0;
+const MIDDLE_MOUSE_BUTTON: i16 = 1;
 
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
@@ -104,8 +107,8 @@ impl PeerObject {
 
 pub(crate) struct LocalObject {
     pub(crate) data: ObjectData,
-    pub(crate) move_target: Option<Vec3>,
-    pub(crate) arrow_target: Option<(f32, f32)>,
+    pub(crate) move_target: Option<VecXZ>,
+    pub(crate) arrow_target: Option<VecXZ>,
 }
 
 impl LocalObject {
@@ -410,7 +413,7 @@ pub(crate) struct Map {
     /// Mouse position at the start of a middle-mouse drag.
     pan_anchor: Option<(f64, f64)>,
     /// Canvas-space position where the left button was pressed.
-    start_press: Option<(f32, f32, bool)>,
+    start_press: Option<(VecXZ, bool)>,
     /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
     /// Loaded avatar images, keyed by image id.
@@ -419,7 +422,7 @@ pub(crate) struct Map {
     /// Animation interval for smooth movement.
     animation_interval: Option<Interval>,
     /// Current world-space mouse position while cursor is over the canvas.
-    mouse_world_pos: Option<(f32, f32)>,
+    mouse_world_pos: Option<VecXZ>,
     /// Keeps the document keydown listener alive.
     _keydown_listener: EventListener,
     /// Keeps the document keyup listener alive.
@@ -832,16 +835,16 @@ impl Component for Map {
                                     <span class="object-list-item-label">{label}</span>
                                     <button class={mumble_classes}
                                         title="Toggle as MumbleLink Source"
-                                        onclick={ctx.link().callback(move |e: MouseEvent| {
-                                            e.stop_propagation();
+                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                            ev.stop_propagation();
                                             Msg::ToggleMumbleObject(object_id)
                                         })}>
                                         <Icon name="mumble" />
                                     </button>
                                     <button class={hidden_classes}
                                         title={eye_title}
-                                        onclick={ctx.link().callback(move |e: MouseEvent| {
-                                            e.stop_propagation();
+                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                            ev.stop_propagation();
                                             Msg::ToggleHidden(object_id)
                                         })}>
                                         <Icon name={eye_icon} />
@@ -855,7 +858,7 @@ impl Component for Map {
 
             if let Some(id) = self.delete {
                 <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                    <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
+                    <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                         <div class="modal-header">
                             <h2>{"Confirm Deletion"}</h2>
                             <button class="btn sm square danger" title="Cancel"
@@ -882,7 +885,7 @@ impl Component for Map {
 
             if let Some(id) = self.open_settings {
                 <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
-                    <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
+                    <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                         <div class="modal-header">
                             <h2>{"Object Settings"}</h2>
                             <button class="btn sm square danger" title="Close"
@@ -1212,16 +1215,16 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::PointerDown(e) => {
-                self.on_pointer_down(ctx, e)?;
+            Msg::PointerDown(ev) => {
+                self.on_pointer_down(ctx, ev)?;
                 Ok(true)
             }
-            Msg::PointerMove(e) => {
-                self.on_pointer_move(e)?;
+            Msg::PointerMove(ev) => {
+                self.on_pointer_move(ev)?;
                 Ok(true)
             }
-            Msg::PointerUp(e) => {
-                self.on_pointer_up(e)?;
+            Msg::PointerUp(ev) => {
+                self.on_pointer_up(ev)?;
                 Ok(true)
             }
             Msg::PointerLeave => {
@@ -1237,12 +1240,12 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::KeyDown(e) => {
-                self.on_key_down(e)?;
+            Msg::KeyDown(ev) => {
+                self.on_key_down(ev)?;
                 Ok(false)
             }
-            Msg::KeyUp(e) => {
-                self.on_key_up(e)?;
+            Msg::KeyUp(ev) => {
+                self.on_key_up(ev)?;
                 Ok(false)
             }
             Msg::SelectObject(id) => {
@@ -1371,12 +1374,12 @@ impl Map {
         }
     }
 
-    fn on_key_up(&mut self, e: KeyboardEvent) -> Result<(), Error> {
-        if e.key() != "Shift" {
+    fn on_key_up(&mut self, ev: KeyboardEvent) -> Result<(), Error> {
+        if ev.key() != "Shift" {
             return Ok(());
         }
 
-        let Some((_, _, true)) = self.start_press else {
+        let Some((_, true)) = self.start_press else {
             return Ok(());
         };
 
@@ -1398,12 +1401,12 @@ impl Map {
         Ok(())
     }
 
-    fn on_key_down(&mut self, e: KeyboardEvent) -> Result<(), Error> {
-        if e.key() != "Shift" || self.start_press.is_some() {
+    fn on_key_down(&mut self, ev: KeyboardEvent) -> Result<(), Error> {
+        if ev.key() != "Shift" || self.start_press.is_some() {
             return Ok(());
         }
 
-        let Some((mx, my)) = self.mouse_world_pos else {
+        let Some(m) = self.mouse_world_pos else {
             return Ok(());
         };
 
@@ -1414,20 +1417,20 @@ impl Map {
         let object_id = o.data.id;
 
         if let Some(look_at) = o.data.as_look_at_mut() {
-            **look_at = Some(Vec3::new(mx, 0.0, my));
+            **look_at = Some(Vec3::new(m.x, 0.0, m.z));
             self.update_look_at_ids.insert(object_id);
         }
 
-        let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
-        self.start_press = Some((px, py, true));
-        self.look_at(px, py, mx, my);
+        let p = o.data.transform.position.xz();
+        self.start_press = Some((p, true));
+        self.look_at(p, m);
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
         for o in self.objects.values_mut() {
-            let p = o.data.transform.position;
+            let p = o.data.transform.position.xz();
 
             'move_done: {
                 let (Some(target), Some(speed)) = (o.move_target, o.data.speed()) else {
@@ -1439,7 +1442,7 @@ impl Map {
                 let distance = (dx * dx + dz * dz).sqrt();
 
                 if distance < 0.01 {
-                    o.data.transform.position = target;
+                    o.data.transform.position = target.xyz(0.0);
                     o.move_target = None;
                     self.update_transform_ids.insert(o.data.id);
                     break 'move_done;
@@ -1454,23 +1457,19 @@ impl Map {
 
                 // Face the movement direction unless a look_at target is active.
                 if o.data.look_at().is_none() {
-                    let angle_rad = dz.atan2(dx);
-                    o.data.transform.front = Vec3::new(angle_rad.cos(), 0.0, angle_rad.sin());
+                    o.data.transform.front = p.look_at(target).xyz(0.0);
                 }
 
                 self.update_transform_ids.insert(o.data.id);
             };
 
             'look_done: {
-                let Some(target) = o.data.look_at().and_then(|look_at| *look_at) else {
+                let Some(t) = o.data.look_at().and_then(|look_at| *look_at) else {
                     break 'look_done;
                 };
 
-                let angle_radian = (target.z - p.z).atan2(target.x - p.x);
-
-                o.arrow_target = Some((target.x, target.z));
-                o.data.transform.front = Vec3::new(angle_radian.cos(), 0.0, angle_radian.sin());
-
+                o.arrow_target = Some(t.xz());
+                o.data.transform.front = p.look_at(t.xz()).xyz(0.0);
                 self.update_transform_ids.insert(o.data.id);
             };
         }
@@ -1528,13 +1527,13 @@ impl Map {
             .send();
     }
 
-    fn on_context_menu(&mut self, _ctx: &Context<Self>, e: MouseEvent) -> Result<(), Error> {
+    fn on_context_menu(&mut self, _ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
         };
 
         let t = ViewTransform::new(&canvas, &self.config);
-        let (wx, wz) = t.canvas_to_world(e.offset_x() as f64, e.offset_y() as f64);
+        let w = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
 
         let hit = self
             .objects
@@ -1542,8 +1541,8 @@ impl Map {
             .find(|o| {
                 let p = o.data.transform.position;
                 let r = o.data.click_radius();
-                let dx = p.x - wx;
-                let dz = p.z - wz;
+                let dx = p.x - w.x;
+                let dz = p.z - w.z;
                 dx * dx + dz * dz <= r * r
             })
             .map(|o| o.data.id);
@@ -1552,8 +1551,8 @@ impl Map {
             self.selected = Some(object_id);
             self.context_menu = Some(ContextMenu {
                 object_id,
-                x: e.offset_x() as f64,
-                y: e.offset_y() as f64,
+                x: ev.offset_x() as f64,
+                y: ev.offset_y() as f64,
             });
         } else {
             self.context_menu = None;
@@ -1582,7 +1581,7 @@ impl Map {
 
         html! {
             <div class="context-menu-backdrop" onclick={ctx.link().callback(|_| Msg::CloseContextMenu)}>
-                <div class="context-menu" {style} onclick={|e: MouseEvent| e.stop_propagation()}>
+                <div class="context-menu" {style} onclick={|ev: MouseEvent| ev.stop_propagation()}>
                     <button class="context-menu-item"
                         onclick={ctx.link().callback(move |_| Msg::OpenObjectSettings(object_id))}>
                         <Icon name="cog" invert={true} />
@@ -1609,19 +1608,18 @@ impl Map {
         }
     }
 
-    fn on_pointer_down(&mut self, ctx: &Context<Self>, e: PointerEvent) -> Result<(), Error> {
+    fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
         self.context_menu = None;
 
         let needs_redraw = 'out: {
-            match e.button() {
-                0 => {
+            match ev.button() {
+                LEFT_MOUSE_BUTTON => {
                     let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
                         break 'out false;
                     };
 
                     let t = ViewTransform::new(&canvas, &self.config);
-                    let (ex, ey) = (e.offset_x() as f64, e.offset_y() as f64);
-                    let (ex, ey) = t.canvas_to_world(ex, ey);
+                    let e = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
 
                     let hit = self
                         .objects
@@ -1629,8 +1627,8 @@ impl Map {
                         .find(|o| {
                             let p = o.data.transform.position;
                             let r = o.data.click_radius();
-                            let dx = p.x - ex;
-                            let dz = p.z - ey;
+                            let dx = p.x - e.x;
+                            let dz = p.z - e.z;
                             dx * dx + dz * dz <= r * r
                         })
                         .map(|o| o.data.id);
@@ -1651,34 +1649,34 @@ impl Map {
 
                     let object_id = o.data.id;
 
-                    if e.shift_key() {
-                        let (px, py) = (o.data.transform.position.x, o.data.transform.position.z);
+                    if ev.shift_key() {
+                        let p = o.data.transform.position.xz();
 
-                        self.start_press = Some((px, py, true));
+                        self.start_press = Some((p, true));
 
                         if o.data.is_static() {
                             // Shift-drag on a static object rotates it.
-                            self.look_at(px, py, ex, ey);
+                            self.look_at(p, e);
                         } else if let Some(look_at) = o.data.as_look_at_mut() {
-                            **look_at = Some(Vec3::new(ex, 0.0, ey));
-                            self.look_at(px, py, ex, ey);
+                            **look_at = Some(e.xyz(0.0));
+                            self.look_at(p, e);
                             self.update_look_at_ids.insert(object_id);
                         }
                     } else if o.data.is_static() {
                         // Static objects snap immediately to where they are dropped.
-                        self.start_press = Some((ex, ey, false));
-                        o.data.transform.position = Vec3::new(ex, 0.0, ey);
+                        self.start_press = Some((e, false));
+                        o.data.transform.position = e.xyz(0.0);
                         self.update_transform_ids.insert(object_id);
                     } else {
-                        self.start_press = Some((ex, ey, false));
-                        o.move_target = Some(Vec3::new(ex, 0.0, ey));
+                        self.start_press = Some((e, false));
+                        o.move_target = Some(e);
                     }
 
                     true
                 }
-                1 => {
-                    e.prevent_default();
-                    self.pan_anchor = Some((e.client_x() as f64, e.client_y() as f64));
+                MIDDLE_MOUSE_BUTTON => {
+                    ev.prevent_default();
+                    self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
                     true
                 }
                 _ => false,
@@ -1692,7 +1690,7 @@ impl Map {
         Ok(())
     }
 
-    fn on_pointer_move(&mut self, e: PointerEvent) -> Result<(), Error> {
+    fn on_pointer_move(&mut self, ev: PointerEvent) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
         };
@@ -1702,44 +1700,55 @@ impl Map {
         let mut needs_redraw = false;
 
         if let Some((ax, ay)) = self.pan_anchor {
-            let dx = e.client_x() as f64 - ax;
-            let dy = e.client_y() as f64 - ay;
+            let dx = ev.client_x() as f64 - ax;
+            let dy = ev.client_y() as f64 - ay;
             *self.config.pan = self.config.pan.add(dx, dy);
-            self.pan_anchor = Some((e.client_x() as f64, e.client_y() as f64));
+            self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
             self.update_world = true;
             needs_redraw = true;
         }
 
-        let (mx, my) = v.canvas_to_world(e.offset_x() as f64, e.offset_y() as f64);
-        self.mouse_world_pos = Some((mx, my));
+        let m = v.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+        self.mouse_world_pos = Some(m);
 
-        if let Some((px, py, shift_key)) = self.start_press
-            && let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id))
-        {
+        'done: {
+            let Some((p, shift_key)) = self.start_press else {
+                break 'done;
+            };
+
+            let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+                break 'done;
+            };
+
             if shift_key {
-                let dist = (mx - px).hypot(my - py);
+                let dist = (m.x - p.x).hypot(m.z - p.z);
 
-                if dist >= ARROW_THRESHOLD {
-                    if o.data.is_static() {
-                        // Shift-drag rotates a static object.
-                        self.look_at(px, py, mx, my);
-                    } else if let Some(look_at) = o.data.as_look_at_mut() {
-                        **look_at = Some(Vec3::new(mx, 0.0, my));
-                        self.update_look_at_ids.insert(o.data.id);
-                        self.look_at(px, py, mx, my);
-                    }
+                if dist < ARROW_THRESHOLD {
+                    break 'done;
+                };
 
-                    needs_redraw = true;
+                if o.data.is_static() {
+                    self.look_at(p, m);
+                } else if let Some(look_at) = o.data.as_look_at_mut() {
+                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+                    self.update_look_at_ids.insert(o.data.id);
+                    self.look_at(p, m);
                 }
-            } else if o.data.is_static() {
+
+                needs_redraw = true;
+                break 'done;
+            }
+
+            if o.data.is_static() {
                 // Static objects snap immediately while dragging.
-                o.data.transform.position = Vec3::new(mx, 0.0, my);
+                o.data.transform.position = m.xyz(0.0);
                 self.update_transform_ids.insert(o.data.id);
                 needs_redraw = true;
-            } else {
-                o.move_target = Some(Vec3::new(mx, 0.0, my));
-                needs_redraw = true;
+                break 'done;
             }
+
+            o.move_target = Some(m);
+            needs_redraw = true;
         }
 
         if needs_redraw {
@@ -1749,31 +1758,30 @@ impl Map {
         Ok(())
     }
 
-    fn look_at(&mut self, px: f32, py: f32, mx: f32, my: f32) {
+    fn look_at(&mut self, p: VecXZ, m: VecXZ) {
         let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
             return;
         };
 
         let id = o.data.id;
-        o.arrow_target = Some((mx, my));
-        let angle_rad = (my - py).atan2(mx - px);
-        let dir_x = angle_rad.cos();
-        let dir_z = angle_rad.sin();
-        o.data.transform.front = Vec3::new(dir_x, 0.0, dir_z);
+        o.arrow_target = Some(m);
+        o.data.transform.front = p.look_at(m).xyz(0.0);
         self.update_transform_ids.insert(id);
     }
 
-    fn on_pointer_up(&mut self, e: PointerEvent) -> Result<(), Error> {
+    fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
         let needs_redraw = {
-            match e.button() {
-                0 => {
+            match ev.button() {
+                LEFT_MOUSE_BUTTON => {
                     self.start_press = None;
+
                     if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(&id)) {
                         object.arrow_target = None;
                     }
+
                     true
                 }
-                1 => {
+                MIDDLE_MOUSE_BUTTON => {
                     self.pan_anchor = None;
                     false
                 }
@@ -1810,32 +1818,31 @@ impl Map {
         Ok(())
     }
 
-    fn on_wheel(&mut self, e: WheelEvent) -> Result<(), Error> {
-        e.prevent_default();
+    fn on_wheel(&mut self, ev: WheelEvent) -> Result<(), Error> {
+        ev.prevent_default();
 
-        let delta = if e.delta_y() < 0.0 {
+        let delta = if ev.delta_y() < 0.0 {
             ZOOM_FACTOR
         } else {
             1.0 / ZOOM_FACTOR
         } as f32;
 
-        let canvas = self
-            .canvas_ref
-            .cast::<HtmlCanvasElement>()
-            .ok_or("missing canvas")?;
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
 
-        let mx = e.offset_x() as f64;
-        let my = e.offset_y() as f64;
+        let mx = ev.offset_x() as f64;
+        let my = ev.offset_y() as f64;
 
         let t_before = ViewTransform::new(&canvas, &self.config);
-        let (wx, wz) = t_before.canvas_to_world(mx, my);
+        let w = t_before.canvas_to_world(mx, my);
 
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
 
         let t_after = ViewTransform::new(&canvas, &self.config);
-        let (cx2, cy2) = t_after.world_to_canvas(wx, wz);
-        self.config.pan.x += mx - cx2;
-        self.config.pan.y += my - cy2;
+        let c2 = t_after.world_to_canvas(w.x, w.z);
+        self.config.pan.x += mx - c2.x;
+        self.config.pan.y += my - c2.y;
 
         self.update_world = true;
         self.redraw()?;

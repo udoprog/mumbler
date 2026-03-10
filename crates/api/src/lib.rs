@@ -300,6 +300,42 @@ impl<const N: usize> From<[(Key, Value); N]> for Properties {
     }
 }
 
+/// Two point coordinates in world space.
+#[derive(Debug, Clone, Copy)]
+pub struct VecXZ {
+    pub x: f32,
+    pub z: f32,
+}
+
+impl VecXZ {
+    /// Construct a new `VecXZ` with the given coordinates.
+    #[inline]
+    pub fn new(x: f32, z: f32) -> Self {
+        Self { x, z }
+    }
+
+    /// Calculate the direction from `self` to `m` as a unit vector.
+    pub fn look_at(&self, m: Self) -> Self {
+        let angle_rad = (m.z - self.z).atan2(m.x - self.x);
+        let dir_x = angle_rad.cos();
+        let dir_z = angle_rad.sin();
+        Self::new(dir_x, dir_z)
+    }
+
+    /// Calculate the angle at which the XZ vector is facing in the xz plane
+    /// where 0 degrees means facing in the positive x direction.
+    #[inline]
+    pub fn angle(&self) -> f32 {
+        (-self.z).atan2(self.x)
+    }
+
+    /// Swizzle into a three component vector.
+    #[inline]
+    pub fn xyz(&self, y: f32) -> Vec3 {
+        Vec3::new(self.x, y, self.z)
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
@@ -326,6 +362,12 @@ impl Vec3 {
             y: self.y,
             z: -self.z,
         }
+    }
+
+    /// Extract the x and z coordinates.
+    #[inline]
+    pub fn xz(&self) -> VecXZ {
+        VecXZ::new(self.x, self.z)
     }
 }
 
