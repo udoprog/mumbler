@@ -466,10 +466,10 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     Resized,
     ImageMessage(ImageMessage),
-    MouseDown(MouseEvent),
-    MouseMove(MouseEvent),
-    MouseUp(MouseEvent),
-    MouseLeave,
+    PointerDown(PointerEvent),
+    PointerMove(PointerEvent),
+    PointerUp(PointerEvent),
+    PointerLeave,
     Wheel(WheelEvent),
     AnimationFrame,
     SelectObject(Option<Id>),
@@ -783,10 +783,10 @@ impl Component for Map {
 
                     <div class="map-sizer" ref={self.canvas_sizer.clone()}>
                         <canvas id="map" ref={self.canvas_ref.clone()}
-                            onmousedown={ctx.link().callback(Msg::MouseDown)}
-                            onmousemove={ctx.link().callback(Msg::MouseMove)}
-                            onmouseup={ctx.link().callback(Msg::MouseUp)}
-                            onmouseleave={ctx.link().callback(|_| Msg::MouseLeave)}
+                            onpointerdown={ctx.link().callback(Msg::PointerDown)}
+                            onpointermove={ctx.link().callback(Msg::PointerMove)}
+                            onpointerup={ctx.link().callback(Msg::PointerUp)}
+                            onpointerleave={ctx.link().callback(|_| Msg::PointerLeave)}
                             onwheel={ctx.link().callback(Msg::Wheel)}
                             oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
                         ></canvas>
@@ -1212,20 +1212,20 @@ impl Map {
                 self.redraw()?;
                 Ok(false)
             }
-            Msg::MouseDown(e) => {
-                self.on_mouse_down(ctx, e)?;
+            Msg::PointerDown(e) => {
+                self.on_pointer_down(ctx, e)?;
                 Ok(true)
             }
-            Msg::MouseMove(e) => {
-                self.on_mouse_move(e)?;
+            Msg::PointerMove(e) => {
+                self.on_pointer_move(e)?;
                 Ok(true)
             }
-            Msg::MouseUp(e) => {
-                self.on_mouse_up(e)?;
+            Msg::PointerUp(e) => {
+                self.on_pointer_up(e)?;
                 Ok(true)
             }
-            Msg::MouseLeave => {
-                self.on_mouse_leave()?;
+            Msg::PointerLeave => {
+                self.on_pointer_leave()?;
                 Ok(true)
             }
             Msg::Wheel(e) => {
@@ -1609,7 +1609,7 @@ impl Map {
         }
     }
 
-    fn on_mouse_down(&mut self, ctx: &Context<Self>, e: MouseEvent) -> Result<(), Error> {
+    fn on_pointer_down(&mut self, ctx: &Context<Self>, e: PointerEvent) -> Result<(), Error> {
         self.context_menu = None;
 
         let needs_redraw = 'out: {
@@ -1692,7 +1692,7 @@ impl Map {
         Ok(())
     }
 
-    fn on_mouse_move(&mut self, e: MouseEvent) -> Result<(), Error> {
+    fn on_pointer_move(&mut self, e: PointerEvent) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
         };
@@ -1763,7 +1763,7 @@ impl Map {
         self.update_transform_ids.insert(id);
     }
 
-    fn on_mouse_up(&mut self, e: MouseEvent) -> Result<(), Error> {
+    fn on_pointer_up(&mut self, e: PointerEvent) -> Result<(), Error> {
         let needs_redraw = {
             match e.button() {
                 0 => {
@@ -1788,7 +1788,7 @@ impl Map {
         Ok(())
     }
 
-    fn on_mouse_leave(&mut self) -> Result<(), Error> {
+    fn on_pointer_leave(&mut self) -> Result<(), Error> {
         let selected_arrow = self
             .selected
             .and_then(|id| self.objects.get(&id))
