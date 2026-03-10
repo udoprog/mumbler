@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release'
+        required: true
+        default: 'nightly'
+        type: choice
+        options:
+        - nightly
+        - "%date"
+  push:
+    tags:
+    - '*'
+
+env:
+  KICK_VERSION: >-
+    ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version || 'nightly' }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+    - uses: udoprog/trunk-action@v1
+      with:
+        args: build --release
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist-frontend
+        path: dist
+
+  fedora:
+    runs-on: ubuntu-latest
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ["43"]
+    container:
+      image: fedora:${{matrix.fedora}}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v7
+      with: {name: dist-frontend, path: dist}
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - uses: udoprog/kick@nightly
+    - run: kick define --github-action
+      id: release
+    - run: cargo build --release --features bundle -p mumbler
+      env:
+        MUMBLER_VERSION: ${{steps.release.outputs.version}}
+    - run: kick rpm --append fc${{matrix.fedora}} --output packages
+    - uses: actions/upload-artifact@v4
+      with:
+        name: packages-fedora-${{matrix.fedora}}
+        path: packages
+
+  windows:
+    runs-on: windows-latest
+    needs: frontend
+    steps:
+    - uses: udoprog/kick@nightly
+    - run: kick define --github-action --msi-version-to msi_version
+      id: release
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v7
+      with: {name: dist-frontend, path: dist}
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - run: cargo build --release --features bundle -p mumbler
+      env:
+        MUMBLER_VERSION: ${{steps.release.outputs.version}}
+    - run: kick zip --output packages
+    - uses: actions/upload-artifact@v4
+      with:
+        name: packages-windows
+        path: packages
+
+  macos:
+    runs-on: macos-latest
+    needs: frontend
+    steps:
+    - uses: udoprog/kick@nightly
+    - run: kick define --github-action --msi-version-to msi_version
+      id: release
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v7
+      with: {name: dist-frontend, path: dist}
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - run: cargo build --release --features bundle -p mumbler
+      env:
+        MUMBLER_VERSION: ${{steps.release.outputs.version}}
+    - run: kick zip --output packages
+    - uses: actions/upload-artifact@v4
+      with:
+        name: packages-macos
+        path: packages
+
+  publish:
+    permissions: write-all
+    needs: [fedora, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v7
+      with: {pattern: "packages-*", merge-multiple: true, path: packages}
+    - uses: udoprog/kick@nightly
+    - run: kick github-release --github-action --upload "packages/*"
+      env:
+        GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
