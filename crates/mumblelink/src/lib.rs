@@ -5,7 +5,9 @@
 //! Helper application for mumble which allows you to place tokens that can be
 //! used for positional audio.
 //!
-//! # mumblelink
+//! <br>
+//!
+//! ## mumblelink
 //!
 //! This includes a rewrite of the [`mumble-link-rs` crate] for its MumbleLink
 //! integration.
