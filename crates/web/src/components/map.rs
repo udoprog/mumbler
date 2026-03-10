@@ -1024,6 +1024,10 @@ impl Map {
                     return Ok(false);
                 };
 
+                if self.selected == Some(id) {
+                    self.selected = None;
+                }
+
                 let locked = !*object.data.locked;
                 *object.data.locked = locked;
 
@@ -1692,6 +1696,8 @@ impl Map {
     }
 
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
+        ev.prevent_default();
+
         self.context_menu = None;
 
         let needs_redraw = 'out: {
@@ -1777,6 +1783,8 @@ impl Map {
     }
 
     fn on_pointer_move(&mut self, ev: PointerEvent) -> Result<(), Error> {
+        ev.prevent_default();
+
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
         };
