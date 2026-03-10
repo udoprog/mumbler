@@ -1,2 +1,2 @@
 [package]
-binaries = true
+binaries = { exclude = ["mumbler-client", "mumbler-server", "web"] }
