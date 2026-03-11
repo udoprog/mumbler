@@ -71,10 +71,11 @@ async fn main() -> Result<()> {
 
     tracing::info!(tls = opts.tls, ?addr, "connected");
 
-    let values = Vec::new();
+    let objects = Vec::new();
+    let images = Vec::new();
 
     let mut peer = Peer::new(client);
-    peer.connect(opts.room.as_bytes(), values)?;
+    peer.connect(opts.room.as_bytes(), &objects, &images)?;
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
