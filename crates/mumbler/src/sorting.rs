@@ -1,0 +1,101 @@
+use core::cmp::Ordering;
+use core::mem;
+
+/// Generate a midpoint between two byte strings that can be used to sort an
+/// element between two others.
+///
+/// If possible, this function will try to avoid growing the outgoing string if
+/// a substitution is sufficient.
+///
+/// Of `lo` and `hi` are equal, a midpoint does not exist and the original
+/// string is returned.
+pub(crate) fn midpoint(mut lo: &[u8], mut hi: &[u8]) -> Vec<u8> {
+    let (lo, hi) = match lo.cmp(hi) {
+        Ordering::Less => (lo, hi),
+        Ordering::Greater => (hi, lo),
+        Ordering::Equal => return lo.to_vec(),
+    };
+
+    let len = lo.len().max(hi.len());
+
+    // Try to find a position where lo and hi differ by at least 2.
+    for i in 0..len {
+        let a = lo.get(i).copied().unwrap_or(0);
+        let b = hi.get(i).copied().unwrap_or(u8::MAX);
+
+        if a + 1 < b {
+            let extended = i + 1 < lo.len();
+            let cap = if extended { lo.len() } else { i + 1 };
+
+            let mut mid = Vec::with_capacity(cap);
+
+            // We can increment a at this position to get a value strictly between lo and hi.
+            mid.extend_from_slice(&lo[..i]);
+            mid.push(a + ((b - a) / 2));
+
+            // Fill remaining bytes if needed to match lo's length.
+            if extended {
+                mid.extend_from_slice(&lo[i + 1..]);
+            }
+
+            return mid;
+        }
+    }
+
+    // If no substitution exists, grow the low string.
+    let mut mid = Vec::with_capacity(lo.len().saturating_add(1));
+    mid.extend_from_slice(lo);
+    mid.push(0x80);
+    mid
+}
+
+/// Generate a byte string that sorts after the given string and tries to avoid growing the string if possible.
+pub(crate) fn after(s: &[u8]) -> Vec<u8> {
+    let mut result = s.to_vec();
+
+    for i in (0..result.len()).rev() {
+        if result[i] < u8::MAX {
+            result[i] += 1;
+            return result;
+        }
+    }
+
+    result.push(0);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use bstr::BStr;
+
+    #[test]
+    fn test_midpoint() {
+        macro_rules! test_case {
+            ($lo:literal, $op:tt, $after:tt, $hi:literal, $expected:literal) => {{
+                assert!(&$lo[..] $op &$hi[..], "Expected {:?} {} {:?}", BStr::new($lo), stringify!($op), BStr::new($hi));
+
+                let outcome = midpoint($lo, $hi);
+                assert_eq!(outcome, $expected.to_vec(), "Expected midpoint of {:?} and {:?} to be {:?}, got {:?}", BStr::new($lo), BStr::new($hi), BStr::new($expected), BStr::new(&outcome));
+
+                assert!(outcome $after $lo.to_vec(), "Expected {:?} {} {:?}", BStr::new(&outcome), stringify!($after), BStr::new($lo));
+                assert!(outcome $op $hi.to_vec(), "Expected {:?} {} {:?}", BStr::new(&outcome), stringify!($op), BStr::new($hi));
+            }};
+        }
+
+        test_case!(b"abc", <, >, b"abd", b"abc\x80");
+        test_case!(b"abc", <, >, b"abf", b"abd");
+        test_case!(b"abc", <, >, b"abz", b"abn");
+        test_case!(b"abc", <, >, b"ac", b"ab\xb1");
+        test_case!(b"abc", >, <, b"", b"0");
+        test_case!(b"", <, >, b"abc", b"0");
+        test_case!(b"abc", ==, ==, b"abc", b"abc");
+    }
+
+    #[test]
+    fn test_after() {
+        assert_eq!(after(b"abc"), b"abd".to_vec());
+        assert_eq!(after(b"\xff"), b"\xff\x00".to_vec());
+    }
+}

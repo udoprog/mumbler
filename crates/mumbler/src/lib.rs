@@ -18,6 +18,8 @@ pub mod client;
 
 pub mod mumblelink;
 
+mod sorting;
+
 #[cfg(feature = "tls")]
 mod tls;
 #[cfg(not(feature = "tls"))]
