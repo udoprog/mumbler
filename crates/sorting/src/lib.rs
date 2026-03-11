@@ -57,7 +57,7 @@ fn midpoint_impl(len: usize, lo: &[u8], hi: &mut dyn Iterator<Item = u8>) -> Vec
         if let Some(lo) = lo.get(..i) {
             mid.extend_from_slice(lo);
         } else {
-            mid.extend(iter::repeat(0).take(i));
+            mid.extend(iter::repeat_n(0, i));
         }
 
         mid.push(((a + b) / 2) as u8);

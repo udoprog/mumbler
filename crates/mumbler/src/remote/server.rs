@@ -19,7 +19,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
-use crate::remote::api::{AddObjectBody, RemoveObjectBody, UpdatePeer};
+use crate::remote::api::{
+    AddImageBody, AddObjectBody, RemoteImage, RemoveImageBody, RemoveObjectBody, UpdatePeer,
+};
 use crate::remote::{DEFAULT_PORT, DEFAULT_TLS_PORT};
 use crate::tls;
 
@@ -48,6 +50,8 @@ struct Data {
     peer_id: PeerId,
     /// Objects that the peer has set.
     objects: HashMap<Id, RemoteObject>,
+    /// Images that the peer has set.
+    images: HashMap<Id, RemoteImage>,
     /// The room the peer is in.
     room: Option<Box<[u8]>>,
 }
@@ -93,6 +97,7 @@ impl ServerPeer {
                 peer,
                 peer_id: PeerId::new(rand::random()),
                 objects: HashMap::new(),
+                images: HashMap::new(),
                 room: None,
             },
         })
@@ -209,7 +214,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
     }
 
     for connector in connectors.iter() {
-        tracing::info!(tls = connector.tls_acceptor.is_some(), addr = ?connector.listener.local_addr()?, "Listening");
+        tracing::info!(tls = connector.tls_acceptor.is_some(), addr = ?connector.listener.local_addr()?, "listening");
     }
 
     let mut peers = Peers::new();
@@ -249,13 +254,13 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                 let client = match client {
                     Ok(client) => client,
                     Err(error) => {
-                        tracing::error!(?error, "Accepting connection failed");
+                        tracing::error!(?error, "accepting connection failed");
                         continue;
                     }
                 };
 
                 let peer = Peer::new(client);
-                tracing::info!(tls = peer.is_tls(), ?addr, "Connected");
+                tracing::info!(tls = peer.is_tls(), ?addr, "connected");
 
                 let peer_state = ServerPeer::new(addr, peer);
                 let peer_id = peer_state.data.peer_id;
@@ -264,7 +269,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
             }
             (id, result) = PollPeers::new(&mut peers, &mut wakers, &mut state) => {
                 let Some(mut peer) = peers.remove(&id) else {
-                    tracing::warn!(?id, "Peer not found, removed");
+                    tracing::warn!(?id, "peer not found, removed");
                     continue;
                 };
 
@@ -398,54 +403,58 @@ impl State {
         self.poll.insert(peer_id);
     }
 
-    #[tracing::instrument(skip_all)]
     async fn handle(&mut self, this: Pin<&mut ServerPeer>, peers: &mut Peers) -> Result<()> {
         let (mut timeout, data) = this.project();
 
         while let Some((message, body)) = data.peer.read::<Event>()? {
             match message {
                 Event::Ping => {
-                    let ping = body.decode::<PingBody>()?;
+                    let body = body.decode::<PingBody>()?;
+                    tracing::debug!(?message, payload = ?body.payload);
 
                     timeout
                         .as_mut()
                         .reset(time::Instant::now() + Duration::from_secs(5));
 
-                    data.peer.pong(ping.payload)?;
+                    data.peer.pong(body.payload)?;
                 }
                 Event::Connect => {
-                    let connect = body.decode::<ConnectBody>()?;
-                    tracing::debug!(connect.version, connect.room = ?BStr::new(&connect.room), "Connect");
+                    let body = body.decode::<ConnectBody>()?;
+                    tracing::debug!(?message, body.version, connect.room = ?BStr::new(&body.room));
 
-                    if let Some(old_room) = data.room.replace(connect.room.clone()) {
+                    if let Some(old_room) = data.room.replace(body.room.clone()) {
                         self.leave_room(&old_room, data.peer_id, peers);
                     }
 
-                    for object in connect.objects.iter() {
-                        data.objects.insert(object.id, object.clone());
+                    for object in body.objects {
+                        data.objects.insert(object.id, object);
+                    }
+
+                    for image in body.images {
+                        data.images.insert(image.id, image);
                     }
 
                     // We have just connected, so send all information about other peers to
                     // the new peer.
-                    self.join_room(data, &connect.room, peers);
+                    self.join_room(data, &body.room, peers);
                 }
                 Event::Update => {
-                    let event = body.decode::<UpdatePeer>()?;
-                    tracing::debug!(?event.key, ?event.value, "Update");
+                    let body = body.decode::<UpdatePeer>()?;
+                    tracing::debug!(?message, ?body.key, ?body.value);
 
-                    let Some(object) = data.objects.get_mut(&event.object_id) else {
+                    let Some(object) = data.objects.get_mut(&body.object_id) else {
                         continue;
                     };
 
-                    object.props.insert(event.key, event.value.clone());
+                    object.props.insert(body.key, body.value.clone());
 
                     data.send_to_room(
                         |peer| {
                             peer.peer_mut().updated_peer(
                                 data.peer_id,
-                                event.object_id,
-                                event.key,
-                                &event.value,
+                                body.object_id,
+                                body.key,
+                                &body.value,
                             )
                         },
                         &self.rooms,
@@ -453,32 +462,57 @@ impl State {
                     );
                 }
                 Event::AddObject => {
-                    let event = body.decode::<AddObjectBody>()?;
-                    tracing::debug!(id = ?event.object.id, "AddObject");
+                    let body = body.decode::<AddObjectBody>()?;
+                    tracing::debug!(?message, id = ?body.object.id);
 
-                    let object = event.object.clone();
+                    let object = body.object.clone();
                     data.objects.insert(object.id, object);
 
                     data.send_to_room(
                         |peer| {
                             peer.peer_mut()
-                                .object_added(data.peer_id, event.object.clone())
+                                .object_added(data.peer_id, body.object.clone())
+                        },
+                        &self.rooms,
+                        peers,
+                    );
+                }
+                Event::AddImage => {
+                    let body = body.decode::<AddImageBody>()?;
+                    tracing::debug!(?message, id = ?body.image.id);
+
+                    let image = body.image.clone();
+                    data.images.insert(image.id, image);
+
+                    data.send_to_room(
+                        |peer| {
+                            peer.peer_mut()
+                                .image_added(data.peer_id, body.image.clone())
                         },
                         &self.rooms,
                         peers,
                     );
                 }
                 Event::RemoveObject => {
-                    let event = body.decode::<RemoveObjectBody>()?;
-                    tracing::debug!(id = ?event.object_id, "RemoveObject");
+                    let body = body.decode::<RemoveObjectBody>()?;
+                    tracing::debug!(?message, id = ?body.object_id);
 
-                    data.objects.remove(&event.object_id);
+                    data.objects.remove(&body.object_id);
 
                     data.send_to_room(
-                        |peer| {
-                            peer.peer_mut()
-                                .object_removed(data.peer_id, event.object_id)
-                        },
+                        |peer| peer.peer_mut().object_removed(data.peer_id, body.object_id),
+                        &self.rooms,
+                        peers,
+                    );
+                }
+                Event::RemoveImage => {
+                    let body = body.decode::<RemoveImageBody>()?;
+                    tracing::debug!(?message, id = ?body.image_id);
+
+                    data.objects.remove(&body.image_id);
+
+                    data.send_to_room(
+                        |peer| peer.peer_mut().image_removed(data.peer_id, body.image_id),
                         &self.rooms,
                         peers,
                     );
@@ -521,7 +555,7 @@ impl State {
             };
 
             if let Err(e) = peer.peer_mut().leave(leaving_id) {
-                tracing::error!(?id, ?e, "Failed to send leave");
+                tracing::error!(?id, ?e, "sending leave");
             } else {
                 self.poll.insert(leaving_id);
             }
@@ -549,15 +583,16 @@ impl State {
             };
 
             let objects = data.objects.values().cloned().collect::<Vec<_>>();
+            let images = data.images.values().cloned().collect::<Vec<_>>();
 
-            if let Err(error) = peer.peer_mut().join(data.peer_id, &objects) {
-                tracing::error!(?id, %error, "Sending join");
+            if let Err(error) = peer.peer_mut().join(data.peer_id, &objects, &images) {
+                tracing::error!(?id, %error, "sending join");
             } else {
                 self.poll.insert(data.peer_id);
             }
         }
 
-        tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "Connecting room");
+        tracing::debug!(room.name = ?BStr::new(&room.name), members = ?room.members, "connecting room");
 
         for id in room.members.iter() {
             let Some(other) = peers.get(id) else {
@@ -565,9 +600,10 @@ impl State {
             };
 
             let objects = other.data.objects.values().cloned().collect::<Vec<_>>();
+            let images = other.data.images.values().cloned().collect::<Vec<_>>();
 
-            if let Err(error) = data.peer.join(other.data.peer_id, &objects) {
-                tracing::error!(?id, %error, "Sending join");
+            if let Err(error) = data.peer.join(other.data.peer_id, &objects, &images) {
+                tracing::error!(?id, %error, "sending join");
             } else {
                 self.poll.insert(data.peer_id);
             }

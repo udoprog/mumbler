@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
-use crate::backend::{Backend, BackendEvent, LocalUpdateEvent, RemoteUpdateEvent};
+use crate::backend::{Backend, BackendEvent, LocalUpdateEvent};
 
 struct Handler<'a> {
     backend: Backend,
@@ -82,13 +82,6 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(api::Empty);
             }
-            api::Request::UploadImage => {
-                let request = incoming
-                    .read::<api::UploadImageRequest>()
-                    .context("missing request")?;
-
-                outgoing.write(super::upload_image(&self.backend, request).await?);
-            }
             api::Request::GetConfig => {
                 _ = incoming
                     .read::<api::GetConfigRequest>()
@@ -113,7 +106,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::Create { object },
+                        body: LocalUpdateBody::ObjectCreated { object },
                     }));
 
                 outgoing.write(api::Empty);
@@ -126,19 +119,41 @@ impl ws::Handler for Handler<'_> {
                 self.backend.delete_object(request.id).await?;
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::Delete {
+                        body: LocalUpdateBody::ObjectRemoved {
                             object_id: request.id,
                         },
                     }));
                 outgoing.write(api::Empty);
+            }
+            api::Request::UploadImage => {
+                let request = incoming
+                    .read::<api::UploadImageRequest>()
+                    .context("missing request")?;
+
+                let id = super::upload_image(&self.backend, request).await?;
+
+                outgoing.write(api::UploadImageResponse { id });
+
+                self.backend
+                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
+                        body: LocalUpdateBody::ImageAdded { image_id: id },
+                    }));
             }
             api::Request::DeleteImage => {
                 let request = incoming
                     .read::<api::DeleteImageRequest>()
                     .context("missing request")?;
 
-                self.backend.db().delete_image(request.id).await?;
+                super::delete_image(&self.backend, request.id).await?;
+
                 outgoing.write(api::Empty);
+
+                self.backend
+                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
+                        body: LocalUpdateBody::ImageRemoved {
+                            image_id: request.id,
+                        },
+                    }));
             }
             api::Request::UpdateConfig => {
                 let request = incoming
@@ -186,7 +201,10 @@ pub(super) async fn entry(
             tracing::info!("connected");
 
             let database_updates_notify = Notify::new();
-            let mut server = axum08::server(socket, Handler::new(backend.clone(), &database_updates_notify));
+            let mut server = axum08::server(
+                socket,
+                Handler::new(backend.clone(), &database_updates_notify),
+            );
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
 
@@ -247,15 +265,6 @@ pub(super) async fn entry(
                                 server.broadcast(event.body).context("send local update")
                             }
                             BackendEvent::RemoteUpdate(body) => {
-                                let body = match body {
-                                    RemoteUpdateEvent::RemoteLost => api::RemoteUpdateBody::RemoteLost,
-                                    RemoteUpdateEvent::Join { peer_id, objects } => api::RemoteUpdateBody::Join { peer_id, objects },
-                                    RemoteUpdateEvent::Leave { peer_id } => api::RemoteUpdateBody::Leave { peer_id },
-                                    RemoteUpdateEvent::Update { peer_id, object_id, key, value } => api::RemoteUpdateBody::Update { peer_id, object_id, key, value },
-                                    RemoteUpdateEvent::ObjectAdded { peer_id, object } => api::RemoteUpdateBody::ObjectAdded { peer_id, object },
-                                    RemoteUpdateEvent::ObjectRemoved { peer_id, object_id } => api::RemoteUpdateBody::ObjectRemoved { peer_id, object_id },
-                                };
-
                                 server.broadcast(body).context("send broadcast")
                             }
                             BackendEvent::Notification { error, component, message } => {
@@ -264,6 +273,7 @@ pub(super) async fn entry(
                                 } else {
                                     api::ServerNotificationBody::Info { component, message }
                                 };
+
                                 server.broadcast(body).context("send notification")
                             }
                         };

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
+use api::ContentType;
 use api::Properties;
 use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
 use parking_lot::RwLock as BlockingRwLock;
@@ -25,36 +26,10 @@ pub(crate) struct LocalUpdateEvent {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum RemoteUpdateEvent {
-    RemoteLost,
-    Join {
-        peer_id: PeerId,
-        objects: Vec<RemoteObject>,
-    },
-    Leave {
-        peer_id: PeerId,
-    },
-    Update {
-        peer_id: PeerId,
-        object_id: Id,
-        key: Key,
-        value: Value,
-    },
-    ObjectAdded {
-        peer_id: PeerId,
-        object: RemoteObject,
-    },
-    ObjectRemoved {
-        peer_id: PeerId,
-        object_id: Id,
-    },
-}
-
-#[derive(Debug, Clone)]
 pub(crate) enum BackendEvent {
     ConfigUpdate(LocalConfigEvent),
     LocalUpdate(LocalUpdateEvent),
-    RemoteUpdate(RemoteUpdateEvent),
+    RemoteUpdate(api::RemoteUpdateBody),
     Notification {
         error: bool,
         component: String,
@@ -79,46 +54,78 @@ impl LocalObject {
     }
 }
 
+/// Local image data.
+#[derive(Debug, Clone)]
+pub(crate) struct LocalImage {
+    /// The id of the image.
+    pub id: Id,
+    /// The content type of the image.
+    pub content_type: ContentType,
+    /// The bytes of the image.
+    pub bytes: Vec<u8>,
+    /// The width of the image.
+    pub width: u32,
+    /// The height of the image.
+    pub height: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct PeerInfo {
+    /// Objects associated with the peer.
     pub(crate) objects: HashMap<Id, RemoteObject>,
+    /// Images associated with the peer.
+    pub(crate) images: HashSet<Id>,
 }
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
+    /// Remote objects.
+    pub(crate) peers: HashMap<PeerId, PeerInfo>,
     /// Local objects.
     pub(crate) objects: HashMap<Id, LocalObject>,
     /// Identifiers of objects that have been changed.
     pub(crate) objects_changed: HashSet<Id>,
     /// Identifiers of objects that have been added.
-    pub(crate) object_added: HashSet<Id>,
+    pub(crate) objects_added: HashSet<Id>,
     /// Identifiers of objects that have been deleted.
-    pub(crate) object_deleted: HashSet<Id>,
-    /// Remote objects.
-    pub(crate) peers: HashMap<PeerId, PeerInfo>,
+    pub(crate) objects_deleted: HashSet<Id>,
+    /// Local images.
+    pub(crate) images: HashMap<Id, LocalImage>,
+    /// Identifiers of images that have been added.
+    pub(crate) images_added: HashSet<Id>,
+    /// Identifiers of images that have been deleted.
+    pub(crate) images_deleted: HashSet<Id>,
+}
+
+struct Data {
+    peer_id: PeerId,
+    bytes: Box<[u8]>,
 }
 
 /// Temporary images.
 pub(crate) struct Images {
-    images: HashMap<Id, Vec<u8>>,
+    images: HashMap<Id, Data>,
 }
 
 impl Images {
     /// Store an image and return its ID.
-    pub(crate) fn store(&mut self, data: Vec<u8>) -> Id {
-        let id = Id::new(rand::random());
-        self.images.insert(id, data);
+    pub(crate) fn store(&mut self, peer_id: PeerId, id: Id, bytes: Box<[u8]>) -> Id {
+        self.images.insert(id, Data { peer_id, bytes });
         id
     }
 
     /// Remove an image by ID.
-    pub(crate) fn remove(&mut self, id: Id) {
-        self.images.remove(&id);
+    pub(crate) fn remove(&mut self, peer_id: PeerId, id: Id) {
+        if let Some(data) = self.images.get(&id)
+            && data.peer_id == peer_id
+        {
+            self.images.remove(&id);
+        }
     }
 
     /// Get an image by ID.
     pub(crate) fn get(&self, id: &Id) -> Option<&[u8]> {
-        Some(self.images.get(id)?.as_slice())
+        Some(self.images.get(id)?.bytes.as_ref())
     }
 }
 
@@ -151,22 +158,23 @@ pub struct Backend {
 
 impl Backend {
     /// Construct a new backend.
-    pub async fn new(database: Database, paths: Paths) -> Result<Self> {
+    pub async fn new(db: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
         tracing::debug!("Loading objects from database");
 
         let mut objects = HashMap::new();
+        let mut images = HashMap::new();
         let mut hidden = HashSet::new();
 
-        for (id, ty, group_id) in database.objects().await? {
+        for (id, ty, group_id) in db.objects().await? {
             tracing::debug!(?id, ?ty, "Loading object");
 
             let mut props = Properties::new();
 
             props.insert(Key::GROUP, Value::from(group_id));
 
-            for (key, value) in database.properties(id).await? {
+            for (key, value) in db.properties(id).await? {
                 tracing::debug!(?id, ?key, ?value, "Loading property");
 
                 match key {
@@ -198,20 +206,45 @@ impl Backend {
             objects.insert(id, object);
         }
 
-        let mumble_object = database.config(Key::MUMBLE_OBJECT).await?;
+        for image in db.images_with_data().await? {
+            tracing::debug! {
+                ?image.id,
+                ?image.content_type,
+                bytes = image.bytes.len(),
+                image.width,
+                image.height,
+                "loading image",
+            };
+
+            images.insert(
+                image.id,
+                LocalImage {
+                    id: image.id,
+                    content_type: image.content_type,
+                    bytes: image.bytes,
+                    width: image.width,
+                    height: image.height,
+                },
+            );
+        }
+
+        let mumble_object = db.config(Key::MUMBLE_OBJECT).await?;
 
         tracing::debug!("Loaded {} objects", objects.len());
 
         Ok(Self {
             inner: Arc::new(Inner {
-                database,
+                database: db,
                 paths,
                 client_state: Mutex::new(ClientState {
+                    peers: HashMap::new(),
                     objects,
                     objects_changed: HashSet::new(),
-                    object_added: HashSet::new(),
-                    object_deleted: HashSet::new(),
-                    peers: HashMap::new(),
+                    objects_added: HashSet::new(),
+                    objects_deleted: HashSet::new(),
+                    images,
+                    images_added: HashSet::new(),
+                    images_deleted: HashSet::new(),
                 }),
                 images: RwLock::new(Images {
                     images: HashMap::new(),
@@ -311,7 +344,7 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn set_client(&self, id: Id, key: Key, value: Value) {
+    pub(crate) async fn update_object_property(&self, id: Id, key: Key, value: Value) {
         let mut state = self.inner.client_state.lock().await;
 
         let Some(object) = state.objects.get_mut(&id) else {
@@ -411,7 +444,7 @@ impl Backend {
             object.props.insert(Key::SORT, sort.clone());
             let props = object.props.clone();
             state.objects.insert(id, object);
-            state.object_added.insert(id);
+            state.objects_added.insert(id);
             (sort, props)
         };
 
@@ -440,8 +473,53 @@ impl Backend {
         let mut state = self.inner.client_state.lock().await;
         state.objects.remove(&id);
         state.objects_changed.remove(&id);
-        state.object_added.remove(&id);
-        state.object_deleted.insert(id);
+        state.objects_added.remove(&id);
+        state.objects_deleted.insert(id);
+        self.inner.client_notify.notify_one();
+        Ok(())
+    }
+
+    pub(crate) async fn insert_image(
+        &self,
+        id: Id,
+        content_type: ContentType,
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+    ) -> Result<Id> {
+        let image = LocalImage {
+            id,
+            content_type,
+            bytes,
+            width,
+            height,
+        };
+
+        self.db()
+            .save_image(
+                image.id,
+                image.content_type,
+                image.bytes.clone(),
+                image.width,
+                image.height,
+            )
+            .await?;
+
+        let mut state = self.inner.client_state.lock().await;
+        state.images.insert(id, image);
+        state.images_added.insert(id);
+        self.inner.client_notify.notify_one();
+        Ok(id)
+    }
+
+    /// Delete a local image.
+    pub(crate) async fn delete_image(&self, id: Id) -> Result<()> {
+        self.db().delete_image(id).await?;
+
+        let mut state = self.inner.client_state.lock().await;
+        state.images.remove(&id);
+        state.images_added.remove(&id);
+        state.images_deleted.insert(id);
         self.inner.client_notify.notify_one();
         Ok(())
     }

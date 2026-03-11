@@ -147,7 +147,9 @@ async fn image(
 
 async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let mut objects = Vec::new();
+    let mut images = Vec::new();
     let mut remote_objects = Vec::new();
+    let mut remote_images = Vec::new();
 
     {
         let state = b.client_state().await;
@@ -158,6 +160,10 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                 id: *id,
                 props: object.props.clone(),
             });
+        }
+
+        for image_id in state.images.keys() {
+            images.push(*image_id);
         }
 
         for (peer_id, peer) in state.peers.iter() {
@@ -171,6 +177,10 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                     },
                 });
             }
+
+            for image_id in peer.images.iter() {
+                remote_images.push(*image_id);
+            }
         }
     }
 
@@ -182,26 +192,36 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 
     let ev = api::InitializeMapEvent {
         objects,
+        images,
         remote_objects,
+        remote_images,
         config,
     };
 
     Ok(ev)
 }
 
-async fn upload_image(
-    backend: &Backend,
-    request: api::UploadImageRequest,
-) -> Result<api::UploadImageResponse> {
+async fn upload_image(backend: &Backend, request: api::UploadImageRequest) -> Result<Id> {
     tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
 
     let task = task::spawn_blocking(move || {
         imaging::process(&request.data, request.crop, request.sizing, request.size)
     });
 
-    let (w, h, bytes) = task.await??;
-    let id = backend.db().save_image(w, h, bytes).await?;
-    Ok(api::UploadImageResponse { id })
+    let (content_type, bytes, width, height) = task.await??;
+
+    let id = Id::new(rand::random());
+
+    backend
+        .insert_image(id, content_type, bytes, width, height)
+        .await?;
+
+    Ok(id)
+}
+
+async fn delete_image(backend: &Backend, image_id: Id) -> Result<()> {
+    backend.delete_image(image_id).await?;
+    Ok(())
 }
 
 async fn get_config(backend: &Backend) -> Result<Properties> {
@@ -229,7 +249,7 @@ async fn get_object_settings(
         }
     };
 
-    let images = backend.db().list_images().await?;
+    let images = backend.db().images().await?;
     Ok(api::GetObjectSettingsResponse { object, images })
 }
 
@@ -279,7 +299,9 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
         _ => {}
     }
 
-    backend.set_client(object_id, key, value.clone()).await;
+    backend
+        .update_object_property(object_id, key, value.clone())
+        .await;
     Ok(())
 }
 

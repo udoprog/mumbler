@@ -48,7 +48,7 @@ where
                 }
             }
             ImageMessage::Errored(id, error) => {
-                tracing::error!("Failed to load image {id}: {error}");
+                tracing::error!(?id, %error, "loading image");
                 self.inner.remove(&id);
             }
         }
@@ -121,7 +121,7 @@ where
             move || {
                 link.send_message(M::Message::from(ImageMessage::Errored(
                     id,
-                    Error::from("Failed to load image"),
+                    Error::from("loading image"),
                 )));
             }
         });

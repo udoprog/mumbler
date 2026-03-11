@@ -5,7 +5,10 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use api::{Color, Extent, Id, Image, Key, Pan, Transform, Type, Value, ValueKind, ValueType, Vec3};
+use api::{
+    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, Transform, Type, Value,
+    ValueKind, ValueType, Vec3,
+};
 use jiff::Timestamp;
 use musli::alloc::Global;
 use musli::de::DecodeOwned;
@@ -70,6 +73,7 @@ struct Inner {
     scratch: Vec<u8>,
     insert_image: SendStatement,
     select_images: SendStatement,
+    select_images_with_data: SendStatement,
     select_image_data: SendStatement,
     delete_image: SendStatement,
     get_property: SendStatement,
@@ -166,8 +170,9 @@ impl Database {
         let inner = unsafe {
             Inner {
                 scratch: Vec::new(),
-                insert_image: c.prepare("INSERT INTO images (id, width, height, content_type, data) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
-                select_images: c.prepare("SELECT id, width, height FROM images")?.into_send()?,
+                insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
+                select_images: c.prepare("SELECT id, content_type, width, height FROM images")?.into_send()?,
+                select_images_with_data: c.prepare("SELECT id, content_type, data, width, height FROM images")?.into_send()?,
                 select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 get_property: c.prepare("SELECT value FROM properties WHERE id = ? AND key = ?")?.into_send()?,
@@ -208,7 +213,7 @@ impl Database {
     }
 
     /// List all images in the database.
-    pub(crate) async fn list_images(&self) -> Result<Vec<Image>> {
+    pub(crate) async fn images(&self) -> Result<Vec<Image>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -216,8 +221,26 @@ impl Database {
 
             let mut images = Vec::new();
 
-            while let Some((id, width, height)) = inner.select_images.next::<(Id, u32, u32)>()? {
-                let image = Image { id, width, height };
+            while let Some(image) = inner.select_images.next::<Image>()? {
+                images.push(image);
+            }
+
+            Ok(images)
+        });
+
+        task.await?
+    }
+
+    /// List all images in the database.
+    pub(crate) async fn images_with_data(&self) -> Result<Vec<ImageWithData>> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.select_images_with_data.reset()?;
+
+            let mut images = Vec::new();
+
+            while let Some(image) = inner.select_images_with_data.next::<ImageWithData>()? {
                 images.push(image);
             }
 
@@ -240,14 +263,20 @@ impl Database {
     }
 
     /// Save an image to the database, returning its unique identifier.
-    pub(crate) async fn save_image(&self, width: u32, height: u32, data: Vec<u8>) -> Result<Id> {
+    pub(crate) async fn save_image(
+        &self,
+        id: Id,
+        content_type: ContentType,
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+    ) -> Result<Id> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            let id = Id::new(rand::random());
             inner
                 .insert_image
-                .execute((id, width, height, "image/png", data))?;
+                .execute((id, content_type, data, width, height))?;
             Ok(id)
         });
 

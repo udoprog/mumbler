@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
-use api::{CropRegion, ImageSizing};
+use api::{ContentType, CropRegion, ImageSizing};
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, imageops};
 
@@ -19,7 +19,7 @@ pub(crate) fn process(
     crop: CropRegion,
     sizing: ImageSizing,
     size: u32,
-) -> Result<(u32, u32, Vec<u8>)> {
+) -> Result<(ContentType, Vec<u8>, u32, u32)> {
     let image = image::load_from_memory(data)?;
 
     let image = if !crop.is_whole_image(image.width(), image.height()) {
@@ -89,5 +89,5 @@ pub(crate) fn process(
 
     let mut bytes = Cursor::new(Vec::new());
     output.write_to(&mut bytes, ImageFormat::Png)?;
-    Ok((out_w, out_h, bytes.into_inner()))
+    Ok((ContentType::PNG, bytes.into_inner(), out_w, out_h))
 }

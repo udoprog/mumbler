@@ -374,15 +374,6 @@ impl ObjectData {
     }
 
     #[inline]
-    fn as_image_mut(&mut self) -> Option<&mut State<Option<Id>>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.image),
-            ObjectKind::Static(this) => Some(&mut this.image),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
     fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.hidden),
@@ -1264,7 +1255,16 @@ impl Map {
                     .map(|peer| ((peer.peer_id, peer.data.id), peer))
                     .collect();
 
-                self.load_initialize_images(ctx);
+                self.images.clear();
+
+                for image_id in body.images {
+                    self.images.load(ctx, image_id);
+                }
+
+                for image_id in body.remote_images {
+                    self.images.load(ctx, image_id);
+                }
+
                 self.redraw()?;
                 Ok(true)
             }
@@ -1285,13 +1285,13 @@ impl Map {
                 let body = body.decode()?;
 
                 let update = match body {
-                    LocalUpdateBody::Create { object } => {
+                    LocalUpdateBody::ObjectCreated { object } => {
                         let o = LocalObject::from_remote(&object);
                         self.order.insert((o.data.sort().to_vec(), o.data.id));
                         self.objects.insert(o.data.id, o);
                         true
                     }
-                    LocalUpdateBody::Delete { object_id } => {
+                    LocalUpdateBody::ObjectRemoved { object_id } => {
                         if let Some(removed) = self.objects.remove(&object_id)
                             && let Some(id) = removed.data.image()
                         {
@@ -1321,27 +1321,6 @@ impl Map {
                                 Key::TRANSFORM | Key::LOOK_AT => {
                                     break 'done false;
                                 }
-                                Key::IMAGE_ID => {
-                                    let new = value.as_id();
-
-                                    let Some(image) = o.data.as_image_mut() else {
-                                        break 'done false;
-                                    };
-
-                                    let Some(old) = image.replace(new) else {
-                                        break 'done false;
-                                    };
-
-                                    if let Some(new) = new {
-                                        self.images.load(ctx, new);
-                                    }
-
-                                    if let Some(old) = old {
-                                        self.images.remove(old);
-                                    }
-
-                                    false
-                                }
                                 Key::SORT => {
                                     let sort = value.as_bytes().unwrap_or_default().to_vec();
                                     self.order.retain(|&(_, id)| id != o.data.id);
@@ -1353,6 +1332,14 @@ impl Map {
 
                             o.data.update(key, value) || update
                         }
+                    }
+                    LocalUpdateBody::ImageAdded { image_id, .. } => {
+                        self.images.load(ctx, image_id);
+                        false
+                    }
+                    LocalUpdateBody::ImageRemoved { image_id, .. } => {
+                        self.images.remove(image_id);
+                        false
                     }
                 };
 
@@ -1370,17 +1357,19 @@ impl Map {
                         self.peers.clear();
                     }
                     RemoteUpdateBody::Join {
-                        peer_id, objects, ..
+                        peer_id,
+                        objects,
+                        images,
                     } => {
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
 
-                            if let Some(id) = data.image() {
-                                self.images.load(ctx, id);
-                            }
-
                             self.peers
                                 .insert((peer_id, data.id), PeerObject { peer_id, data });
+                        }
+
+                        for id in images {
+                            self.images.load(ctx, id);
                         }
                     }
                     RemoteUpdateBody::Leave { peer_id } => {
@@ -1396,47 +1385,22 @@ impl Map {
                             break 'done;
                         };
 
-                        match key {
-                            Key::IMAGE_ID => {
-                                let new = value.as_id();
-
-                                let Some(image) = a.data.as_image_mut() else {
-                                    break 'done;
-                                };
-
-                                let Some(old) = image.replace(new) else {
-                                    break 'done;
-                                };
-
-                                if let Some(new) = new {
-                                    self.images.load(ctx, new);
-                                }
-
-                                if let Some(old) = old {
-                                    self.images.remove(old);
-                                }
-                            }
-                            _ => {}
-                        }
-
                         a.data.update(key, value);
                     }
                     RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
 
-                        if let Some(id) = data.image() {
-                            self.images.load(ctx, id);
-                        }
-
                         self.peers
                             .insert((peer_id, data.id), PeerObject { peer_id, data });
                     }
                     RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        if let Some(removed) = self.peers.remove(&(peer_id, object_id))
-                            && let Some(id) = removed.data.image()
-                        {
-                            self.images.remove(id);
-                        }
+                        self.peers.remove(&(peer_id, object_id));
+                    }
+                    RemoteUpdateBody::ImageAdded { image_id, .. } => {
+                        self.images.load(ctx, image_id);
+                    }
+                    RemoteUpdateBody::ImageRemoved { image_id, .. } => {
+                        self.images.remove(image_id);
                     }
                 }
 
@@ -2131,18 +2095,6 @@ impl Map {
         self.update_world = true;
         self.redraw()?;
         Ok(())
-    }
-
-    /// Resize the canvas according to its parent sizer element.
-    fn load_initialize_images(&mut self, ctx: &Context<Self>) {
-        self.images.clear();
-
-        let ids = self.objects.values().filter_map(|o| o.data.image());
-        let ids = ids.chain(self.peers.values().filter_map(|a| a.data.image()));
-
-        for id in ids {
-            self.images.load(ctx, id);
-        }
     }
 
     fn resize_canvas(&self) {

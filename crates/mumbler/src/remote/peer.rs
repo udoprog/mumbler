@@ -12,11 +12,10 @@ use musli::storage;
 use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
-use crate::remote::api::{JoinBodyRef, UpdatePeerRef, UpdatedPeerRef};
-
 use super::api::{
-    AddObjectBody, ConnectBody, Header, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PingBody,
-    PongBody, RemoveObjectBody,
+    AddImageBody, AddObjectBody, ConnectBodyRef, Header, ImageAddedBody, ImageRemovedBody,
+    JoinBodyRef, LeaveBody, ObjectAddedBody, ObjectRemovedBody, PingBody, PongBody, RemoteImage,
+    RemoveImageBody, RemoveObjectBody, UpdatePeerRef, UpdatedPeerRef,
 };
 use super::{Buf, Client, Scratch};
 
@@ -118,11 +117,17 @@ impl Peer {
     }
 
     /// Connects the peer by sending a connect request.
-    pub fn connect(&mut self, room: &[u8], objects: Vec<RemoteObject>) -> Result<()> {
-        self.scratch.send(ConnectBody {
+    pub fn connect(
+        &mut self,
+        room: &[u8],
+        objects: &[RemoteObject],
+        images: &[RemoteImage],
+    ) -> Result<()> {
+        self.scratch.send(ConnectBodyRef {
             version: 1,
-            room: Box::from(room),
+            room,
             objects,
+            images,
         })?;
 
         self.write.write_message(&mut self.scratch);
@@ -144,8 +149,17 @@ impl Peer {
     }
 
     /// Mark the given peer as having joined the room.
-    pub fn join(&mut self, peer_id: PeerId, objects: &[RemoteObject]) -> Result<()> {
-        self.scratch.send(JoinBodyRef { peer_id, objects })?;
+    pub fn join(
+        &mut self,
+        peer_id: PeerId,
+        objects: &[RemoteObject],
+        images: &[RemoteImage],
+    ) -> Result<()> {
+        self.scratch.send(JoinBodyRef {
+            peer_id,
+            objects,
+            images,
+        })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -193,9 +207,23 @@ impl Peer {
         Ok(())
     }
 
+    /// Send a request to add a new image.
+    pub fn add_image(&mut self, image: RemoteImage) -> Result<()> {
+        self.scratch.send(AddImageBody { image })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
     /// Send a request to remove an object.
     pub fn remove_object(&mut self, object_id: Id) -> Result<()> {
         self.scratch.send(RemoveObjectBody { object_id })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Send a request to remove an image.
+    pub fn remove_image(&mut self, image_id: Id) -> Result<()> {
+        self.scratch.send(RemoveImageBody { image_id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -207,10 +235,24 @@ impl Peer {
         Ok(())
     }
 
+    /// Broadcast that a peer has added an image.
+    pub fn image_added(&mut self, peer_id: PeerId, image: RemoteImage) -> Result<()> {
+        self.scratch.send(ImageAddedBody { peer_id, image })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
     /// Broadcast that a peer has removed an object.
     pub fn object_removed(&mut self, peer_id: PeerId, object_id: Id) -> Result<()> {
         self.scratch
             .send(ObjectRemovedBody { peer_id, object_id })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Broadcast that a peer has removed an image.
+    pub fn image_removed(&mut self, peer_id: PeerId, image_id: Id) -> Result<()> {
+        self.scratch.send(ImageRemovedBody { peer_id, image_id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

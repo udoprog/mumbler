@@ -1,14 +1,10 @@
+mod macros;
+
 mod id;
 pub use id::Id;
 
 mod peer_id;
 pub use peer_id::PeerId;
-
-mod ty;
-pub use ty::Type;
-
-mod config;
-pub use config::Key;
 
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
@@ -19,6 +15,63 @@ use std::collections::hash_map::IntoIter;
 
 use musli_core::{Decode, Encode};
 use musli_web::api;
+
+crate::macros::ids! {
+    pub struct Type {
+        /// The token type.
+        TOKEN = 0x1000;
+        /// The static object type (furniture, props, etc.).
+        STATIC = 0x1001;
+    }
+}
+
+crate::macros::keys! {
+    pub struct Key {
+        IMAGE_ID: Id = 0;
+        COLOR: Color = 1;
+        TRANSFORM: Transform = 2;
+        LOOK_AT: Vec3 = 3;
+        NAME: String = 4;
+        MUMBLE_ENABLED: Boolean = 5;
+        REMOTE_SERVER: String = 6;
+        REMOTE_ENABLED: Boolean = 7;
+        WORLD_SCALE: Float = 8;
+        REMOTE_TLS: Boolean = 11;
+        WORLD_ZOOM: Float = 9;
+        WORLD_PAN: Pan = 10;
+        WORLD_EXTENT: Extent = 12;
+        /// The object which is used for mumble link.
+        MUMBLE_OBJECT: Id = 14;
+        /// Whether the object is hidden from remote peers.
+        HIDDEN: Boolean = 15;
+        /// Whether selecting an object automatically sets it as the MumbleLink
+        /// source.
+        MUMBLE_FOLLOW_SELECTION: Boolean = 16;
+        /// Per-object token radius.
+        TOKEN_RADIUS: Float = 17;
+        /// Per-object movement speed.
+        SPEED: Float = 18;
+        /// Width of a static object in world units.
+        STATIC_WIDTH: Float = 19;
+        /// Height of a static object in world units.
+        STATIC_HEIGHT: Float = 20;
+        /// Whether to maintain a fixed aspect ratio when resizing a static object.
+        RATIO: Float = 23;
+        /// An object is locked from further interaction. This prevents clicking on
+        /// it in the map.
+        LOCKED: Boolean = 22;
+        /// Key for how this object is sorted.
+        SORT: Bytes = 24;
+        /// The group this object belongs to.
+        GROUP: Id = 25;
+    }
+}
+
+crate::macros::ids! {
+    pub struct ContentType {
+        PNG = 0;
+    }
+}
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -482,7 +535,9 @@ pub struct RemoteObject {
 #[musli(crate = musli_core)]
 pub struct InitializeMapEvent {
     pub objects: Vec<RemoteObject>,
+    pub images: Vec<Id>,
     pub remote_objects: Vec<RemotePeerObject>,
+    pub remote_images: Vec<Id>,
     pub config: Properties,
 }
 
@@ -491,10 +546,29 @@ pub struct InitializeMapEvent {
 pub struct GetConfigRequest;
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
+#[cfg_attr(feature = "sqll", derive(sqll::Row))]
 #[musli(crate = musli_core)]
 pub struct Image {
     /// The unique identifier of the image.
     pub id: Id,
+    /// The content type of the image.
+    pub content_type: ContentType,
+    /// The width of the image in pixels.
+    pub width: u32,
+    /// The height of the image in pixels.
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+#[cfg_attr(feature = "sqll", derive(sqll::Row))]
+#[musli(crate = musli_core)]
+pub struct ImageWithData {
+    /// The unique identifier of the image.
+    pub id: Id,
+    /// The content type of the image.
+    pub content_type: ContentType,
+    /// The raw bytes of the image file.
+    pub bytes: Vec<u8>,
     /// The width of the image in pixels.
     pub width: u32,
     /// The height of the image in pixels.
@@ -592,26 +666,33 @@ pub struct ConfigUpdateBody {
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum LocalUpdateBody {
+    ObjectCreated {
+        object: RemoteObject,
+    },
+    ObjectRemoved {
+        object_id: Id,
+    },
     Update {
         object_id: Id,
         key: Key,
         value: Value,
     },
-    Delete {
-        object_id: Id,
+    ImageAdded {
+        image_id: Id,
     },
-    Create {
-        object: RemoteObject,
+    ImageRemoved {
+        image_id: Id,
     },
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum RemoteUpdateBody {
     RemoteLost,
     Join {
         peer_id: PeerId,
         objects: Vec<RemoteObject>,
+        images: Vec<Id>,
     },
     Leave {
         peer_id: PeerId,
@@ -629,6 +710,14 @@ pub enum RemoteUpdateBody {
     ObjectRemoved {
         peer_id: PeerId,
         object_id: Id,
+    },
+    ImageAdded {
+        peer_id: PeerId,
+        image_id: Id,
+    },
+    ImageRemoved {
+        peer_id: PeerId,
+        image_id: Id,
     },
 }
 
