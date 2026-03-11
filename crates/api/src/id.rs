@@ -19,28 +19,41 @@ static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 pub struct Id {
-    raw: u64,
+    raw: [u8; 8],
 }
 
 impl Id {
     /// Create a new identifier from a u64.
     #[inline]
     pub const fn new(id: u64) -> Self {
-        Self { raw: id }
+        Self {
+            raw: id.to_be_bytes(),
+        }
+    }
+
+    /// Get the inner u64 value of the identifier.
+    #[inline]
+    pub const fn as_u64(&self) -> u64 {
+        u64::from_be_bytes(self.raw)
     }
 
     /// Get the inner u64 value of the identifier.
     #[inline]
     pub const fn get(self) -> u64 {
-        self.raw
+        u64::from_be_bytes(self.raw)
+    }
+
+    /// Get bytes corresponding to the identifier.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw[..]
     }
 }
 
 impl fmt::Display for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.raw.to_be_bytes();
-        let this = Base64Display::new(&bytes, &ENGINE);
+        let this = Base64Display::new(&self.raw, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
@@ -48,8 +61,7 @@ impl fmt::Display for Id {
 impl fmt::Debug for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.raw.to_be_bytes();
-        let this = Base64Display::new(&bytes, &ENGINE);
+        let this = Base64Display::new(&self.raw, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
@@ -147,7 +159,7 @@ impl<'de> Deserialize<'de> for Id {
 impl BindValue for Id {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.raw.cast_signed().bind_value(stmt, index)
+        self.as_u64().cast_signed().bind_value(stmt, index)
     }
 }
 

@@ -109,7 +109,7 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::CreateObjectRequest>()
                     .context("missing request")?;
 
-                let object = self.backend.create_object(body.ty, body.properties).await?;
+                let object = self.backend.create_object(body.ty, body.props).await?;
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {

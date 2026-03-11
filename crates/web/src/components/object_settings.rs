@@ -364,7 +364,7 @@ impl ObjectSettings {
                 let result = result?;
                 let response = result.decode()?;
 
-                for (key, value) in response.object.properties {
+                for (key, value) in response.object.props {
                     self.update_property(ctx, key, value);
                 }
 

@@ -1,0 +1,7 @@
+[package]
+name = "sorting"
+edition = "2024"
+publish = false
+
+[dev-dependencies]
+bstr = "1"

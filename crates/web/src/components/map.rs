@@ -45,17 +45,17 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    fn from_config(properties: &api::Properties) -> Self {
+    fn from_config(props: api::Properties) -> Self {
         let mut this = Self::default();
 
-        for (key, value) in properties.iter() {
+        for (key, value) in props {
             this.update(key, value);
         }
 
         this
     }
 
-    fn update(&mut self, key: Key, value: &Value) -> bool {
+    fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::WORLD_SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
@@ -126,8 +126,8 @@ impl LocalObject {
     }
 
     #[inline]
-    fn order(&self) -> (Option<String>, Id) {
-        (self.data.name().map(str::to_owned), self.data.id)
+    fn order(&self) -> &[u8] {
+        self.data.sort()
     }
 }
 
@@ -141,6 +141,7 @@ pub(crate) struct Token {
     pub(crate) hidden: State<bool>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
+    pub(crate) sort: State<Vec<u8>>,
 }
 
 impl Token {
@@ -159,6 +160,9 @@ impl Token {
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
+            Key::SORT => self
+                .sort
+                .update(value.as_bytes().unwrap_or_default().to_vec()),
             _ => false,
         }
     }
@@ -173,6 +177,7 @@ pub(crate) struct StaticObject {
     pub(crate) hidden: State<bool>,
     pub(crate) width: State<f32>,
     pub(crate) height: State<f32>,
+    pub(crate) sort: State<Vec<u8>>,
 }
 
 impl StaticObject {
@@ -192,6 +197,9 @@ impl StaticObject {
             Key::STATIC_HEIGHT => self
                 .height
                 .update(value.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
+            Key::SORT => self
+                .sort
+                .update(value.as_bytes().unwrap_or_default().to_vec()),
             _ => false,
         }
     }
@@ -209,48 +217,35 @@ pub(crate) struct ObjectData {
 }
 
 impl ObjectData {
-    fn from_remote(remote: &RemoteObject) -> Self {
-        let kind = match remote.ty {
+    fn from_remote(o: &RemoteObject) -> Self {
+        let kind = match o.ty {
             api::Type::TOKEN => {
                 let token = Token {
                     transform: State::new(
-                        remote
-                            .properties
+                        o.props
                             .get(Key::TRANSFORM)
                             .as_transform()
                             .unwrap_or_else(Transform::origin),
                     ),
-                    locked: State::new(
-                        remote
-                            .properties
-                            .get(Key::LOCKED)
-                            .as_bool()
-                            .unwrap_or(false),
-                    ),
-                    look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
-                    image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
-                    color: State::new(remote.properties.get(Key::COLOR).as_color()),
-                    name: State::new(remote.properties.get(Key::NAME).as_str().map(str::to_owned)),
-                    hidden: State::new(
-                        remote
-                            .properties
-                            .get(Key::HIDDEN)
-                            .as_bool()
-                            .unwrap_or(false),
-                    ),
+                    locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+                    look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
+                    image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+                    color: State::new(o.props.get(Key::COLOR).as_color()),
+                    name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+                    hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
                     token_radius: State::new(
-                        remote
-                            .properties
+                        o.props
                             .get(Key::TOKEN_RADIUS)
                             .as_f32()
                             .unwrap_or(DEFAULT_TOKEN_RADIUS),
                     ),
-                    speed: State::new(
-                        remote
-                            .properties
-                            .get(Key::SPEED)
-                            .as_f32()
-                            .unwrap_or(DEFAULT_SPEED),
+                    speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
+                    sort: State::new(
+                        o.props
+                            .get(Key::SORT)
+                            .as_bytes()
+                            .unwrap_or_default()
+                            .to_vec(),
                     ),
                 };
 
@@ -259,42 +254,34 @@ impl ObjectData {
             api::Type::STATIC => {
                 let s = StaticObject {
                     transform: State::new(
-                        remote
-                            .properties
+                        o.props
                             .get(Key::TRANSFORM)
                             .as_transform()
                             .unwrap_or_else(Transform::origin),
                     ),
-                    locked: State::new(
-                        remote
-                            .properties
-                            .get(Key::LOCKED)
-                            .as_bool()
-                            .unwrap_or(false),
-                    ),
-                    image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
-                    color: State::new(remote.properties.get(Key::COLOR).as_color()),
-                    name: State::new(remote.properties.get(Key::NAME).as_str().map(str::to_owned)),
-                    hidden: State::new(
-                        remote
-                            .properties
-                            .get(Key::HIDDEN)
-                            .as_bool()
-                            .unwrap_or(false),
-                    ),
+                    locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+                    image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+                    color: State::new(o.props.get(Key::COLOR).as_color()),
+                    name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+                    hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
                     width: State::new(
-                        remote
-                            .properties
+                        o.props
                             .get(Key::STATIC_WIDTH)
                             .as_f32()
                             .unwrap_or(DEFAULT_STATIC_WIDTH),
                     ),
                     height: State::new(
-                        remote
-                            .properties
+                        o.props
                             .get(Key::STATIC_HEIGHT)
                             .as_f32()
                             .unwrap_or(DEFAULT_STATIC_HEIGHT),
+                    ),
+                    sort: State::new(
+                        o.props
+                            .get(Key::SORT)
+                            .as_bytes()
+                            .unwrap_or_default()
+                            .to_vec(),
                     ),
                 };
 
@@ -303,10 +290,7 @@ impl ObjectData {
             _ => ObjectKind::Unknown,
         };
 
-        Self {
-            id: remote.id,
-            kind,
-        }
+        Self { id: o.id, kind }
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
@@ -314,6 +298,15 @@ impl ObjectData {
             ObjectKind::Token(this) => this.update(key, value),
             ObjectKind::Static(this) => this.update(key, value),
             ObjectKind::Unknown => false,
+        }
+    }
+
+    #[inline]
+    fn sort(&self) -> &[u8] {
+        match &self.kind {
+            ObjectKind::Token(this) => &this.sort,
+            ObjectKind::Static(this) => &this.sort,
+            ObjectKind::Unknown => &[],
         }
     }
 
@@ -472,7 +465,7 @@ pub(crate) struct Map {
     selected: Option<Id>,
     /// The list of local objects used to iterate over them in a consistent
     /// order.
-    order: BTreeSet<(Option<String>, Id)>,
+    order: BTreeSet<(Vec<u8>, Id)>,
     /// The list of local objects.
     objects: HashMap<Id, LocalObject>,
     /// The list of remote objects.
@@ -1158,7 +1151,7 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.config = Config::from_config(&body.config);
+                self.config = Config::from_config(body.config);
 
                 self.objects = body
                     .objects
@@ -1167,7 +1160,11 @@ impl Map {
                     .map(|o| (o.data.id, (o)))
                     .collect();
 
-                self.order.extend(self.objects.values().map(|o| o.order()));
+                self.order.extend(
+                    self.objects
+                        .values()
+                        .map(|o| (o.order().to_vec(), o.data.id)),
+                );
 
                 self.peers = body
                     .remote_objects
@@ -1184,7 +1181,7 @@ impl Map {
                 let body = body?;
                 let body = body.decode()?;
 
-                let changed = self.config.update(body.key, &body.value);
+                let changed = self.config.update(body.key, body.value);
 
                 if changed {
                     self.redraw()?;
@@ -1199,7 +1196,7 @@ impl Map {
                 let update = match body {
                     LocalUpdateBody::Create { object } => {
                         let o = LocalObject::from_remote(&object);
-                        self.order.insert(o.order());
+                        self.order.insert((o.order().to_vec(), o.data.id));
                         self.objects.insert(o.data.id, o);
                         true
                     }
@@ -1256,10 +1253,10 @@ impl Map {
 
                                     false
                                 }
-                                Key::NAME => {
+                                Key::SORT => {
+                                    let sort = value.as_bytes().unwrap_or_default().to_vec();
                                     self.order.retain(|&(_, id)| id != o.data.id);
-                                    self.order
-                                        .insert((value.as_str().map(str::to_owned), o.data.id));
+                                    self.order.insert((sort, o.data.id));
                                     true
                                 }
                                 _ => false,
@@ -1464,7 +1461,7 @@ impl Map {
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::TOKEN,
-                        properties: api::Properties::from([
+                        props: api::Properties::from([
                             (Key::NAME, Value::from("Owlbear")),
                             (Key::HIDDEN, Value::from(true)),
                         ]),
@@ -1486,7 +1483,7 @@ impl Map {
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::STATIC,
-                        properties: api::Properties::from([
+                        props: api::Properties::from([
                             (Key::NAME, Value::from("Object")),
                             (Key::HIDDEN, Value::from(true)),
                             (Key::STATIC_WIDTH, Value::from(1.0_f32)),

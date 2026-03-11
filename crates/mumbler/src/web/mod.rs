@@ -156,8 +156,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
             objects.push(api::RemoteObject {
                 ty: object.ty,
                 id: *id,
-                group_id: object.group_id,
-                properties: object.properties.clone(),
+                props: object.props.clone(),
             });
         }
 
@@ -168,8 +167,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                     object: api::RemoteObject {
                         ty: object.ty,
                         id: object.id,
-                        group_id: object.group_id,
-                        properties: object.properties.clone(),
+                        props: object.props.clone(),
                     },
                 });
             }
@@ -207,13 +205,13 @@ async fn upload_image(
 }
 
 async fn get_config(backend: &Backend) -> Result<Properties> {
-    let mut properties = Properties::new();
+    let mut props = Properties::new();
 
     for (key, value) in backend.db().configs().await? {
-        properties.insert(key, value);
+        props.insert(key, value);
     }
 
-    Ok(properties)
+    Ok(props)
 }
 
 async fn get_object_settings(
@@ -227,8 +225,7 @@ async fn get_object_settings(
         api::RemoteObject {
             ty: object.ty,
             id: request.id,
-            group_id: object.group_id,
-            properties: object.properties.clone(),
+            props: object.props.clone(),
         }
     };
 
@@ -273,7 +270,7 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
                 let transform = if hidden {
                     None
                 } else {
-                    object.properties.get(Key::TRANSFORM).as_transform()
+                    object.props.get(Key::TRANSFORM).as_transform()
                 };
 
                 backend.set_mumblelink_transform(transform).await;
@@ -316,15 +313,10 @@ async fn update_config(
                         break 'transform None;
                     };
 
-                    if object
-                        .properties
-                        .get(Key::HIDDEN)
-                        .as_bool()
-                        .unwrap_or_default()
-                    {
+                    if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
                         None
                     } else {
-                        object.properties.get(Key::TRANSFORM).as_transform()
+                        object.props.get(Key::TRANSFORM).as_transform()
                     }
                 };
 

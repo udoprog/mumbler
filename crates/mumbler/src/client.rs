@@ -44,10 +44,10 @@ async fn handle_peer(
                 let peer = remote.peers.entry(body.peer_id).or_default();
 
                 for mut o in body.objects {
-                    if let Some(image) = o.properties.remove(Key::IMAGE_BYTES).into_bytes() {
+                    if let Some(image) = o.props.remove(Key::IMAGE_BYTES).into_bytes() {
                         let mut images = b.images().await;
                         let image = images.store(image);
-                        o.properties.insert(Key::IMAGE_ID, Value::from(image));
+                        o.props.insert(Key::IMAGE_ID, Value::from(image));
                     }
 
                     peer.objects.insert(o.id, o);
@@ -96,7 +96,7 @@ async fn handle_peer(
                         let image = images.store(bytes);
 
                         if let Some(id) = object
-                            .properties
+                            .props
                             .insert(Key::IMAGE_ID, Value::from(image))
                             .as_id()
                         {
@@ -106,7 +106,7 @@ async fn handle_peer(
                         (Key::IMAGE_ID, Value::from(image))
                     }
                     key => {
-                        object.properties.insert(key, body.value.clone());
+                        object.props.insert(key, body.value.clone());
                         (key, body.value)
                     }
                 };
@@ -128,10 +128,10 @@ async fn handle_peer(
 
                 let mut object = body.object.clone();
 
-                if let Some(image) = object.properties.remove(Key::IMAGE_BYTES).into_bytes() {
+                if let Some(image) = object.props.remove(Key::IMAGE_BYTES).into_bytes() {
                     let mut images = b.images().await;
                     let image = images.store(image);
-                    object.properties.insert(Key::IMAGE_ID, Value::from(image));
+                    object.props.insert(Key::IMAGE_ID, Value::from(image));
                 }
 
                 peer.objects.insert(object.id, object.clone());
@@ -150,7 +150,7 @@ async fn handle_peer(
 
                     if let Some(peer) = remote.peers.get_mut(&body.peer_id)
                         && let Some(old) = peer.objects.remove(&body.object_id)
-                        && let Some(image_id) = old.properties.get(Key::IMAGE_ID).as_id()
+                        && let Some(image_id) = old.props.get(Key::IMAGE_ID).as_id()
                     {
                         b.images().await.remove(image_id);
                     }
@@ -213,9 +213,9 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut remote_objects = Vec::new();
 
     for (id, object) in objects {
-        let mut properties = Properties::new();
+        let mut props = Properties::new();
 
-        for (key, value) in object.properties.iter() {
+        for (key, value) in object.props.iter() {
             let (key, value) = match key {
                 Key::IMAGE_ID => {
                     let Some(image) = value.as_id() else {
@@ -231,14 +231,13 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 key => (key, value.clone()),
             };
 
-            properties.insert(key, value);
+            props.insert(key, value);
         }
 
         remote_objects.push(RemoteObject {
             ty: object.ty,
             id,
-            group_id: object.group_id,
-            properties,
+            props,
         });
     }
 
@@ -260,7 +259,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                     };
 
                     for key in object.changed.drain() {
-                        let value = object.properties.get(key);
+                        let value = object.props.get(key);
 
                         let owned;
 
@@ -286,9 +285,9 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         continue;
                     };
 
-                    let mut properties = Properties::new();
+                    let mut props = Properties::new();
 
-                    for (key, value) in object.properties.iter() {
+                    for (key, value) in object.props.iter() {
                         let (key, value) = match key {
                             Key::IMAGE_ID => {
                                 let Some(image) = value.as_id() else {
@@ -304,10 +303,10 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                             key => (key, value.clone()),
                         };
 
-                        properties.insert(key, value);
+                        props.insert(key, value);
                     }
 
-                    peer.add_object(RemoteObject { ty: object.ty, id, group_id: object.group_id, properties })?;
+                    peer.add_object(RemoteObject { ty: object.ty, id, props })?;
                 }
 
                 for id in object_deleted.drain() {

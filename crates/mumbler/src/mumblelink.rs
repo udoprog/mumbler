@@ -29,15 +29,10 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
             break 'transform None;
         };
 
-        if object
-            .properties
-            .get(Key::HIDDEN)
-            .as_bool()
-            .unwrap_or_default()
-        {
+        if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
             None
         } else {
-            object.properties.get(Key::TRANSFORM).as_transform()
+            object.props.get(Key::TRANSFORM).as_transform()
         }
     };
 

@@ -39,6 +39,12 @@ impl Value {
         }
     }
 
+    /// Check if the value is empty.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        matches!(self.kind, ValueKind::Empty)
+    }
+
     #[inline]
     pub fn as_id(&self) -> Option<Id> {
         match &self.kind {

@@ -284,8 +284,19 @@ impl Properties {
         self.values.get(&key).unwrap_or(&DEFAULT)
     }
 
+    /// Test if the set of properties contains the given key.
+    pub fn contains(&self, key: Key) -> bool {
+        self.values.contains_key(&key)
+    }
+
     /// Insert or update a property value by key.
+    ///
+    /// Inserting an [`Value::empty`] value is the equivalent of removing it.
     pub fn insert(&mut self, key: Key, value: Value) -> Value {
+        if value.is_empty() {
+            return self.remove(key);
+        }
+
         let Some(value) = self.values.insert(key, value) else {
             return Value::empty();
         };
@@ -462,10 +473,8 @@ pub struct RemoteObject {
     pub ty: Type,
     /// The identifier of the object.
     pub id: Id,
-    /// The group the remote object belongs to, if any.
-    pub group_id: Option<Id>,
     /// The properties of the object.
-    pub properties: Properties,
+    pub props: Properties,
 }
 
 /// Event emitted when the map is initialized.
@@ -516,7 +525,7 @@ pub struct CreateObjectRequest {
     /// The type of object to create.
     pub ty: Type,
     /// The initial properties of the object.
-    pub properties: Properties,
+    pub props: Properties,
 }
 
 /// Request to delete a local object.

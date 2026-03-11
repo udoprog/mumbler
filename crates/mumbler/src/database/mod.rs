@@ -476,7 +476,7 @@ impl Database {
         let task = task::spawn_blocking(move || {
             inner.list_properties.bind((id,))?;
 
-            let mut properties = Vec::new();
+            let mut props = Vec::new();
 
             while let Some((key, value)) = inner.list_properties.next::<(Key, &[u8])>()? {
                 let Some(ty) = key.ty() else {
@@ -485,10 +485,10 @@ impl Database {
 
                 tracing::debug!(?id, ?key, "Loading property");
                 let value = value_from_blob(ty, value)?;
-                properties.push((key, value));
+                props.push((key, value));
             }
 
-            Ok(properties)
+            Ok(props)
         });
 
         task.await?
@@ -500,7 +500,7 @@ impl Database {
         let task = task::spawn_blocking(move || {
             inner.list_configs.reset()?;
 
-            let mut properties = Vec::new();
+            let mut props = Vec::new();
 
             while let Some((key, value)) = inner.list_configs.next::<(Key, &[u8])>()? {
                 let Some(ty) = key.ty() else {
@@ -509,10 +509,10 @@ impl Database {
 
                 let value =
                     value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
-                properties.push((key, value));
+                props.push((key, value));
             }
 
-            Ok(properties)
+            Ok(props)
         });
 
         task.await?

@@ -66,9 +66,17 @@ pub(crate) enum BackendEvent {
 #[derive(Debug, Clone)]
 pub(crate) struct LocalObject {
     pub(crate) ty: Type,
-    pub(crate) group_id: Option<Id>,
-    pub(crate) properties: Properties,
+    pub(crate) id: Id,
+    pub(crate) props: Properties,
     pub(crate) changed: HashSet<Key>,
+}
+
+impl LocalObject {
+    /// Construct an array corresponding to the default sort of this object,
+    /// which is based on its random identifier.
+    fn default_sort(&self) -> Vec<u8> {
+        self.id.as_bytes().to_vec()
+    }
 }
 
 #[derive(Default)]
@@ -154,7 +162,9 @@ impl Backend {
         for (id, ty, group_id) in database.objects().await? {
             tracing::debug!(?id, ?ty, "Loading object");
 
-            let mut properties = Properties::new();
+            let mut props = Properties::new();
+
+            props.insert(Key::GROUP, Value::from(group_id));
 
             for (key, value) in database.properties(id).await? {
                 tracing::debug!(?id, ?key, ?value, "Loading property");
@@ -168,18 +178,24 @@ impl Backend {
                     _ => {}
                 }
 
-                properties.insert(key, value);
+                props.insert(key, value);
             }
 
-            objects.insert(
+            let mut object = LocalObject {
+                ty,
                 id,
-                LocalObject {
-                    ty,
-                    group_id,
-                    properties,
-                    changed: HashSet::new(),
-                },
-            );
+                props,
+                changed: HashSet::new(),
+            };
+
+            // Migrate existing database objects to ensure they have an
+            // established sort.
+            if !object.props.contains(Key::SORT) {
+                let sort = object.default_sort();
+                object.props.insert(Key::SORT, Value::from(sort));
+            }
+
+            objects.insert(id, object);
         }
 
         let mumble_object = database.config(Key::MUMBLE_OBJECT).await?;
@@ -302,7 +318,7 @@ impl Backend {
             return;
         };
 
-        object.properties.insert(key, value);
+        object.props.insert(key, value);
         object.changed.insert(key);
         state.objects_changed.insert(id);
 
@@ -343,40 +359,72 @@ impl Backend {
 
     /// Create a new local object, persisting it to the database and inserting
     /// it into the in-memory client state.  Returns the new object's ID.
-    pub(crate) async fn create_object(
-        &self,
-        ty: Type,
-        properties: Properties,
-    ) -> Result<RemoteObject> {
+    pub(crate) async fn create_object(&self, ty: Type, props: Properties) -> Result<RemoteObject> {
         let id = Id::new(rand::random());
 
         self.db().insert_object(id, ty).await?;
 
-        for (key, value) in properties.iter() {
+        for (key, value) in props.iter() {
             self.db().set_property_value(id, key, value.clone()).await?;
         }
 
-        let mut state = self.inner.client_state.lock().await;
-
-        state.objects.insert(
-            id,
-            LocalObject {
-                ty,
-                group_id: None,
-                properties: properties.clone(),
-                changed: HashSet::new(),
-            },
-        );
-
-        state.object_added.insert(id);
-        self.inner.client_notify.notify_one();
-
-        Ok(RemoteObject {
+        let mut object = LocalObject {
             ty,
             id,
-            group_id: None,
-            properties: properties.clone(),
-        })
+            props,
+            changed: HashSet::new(),
+        };
+
+        let sorts: Vec<(Id, Vec<u8>)>;
+
+        let (sort, props) = {
+            let mut state = self.inner.client_state.lock().await;
+
+            sorts = state
+                .objects
+                .values()
+                .map(|o| {
+                    (
+                        o.id,
+                        o.props
+                            .get(Key::SORT)
+                            .as_bytes()
+                            .unwrap_or_default()
+                            .to_vec(),
+                    )
+                })
+                .collect();
+
+            let last = state
+                .objects
+                .values()
+                .map(|o| o.props.get(Key::SORT).as_bytes().unwrap_or_default())
+                .max();
+
+            let sort = match last {
+                Some(sort) => sorting::after(sort),
+                None => object.default_sort(),
+            };
+
+            let sort = Value::from(sort);
+
+            object.props.insert(Key::SORT, sort.clone());
+            let props = object.props.clone();
+            state.objects.insert(id, object);
+            state.object_added.insert(id);
+            (sort, props)
+        };
+
+        for (id, sort) in sorts {
+            tracing::warn!(?id, sort = ?bstr::BStr::new(&sort), "Existing sort value");
+        }
+
+        tracing::warn!(sort = ?bstr::BStr::new(&sort.as_bytes().unwrap_or_default()), "New sort value");
+
+        self.db().set_property_value(id, Key::SORT, sort).await?;
+        self.inner.client_notify.notify_one();
+
+        Ok(RemoteObject { ty, id, props })
     }
 
     /// Delete a local object, removing it from the database and in-memory state.

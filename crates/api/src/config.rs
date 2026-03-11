@@ -66,8 +66,6 @@ keys! {
     TRANSFORM: Transform = 2,
     LOOK_AT: Vec3 = 3,
     NAME: String = 4,
-    /// Manual list order for an object. When defined, determines sorting.
-    ORDER: Integer = 21,
     MUMBLE_ENABLED: Boolean = 5,
     REMOTE_SERVER: String = 6,
     REMOTE_ENABLED: Boolean = 7,
@@ -96,6 +94,10 @@ keys! {
     /// An object is locked from further interaction. This prevents clicking on
     /// it in the map.
     LOCKED: Boolean = 22,
+    /// Key for how this object is sorted.
+    SORT: Bytes = 24,
+    /// The group this object belongs to.
+    GROUP: Id = 25,
     /// Image bytes associated with an object.
     IMAGE_BYTES: Bytes = 0x1000,
 }

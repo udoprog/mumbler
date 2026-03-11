@@ -437,7 +437,7 @@ impl State {
                         continue;
                     };
 
-                    object.properties.insert(event.key, event.value.clone());
+                    object.props.insert(event.key, event.value.clone());
 
                     data.send_to_room(
                         |peer| {

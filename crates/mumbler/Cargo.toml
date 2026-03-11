@@ -12,6 +12,7 @@ tls = ["dep:tokio-rustls", "dep:rustls", "tokio/fs", "dep:webpki-roots"]
 [dependencies]
 api = { path = "../api", features = ["sqll"] }
 mumblelink = { path = "../mumblelink"}
+sorting = { path = "../sorting" }
 
 jiff = "0.2.23"
 rust-embed = "8.11.0"
