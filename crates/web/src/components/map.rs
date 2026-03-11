@@ -1878,16 +1878,17 @@ impl Map {
                         hit_something = hit.is_some();
                     }
 
-                    let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+                    let Some(object) = self.selected.and_then(|id| self.objects.get_mut(&id))
+                    else {
                         break 'out hit_something;
                     };
 
-                    o.arrow_target = None;
+                    object.arrow_target = None;
 
-                    let object_id = o.data.id;
-                    let is_static = o.data.is_static();
+                    let object_id = object.data.id;
+                    let is_static = object.data.is_static();
 
-                    let Some(transform) = o.data.as_transform_mut() else {
+                    let Some(transform) = object.data.as_transform_mut() else {
                         break 'out hit_something;
                     };
 
@@ -1899,7 +1900,7 @@ impl Map {
                         if is_static {
                             // Shift-drag on a static object rotates it.
                             self.look_at(p, e);
-                        } else if let Some(look_at) = o.data.as_look_at_mut() {
+                        } else if let Some(look_at) = object.data.as_look_at_mut() {
                             **look_at = Some(e.xyz(0.0));
                             self.look_at(p, e);
                             self.update_look_at_ids.insert(object_id);
@@ -1911,7 +1912,7 @@ impl Map {
                         self.update_transform_ids.insert(object_id);
                     } else {
                         self.start_press = Some((e, false));
-                        o.move_target = Some(e);
+                        object.move_target = Some(e);
                     }
 
                     true
