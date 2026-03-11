@@ -156,6 +156,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
             objects.push(api::RemoteObject {
                 ty: object.ty,
                 id: *id,
+                group_id: object.group_id,
                 properties: object.properties.clone(),
             });
         }
@@ -167,6 +168,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
                     object: api::RemoteObject {
                         ty: object.ty,
                         id: object.id,
+                        group_id: object.group_id,
                         properties: object.properties.clone(),
                     },
                 });
@@ -225,6 +227,7 @@ async fn get_object_settings(
         api::RemoteObject {
             ty: object.ty,
             id: request.id,
+            group_id: object.group_id,
             properties: object.properties.clone(),
         }
     };

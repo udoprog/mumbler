@@ -22,7 +22,7 @@ use crate::log;
 use crate::state::State;
 use crate::ws;
 
-use super::render::{self, RenderAvatar, RenderStatic, ViewTransform};
+use super::render::{self, RenderStatic, RenderToken, ViewTransform};
 use super::{ObjectSettings, StaticSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -132,6 +132,8 @@ impl LocalObject {
 }
 
 pub(crate) struct Token {
+    pub(crate) transform: State<Transform>,
+    pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
     pub(crate) image: State<Option<Id>>,
     pub(crate) color: State<Option<Color>>,
@@ -144,6 +146,10 @@ pub(crate) struct Token {
 impl Token {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
+            Key::TRANSFORM => self
+                .transform
+                .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
@@ -159,6 +165,8 @@ impl Token {
 }
 
 pub(crate) struct StaticObject {
+    pub(crate) transform: State<Transform>,
+    pub(crate) locked: State<bool>,
     pub(crate) image: State<Option<Id>>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
@@ -170,6 +178,10 @@ pub(crate) struct StaticObject {
 impl StaticObject {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
+            Key::TRANSFORM => self
+                .transform
+                .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.into_string()),
@@ -193,8 +205,6 @@ pub(crate) enum ObjectKind {
 
 pub(crate) struct ObjectData {
     pub(crate) id: Id,
-    pub(crate) transform: State<Transform>,
-    pub(crate) locked: State<bool>,
     pub(crate) kind: ObjectKind,
 }
 
@@ -203,6 +213,20 @@ impl ObjectData {
         let kind = match remote.ty {
             api::Type::TOKEN => {
                 let token = Token {
+                    transform: State::new(
+                        remote
+                            .properties
+                            .get(Key::TRANSFORM)
+                            .as_transform()
+                            .unwrap_or_else(Transform::origin),
+                    ),
+                    locked: State::new(
+                        remote
+                            .properties
+                            .get(Key::LOCKED)
+                            .as_bool()
+                            .unwrap_or(false),
+                    ),
                     look_at: State::new(remote.properties.get(Key::LOOK_AT).as_vec3()),
                     image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
                     color: State::new(remote.properties.get(Key::COLOR).as_color()),
@@ -234,6 +258,20 @@ impl ObjectData {
             }
             api::Type::STATIC => {
                 let s = StaticObject {
+                    transform: State::new(
+                        remote
+                            .properties
+                            .get(Key::TRANSFORM)
+                            .as_transform()
+                            .unwrap_or_else(Transform::origin),
+                    ),
+                    locked: State::new(
+                        remote
+                            .properties
+                            .get(Key::LOCKED)
+                            .as_bool()
+                            .unwrap_or(false),
+                    ),
                     image: State::new(remote.properties.get(Key::IMAGE_ID).as_id()),
                     color: State::new(remote.properties.get(Key::COLOR).as_color()),
                     name: State::new(remote.properties.get(Key::NAME).as_str().map(str::to_owned)),
@@ -267,43 +305,56 @@ impl ObjectData {
 
         Self {
             id: remote.id,
-            transform: State::new(
-                remote
-                    .properties
-                    .get(Key::TRANSFORM)
-                    .as_transform()
-                    .unwrap_or_else(Transform::origin),
-            ),
-            locked: State::new(
-                remote
-                    .properties
-                    .get(Key::LOCKED)
-                    .as_bool()
-                    .unwrap_or(false),
-            ),
             kind,
         }
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::TRANSFORM => self
-                .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            key => match &mut self.kind {
-                ObjectKind::Token(token) => token.update(key, value),
-                ObjectKind::Static(s) => s.update(key, value),
-                ObjectKind::Unknown => false,
-            },
+        match &mut self.kind {
+            ObjectKind::Token(this) => this.update(key, value),
+            ObjectKind::Static(this) => this.update(key, value),
+            ObjectKind::Unknown => false,
+        }
+    }
+
+    #[inline]
+    fn as_transform(&self) -> Option<&Transform> {
+        match &self.kind {
+            ObjectKind::Token(this) => Some(&this.transform),
+            ObjectKind::Static(this) => Some(&this.transform),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn as_transform_mut(&mut self) -> Option<&mut State<Transform>> {
+        match &mut self.kind {
+            ObjectKind::Token(this) => Some(&mut this.transform),
+            ObjectKind::Static(this) => Some(&mut this.transform),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn as_interpolate_mut(
+        &mut self,
+    ) -> Option<(&mut State<Transform>, Option<&Vec3>, Option<f32>)> {
+        match &mut self.kind {
+            ObjectKind::Token(this) => Some((
+                &mut this.transform,
+                this.look_at.as_ref(),
+                Some(*this.speed),
+            )),
+            ObjectKind::Static(this) => Some((&mut this.transform, None, None)),
+            ObjectKind::Unknown => None,
         }
     }
 
     #[inline]
     fn click_radius(&self) -> f32 {
         match &self.kind {
-            ObjectKind::Token(token) => *token.token_radius,
-            ObjectKind::Static(s) => (*s.width).hypot(*s.height) / 2.0,
+            ObjectKind::Token(this) => *this.token_radius,
+            ObjectKind::Static(this) => (*this.width).hypot(*this.height) / 2.0,
             ObjectKind::Unknown => 0.5,
         }
     }
@@ -317,7 +368,7 @@ impl ObjectData {
     #[inline]
     fn look_at(&self) -> Option<&Vec3> {
         match &self.kind {
-            ObjectKind::Token(token) => token.look_at.as_ref(),
+            ObjectKind::Token(this) => this.look_at.as_ref(),
             ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
@@ -325,7 +376,7 @@ impl ObjectData {
     #[inline]
     fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
         match &mut self.kind {
-            ObjectKind::Token(token) => Some(&mut token.look_at),
+            ObjectKind::Token(this) => Some(&mut this.look_at),
             ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
@@ -333,8 +384,8 @@ impl ObjectData {
     #[inline]
     fn as_image_mut(&mut self) -> Option<&mut State<Option<Id>>> {
         match &mut self.kind {
-            ObjectKind::Token(token) => Some(&mut token.image),
-            ObjectKind::Static(s) => Some(&mut s.image),
+            ObjectKind::Token(this) => Some(&mut this.image),
+            ObjectKind::Static(this) => Some(&mut this.image),
             ObjectKind::Unknown => None,
         }
     }
@@ -342,25 +393,17 @@ impl ObjectData {
     #[inline]
     fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
-            ObjectKind::Token(token) => Some(&mut token.hidden),
-            ObjectKind::Static(s) => Some(&mut s.hidden),
+            ObjectKind::Token(this) => Some(&mut this.hidden),
+            ObjectKind::Static(this) => Some(&mut this.hidden),
             ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn speed(&self) -> Option<f32> {
-        match &self.kind {
-            ObjectKind::Token(token) => Some(*token.speed),
-            ObjectKind::Static(_) | ObjectKind::Unknown => None,
         }
     }
 
     #[inline]
     fn name(&self) -> Option<&str> {
         match &self.kind {
-            ObjectKind::Token(token) => token.name.as_deref(),
-            ObjectKind::Static(s) => s.name.as_deref(),
+            ObjectKind::Token(this) => this.name.as_deref(),
+            ObjectKind::Static(this) => this.name.as_deref(),
             ObjectKind::Unknown => None,
         }
     }
@@ -368,8 +411,8 @@ impl ObjectData {
     #[inline]
     fn image(&self) -> Option<Id> {
         match &self.kind {
-            ObjectKind::Token(token) => *token.image,
-            ObjectKind::Static(s) => *s.image,
+            ObjectKind::Token(this) => *this.image,
+            ObjectKind::Static(this) => *this.image,
             ObjectKind::Unknown => None,
         }
     }
@@ -377,15 +420,28 @@ impl ObjectData {
     #[inline]
     fn is_hidden(&self) -> bool {
         match &self.kind {
-            ObjectKind::Token(token) => *token.hidden,
-            ObjectKind::Static(s) => *s.hidden,
+            ObjectKind::Token(this) => *this.hidden,
+            ObjectKind::Static(this) => *this.hidden,
             ObjectKind::Unknown => false,
         }
     }
 
     #[inline]
+    fn as_locked_mut(&mut self) -> Option<&mut State<bool>> {
+        match &mut self.kind {
+            ObjectKind::Token(this) => Some(&mut this.locked),
+            ObjectKind::Static(this) => Some(&mut this.locked),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
     fn is_locked(&self) -> bool {
-        *self.locked
+        match &self.kind {
+            ObjectKind::Token(this) => *this.locked,
+            ObjectKind::Static(this) => *this.locked,
+            ObjectKind::Unknown => false,
+        }
     }
 }
 
@@ -672,9 +728,12 @@ impl Component for Map {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let pos;
 
-        if let Some(o) = self.selected.and_then(|id| self.objects.get(&id)) {
-            let p = o.data.transform.position;
-            let f = o.data.transform.front;
+        if let Some(o) = self.selected.and_then(|id| self.objects.get(&id))
+            && let Some(transform) = o.data.as_transform()
+        {
+            let p = transform.position;
+            let f = transform.front;
+
             let zoom = *self.config.zoom;
 
             let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
@@ -702,7 +761,7 @@ impl Component for Map {
             let o = self.selected.and_then(|id| self.objects.get(&id));
 
             let is_hidden = o.map(|o| o.data.is_hidden()).unwrap_or_default();
-            let is_locked = o.map(|o| *o.data.locked).unwrap_or_default();
+            let is_locked = o.map(|o| o.data.is_locked()).unwrap_or_default();
             let is_mumble = o
                 .map(|o| *self.config.mumble_object == Some(o.data.id))
                 .unwrap_or_default();
@@ -844,9 +903,7 @@ impl Component for Map {
 
                     <div class="object-list">
                         {for self.order.iter().flat_map(|(_, id)| {
-                            let Some(o) = self.objects.get(id) else {
-                                return None;
-                            };
+                            let o = self.objects.get(id)?;
 
                             let object_id = o.data.id;
                             let selected = self.selected == Some(object_id);
@@ -1028,12 +1085,16 @@ impl Map {
                     return Ok(false);
                 };
 
+                let Some(locked) = object.data.as_locked_mut() else {
+                    return Ok(false);
+                };
+
                 if self.selected == Some(id) {
                     self.selected = None;
                 }
 
-                let locked = !*object.data.locked;
-                *object.data.locked = locked;
+                let new = !**locked;
+                **locked = new;
 
                 self._toggle_locked_request = ctx
                     .props()
@@ -1042,7 +1103,7 @@ impl Map {
                     .body(api::UpdateRequest {
                         object_id: id,
                         key: Key::LOCKED,
-                        value: Value::from(locked),
+                        value: Value::from(new),
                     })
                     .on_packet(ctx.link().callback(Msg::SetConfig))
                     .send();
@@ -1527,19 +1588,28 @@ impl Map {
             self.update_look_at_ids.insert(object_id);
         }
 
-        let p = o.data.transform.position.xz();
-        self.start_press = Some((p, true));
-        self.look_at(p, m);
+        if let Some(transform) = o.data.as_transform() {
+            let p = transform.position.xz();
+            self.start_press = Some((p, true));
+            self.look_at(p, m);
+        }
+
         self.redraw()?;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
         for o in self.objects.values_mut() {
-            let p = o.data.transform.position.xz();
+            let id = o.data.id;
+
+            let Some((transform, look_at, speed)) = o.data.as_interpolate_mut() else {
+                continue;
+            };
+
+            let p = transform.position.xz();
 
             'move_done: {
-                let (Some(target), Some(speed)) = (o.move_target, o.data.speed()) else {
+                let (Some(target), Some(speed)) = (o.move_target, speed) else {
                     break 'move_done;
                 };
 
@@ -1548,9 +1618,9 @@ impl Map {
                 let distance = (dx * dx + dz * dz).sqrt();
 
                 if distance < 0.01 {
-                    o.data.transform.position = target.xyz(0.0);
+                    transform.position = target.xyz(0.0);
                     o.move_target = None;
-                    self.update_transform_ids.insert(o.data.id);
+                    self.update_transform_ids.insert(id);
                     break 'move_done;
                 }
 
@@ -1558,25 +1628,25 @@ impl Map {
                 let move_distance = step.min(distance);
                 let ratio = move_distance / distance;
 
-                o.data.transform.position.x += dx * ratio;
-                o.data.transform.position.z += dz * ratio;
+                transform.position.x += dx * ratio;
+                transform.position.z += dz * ratio;
 
                 // Face the movement direction unless a look_at target is active.
-                if o.data.look_at().is_none() {
-                    o.data.transform.front = p.direction_to(target).xyz(0.0);
+                if look_at.is_none() {
+                    transform.front = p.direction_to(target).xyz(0.0);
                 }
 
-                self.update_transform_ids.insert(o.data.id);
+                self.update_transform_ids.insert(id);
             };
 
             'look_done: {
-                let Some(t) = o.data.look_at() else {
+                let Some(t) = look_at else {
                     break 'look_done;
                 };
 
                 o.arrow_target = Some(t.xz());
-                o.data.transform.front = p.direction_to(t.xz()).xyz(0.0);
-                self.update_transform_ids.insert(o.data.id);
+                transform.front = p.direction_to(t.xz()).xyz(0.0);
+                self.update_transform_ids.insert(id);
             };
         }
 
@@ -1596,7 +1666,11 @@ impl Map {
                 continue;
             };
 
-            let req = send_update(ctx, id, Key::TRANSFORM, *o.data.transform);
+            let Some(transform) = o.data.as_transform() else {
+                continue;
+            };
+
+            let req = send_update(ctx, id, Key::TRANSFORM, *transform);
             self.transform_requests.insert(id, req);
         }
     }
@@ -1645,8 +1719,11 @@ impl Map {
             .objects
             .values()
             .find(|o| {
-                o.data.transform.position.xz().dist(w) < o.data.click_radius()
-                    && !o.data.is_locked()
+                let Some(transform) = o.data.as_transform() else {
+                    return false;
+                };
+
+                transform.position.xz().dist(w) < o.data.click_radius() && !o.data.is_locked()
             })
             .map(|o| o.data.id);
 
@@ -1733,7 +1810,11 @@ impl Map {
                             .objects
                             .values()
                             .find(|o| {
-                                o.data.transform.position.xz().dist(e) < o.data.click_radius()
+                                let Some(transform) = o.data.as_transform() else {
+                                    return false;
+                                };
+
+                                transform.position.xz().dist(e) < o.data.click_radius()
                                     && !o.data.is_locked()
                             })
                             .map(|o| o.data.id);
@@ -1756,13 +1837,18 @@ impl Map {
                     o.arrow_target = None;
 
                     let object_id = o.data.id;
+                    let is_static = o.data.is_static();
+
+                    let Some(transform) = o.data.as_transform_mut() else {
+                        break 'out hit_something;
+                    };
 
                     if ev.shift_key() {
-                        let p = o.data.transform.position.xz();
+                        let p = transform.position.xz();
 
                         self.start_press = Some((p, true));
 
-                        if o.data.is_static() {
+                        if is_static {
                             // Shift-drag on a static object rotates it.
                             self.look_at(p, e);
                         } else if let Some(look_at) = o.data.as_look_at_mut() {
@@ -1770,10 +1856,10 @@ impl Map {
                             self.look_at(p, e);
                             self.update_look_at_ids.insert(object_id);
                         }
-                    } else if o.data.is_static() {
+                    } else if is_static {
                         // Static objects snap immediately to where they are dropped.
+                        transform.position = e.xyz(0.0);
                         self.start_press = Some((e, false));
-                        o.data.transform.position = e.xyz(0.0);
                         self.update_transform_ids.insert(object_id);
                     } else {
                         self.start_press = Some((e, false));
@@ -1849,9 +1935,11 @@ impl Map {
                 break 'done;
             }
 
-            if o.data.is_static() {
+            if o.data.is_static()
+                && let Some(transform) = o.data.as_transform_mut()
+            {
                 // Static objects snap immediately while dragging.
-                o.data.transform.position = m.xyz(0.0);
+                transform.position = m.xyz(0.0);
                 self.update_transform_ids.insert(o.data.id);
                 needs_redraw = true;
                 break 'done;
@@ -1873,10 +1961,13 @@ impl Map {
             return;
         };
 
-        let id = o.data.id;
+        let Some(transform) = o.data.as_transform_mut() else {
+            return;
+        };
+
         o.arrow_target = Some(m);
-        o.data.transform.front = p.direction_to(m).xyz(0.0);
-        self.update_transform_ids.insert(id);
+        transform.front = p.direction_to(m).xyz(0.0);
+        self.update_transform_ids.insert(o.data.id);
     }
 
     fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
@@ -2053,11 +2144,11 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
-                .flat_map(|a| RenderAvatar::from_data(&a.data))
+                .flat_map(|a| RenderToken::from_data(&a.data))
                 .filter(|a| !a.hidden);
 
             let locals = self.objects.values().flat_map(move |a| {
-                let mut token = RenderAvatar::from_data(&a.data)?;
+                let mut token = RenderToken::from_data(&a.data)?;
                 token.player = true;
                 token.selected = selected == Some(a.data.id);
                 Some(token)

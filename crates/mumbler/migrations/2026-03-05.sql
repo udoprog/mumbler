@@ -25,5 +25,7 @@ CREATE TABLE `properties` (
 CREATE TABLE `objects` (
     `id` INTEGER NOT NULL,
     `type` INTEGER NOT NULL,
-    PRIMARY KEY (`id`, `type`)
+    `group_id` INTEGER,
+    PRIMARY KEY (`id`, `type`),
+    FOREIGN KEY (`group_id`) REFERENCES `objects`(`id`) ON DELETE SET NULL
 );

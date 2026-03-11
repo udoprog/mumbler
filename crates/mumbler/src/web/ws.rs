@@ -115,6 +115,7 @@ impl ws::Handler for Handler<'_> {
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
                         body: LocalUpdateBody::Create { object },
                     }));
+
                 outgoing.write(api::Empty);
             }
             api::Request::DeleteObject => {

@@ -462,6 +462,8 @@ pub struct RemoteObject {
     pub ty: Type,
     /// The identifier of the object.
     pub id: Id,
+    /// The group the remote object belongs to, if any.
+    pub group_id: Option<Id>,
     /// The properties of the object.
     pub properties: Properties,
 }

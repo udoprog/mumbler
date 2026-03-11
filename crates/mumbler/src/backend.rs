@@ -66,6 +66,7 @@ pub(crate) enum BackendEvent {
 #[derive(Debug, Clone)]
 pub(crate) struct LocalObject {
     pub(crate) ty: Type,
+    pub(crate) group_id: Option<Id>,
     pub(crate) properties: Properties,
     pub(crate) changed: HashSet<Key>,
 }
@@ -150,7 +151,7 @@ impl Backend {
         let mut objects = HashMap::new();
         let mut hidden = HashSet::new();
 
-        for (id, ty) in database.objects().await? {
+        for (id, ty, group_id) in database.objects().await? {
             tracing::debug!(?id, ?ty, "Loading object");
 
             let mut properties = Properties::new();
@@ -174,6 +175,7 @@ impl Backend {
                 id,
                 LocalObject {
                     ty,
+                    group_id,
                     properties,
                     changed: HashSet::new(),
                 },
@@ -360,6 +362,7 @@ impl Backend {
             id,
             LocalObject {
                 ty,
+                group_id: None,
                 properties: properties.clone(),
                 changed: HashSet::new(),
             },
@@ -371,6 +374,7 @@ impl Backend {
         Ok(RemoteObject {
             ty,
             id,
+            group_id: None,
             properties: properties.clone(),
         })
     }

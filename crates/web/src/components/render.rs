@@ -8,7 +8,7 @@ use crate::error::Error;
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
-pub(crate) struct RenderAvatar<'a> {
+pub(crate) struct RenderToken<'a> {
     pub(crate) transform: api::Transform,
     pub(crate) look_at: Option<Vec3>,
     pub(crate) image: Option<Id>,
@@ -20,7 +20,7 @@ pub(crate) struct RenderAvatar<'a> {
     pub(crate) token_radius: f32,
 }
 
-impl<'a> RenderAvatar<'a> {
+impl<'a> RenderToken<'a> {
     pub(crate) fn from_data(data: &'a ObjectData) -> Option<Self> {
         let token = match &data.kind {
             ObjectKind::Token(token) => token,
@@ -28,7 +28,7 @@ impl<'a> RenderAvatar<'a> {
         };
 
         Some(Self {
-            transform: *data.transform,
+            transform: *token.transform,
             look_at: *token.look_at,
             image: *token.image,
             color: token.color.unwrap_or_else(api::Color::neutral),
@@ -59,7 +59,7 @@ impl RenderStatic {
         };
 
         Some(Self {
-            transform: *data.transform,
+            transform: *s.transform,
             image: *s.image,
             color: s.color.unwrap_or_else(api::Color::neutral),
             selected: false,
@@ -273,7 +273,7 @@ pub(crate) fn draw_look_at(
 pub(crate) fn draw_token_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
-    a: &RenderAvatar,
+    a: &RenderToken,
     arrow_target: Option<VecXZ>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {

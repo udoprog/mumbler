@@ -184,7 +184,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         connect.as_str()
     };
 
-    let players = {
+    let objects = {
         let remote = b.client_state().await;
         remote.objects.clone()
     };
@@ -210,9 +210,9 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
 
-    let mut objects = Vec::new();
+    let mut remote_objects = Vec::new();
 
-    for (id, object) in players {
+    for (id, object) in objects {
         let mut properties = Properties::new();
 
         for (key, value) in object.properties.iter() {
@@ -234,15 +234,16 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
             properties.insert(key, value);
         }
 
-        objects.push(RemoteObject {
+        remote_objects.push(RemoteObject {
             ty: object.ty,
             id,
+            group_id: object.group_id,
             properties,
         });
     }
 
     let mut peer = Peer::new(client);
-    peer.connect(b"default", objects)?;
+    peer.connect(b"default", remote_objects)?;
 
     loop {
         tokio::select! {
@@ -306,7 +307,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         properties.insert(key, value);
                     }
 
-                    peer.add_object(RemoteObject { ty: object.ty, id, properties })?;
+                    peer.add_object(RemoteObject { ty: object.ty, id, group_id: object.group_id, properties })?;
                 }
 
                 for id in object_deleted.drain() {

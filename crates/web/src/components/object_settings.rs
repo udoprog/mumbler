@@ -535,7 +535,7 @@ impl ObjectSettings {
             return Ok(());
         };
 
-        let token = render::RenderAvatar {
+        let token = render::RenderToken {
             transform: api::Transform::origin(),
             look_at: None,
             image: *self.image,

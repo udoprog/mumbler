@@ -83,6 +83,7 @@ struct Inner {
     insert_object: SendStatement,
     delete_object: SendStatement,
     list_objects: SendStatement,
+    list_members: SendStatement,
 }
 
 /// A database connection.
@@ -179,7 +180,8 @@ impl Database {
                 list_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 delete_object: c.prepare("DELETE FROM objects WHERE id = ?")?.into_send()?,
-                list_objects: c.prepare("SELECT id, type FROM objects")?.into_send()?,
+                list_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
+                list_members: c.prepare("SELECT id FROM objects WHERE group_id = ?")?.into_send()?,
             }
         };
 
@@ -404,6 +406,7 @@ impl Database {
         task.await?
     }
 
+    /// Insert an object into the database.
     pub async fn insert_object(&self, id: Id, ty: Type) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
@@ -415,6 +418,7 @@ impl Database {
         task.await?
     }
 
+    /// Delete an object in the database.
     pub async fn delete_object(&self, id: Id) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
@@ -426,7 +430,8 @@ impl Database {
         task.await?
     }
 
-    pub async fn objects(&self) -> Result<Vec<(Id, Type)>> {
+    /// List all objects in the database.
+    pub async fn objects(&self) -> Result<Vec<(Id, Type, Option<Id>)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -434,11 +439,32 @@ impl Database {
 
             let mut objects = Vec::new();
 
-            while let Some((id, ty)) = inner.list_objects.next::<(Id, Type)>()? {
-                objects.push((id, ty));
+            while let Some((id, ty, group_id)) =
+                inner.list_objects.next::<(Id, Type, Option<Id>)>()?
+            {
+                objects.push((id, ty, group_id));
             }
 
             Ok(objects)
+        });
+
+        task.await?
+    }
+
+    /// List the members of a group.
+    pub async fn members(&self, group_id: Id) -> Result<Vec<Id>> {
+        let mut inner = self.inner.clone().lock_owned().await;
+
+        let task = task::spawn_blocking(move || {
+            inner.list_members.bind((group_id,))?;
+
+            let mut members = Vec::new();
+
+            while let Some(member_id) = inner.list_members.next::<Id>()? {
+                members.push(member_id);
+            }
+
+            Ok(members)
         });
 
         task.await?
