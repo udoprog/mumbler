@@ -460,14 +460,16 @@ canvas#map {
         display: block;
         border: 2px dashed var(--link-color);
         border-radius: $border-radius;
-        height: 20px;
+        height: 1em;
+        padding: 0.25em 0.4em;
+        user-select: none;
     }
 
     &-item {
         display: flex;
         align-items: center;
         gap: 0.25em;
-        padding: 0.25em 0.4em;
+        padding: 0.25em 0.5em;
         border-radius: $border-radius;
         cursor: pointer;
         background-color: var(--background-color);

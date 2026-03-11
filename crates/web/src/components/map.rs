@@ -23,7 +23,7 @@ use crate::state::State;
 use crate::ws;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
-use super::{ObjectSettings, StaticSettings};
+use super::{ObjectSettings, StaticSettings, into_target};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -437,6 +437,25 @@ impl ObjectData {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Drag {
+    Above,
+    Below,
+}
+
+impl Drag {
+    fn from_event(ev: DragEvent, element: &HtmlElement) -> Self {
+        let rect = element.get_bounding_client_rect();
+        let offset = ev.client_y() as f64 - rect.top();
+
+        if offset < rect.height() / 2.0 {
+            Drag::Above
+        } else {
+            Drag::Below
+        }
+    }
+}
+
 pub(crate) struct Map {
     _create_object: ws::Request,
     _create_static: ws::Request,
@@ -460,8 +479,7 @@ pub(crate) struct Map {
     config: Config,
     context_menu: Option<ContextMenu>,
     delete: Option<Id>,
-    drag_over: Option<Id>,
-    drag_source: Option<Id>,
+    drag_over: Option<(Drag, Id)>,
     hide_requests: HashMap<Id, ws::Request>,
     images: Images<Self>,
     log: log::Log,
@@ -504,8 +522,8 @@ pub(crate) enum Msg {
     CreateToken,
     DeleteObject(Id),
     DragEnd(Id),
-    DragOver(Id),
-    DragStart(Id),
+    DragOver(DragEvent, Id),
+    DragStart(DragEvent, Id),
     ImageMessage(ImageMessage),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
@@ -618,7 +636,6 @@ impl Component for Map {
             context_menu: None,
             delete: None,
             drag_over: None,
-            drag_source: None,
             hide_requests: HashMap::new(),
             images: Images::new(),
             log,
@@ -920,12 +937,13 @@ impl Component for Map {
                             };
 
                             // Drag-and-drop handlers
-                            let on_drag_start = ctx.link().callback(move |_| Msg::DragStart(id));
                             let on_drag_end = ctx.link().callback(move |_| Msg::DragEnd(id));
-                            let on_drag_over = ctx.link().callback(move |_| Msg::DragOver(id));
+                            let on_drag_start = ctx.link().callback(move |ev| Msg::DragStart(ev, id));
+                            let on_drag_over = ctx.link().callback(move |ev| Msg::DragOver(ev, id));
 
                             let node = html! {
                                 <div
+                                    key={id.to_string()}
                                     class={classes}
                                     onclick={on_click}
                                     draggable={true}
@@ -964,18 +982,29 @@ impl Component for Map {
                                 </div>
                             };
 
-                            let drop_handle = if self.drag_over == Some(id) {
-                                Some(html! {
-                                    <div class="object-list-drop" />
-                                })
-                            } else {
-                                None
-                            };
+                            let drop_above;
+                            let drop_below;
+
+                            match self.drag_over {
+                                Some((Drag::Above, id)) if id == o.data.id => {
+                                    drop_above = Some(html!(<div key={format!("above-{id}")} class="object-list-drop" />));
+                                    drop_below = None;
+                                }
+                                Some((Drag::Below, id)) if id == o.data.id => {
+                                    drop_above = None;
+                                    drop_below = Some(html!(<div key={format!("below-{id}")} class="object-list-drop" />));
+                                }
+                                _ => {
+                                    drop_above = None;
+                                    drop_below = None;
+                                },
+                            }
 
                             Some(html! {
                                 <>
+                                    {for drop_above}
                                     {node}
-                                    {for drop_handle}
+                                    {for drop_below}
                                 </>
                             })
                         })}
@@ -1050,63 +1079,67 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::DragStart(id) => {
-                self.drag_source = Some(id);
+            Msg::DragStart(ev, id) => {
+                let element = into_target!(ev, HtmlElement);
+                let drag = Drag::from_event(ev, &element);
+                tracing::warn!(?drag, ?id, "drag start");
+                self.drag_over = Some((drag, id));
                 Ok(true)
             }
-            Msg::DragEnd(source) => {
-                self.drag_source = None;
-
-                let Some(target) = self.drag_over.take() else {
+            Msg::DragEnd(id) => {
+                let Some((drag, target)) = self.drag_over.take() else {
                     return Ok(false);
                 };
 
                 let new = {
                     let Some(this) = self.objects.get(&target).map(|o| o.data.sort()) else {
-                        return Ok(false);
+                        return Ok(true);
                     };
 
-                    let next = self
-                        .order
-                        .iter()
-                        .skip_while(|(_, id)| *id != target)
-                        .skip(1)
-                        .next()
-                        .map(|(_, id)| *id);
+                    let next = match drag {
+                        Drag::Below => self
+                            .order
+                            .iter()
+                            .skip_while(|(_, id)| *id != target)
+                            .nth(1)
+                            .map(|(_, id)| *id),
+                        Drag::Above => self
+                            .order
+                            .iter()
+                            .rev()
+                            .skip_while(|(_, id)| *id != target)
+                            .nth(1)
+                            .map(|(_, id)| *id),
+                    };
+
                     let next = next.and_then(|id| Some(self.objects.get(&id)?.data.sort()));
 
-                    let new = match next {
-                        Some(next) => sorting::midpoint(this, next),
-                        None => sorting::after(this),
-                    };
-
-                    new
+                    match (drag, next) {
+                        (Drag::Above, Some(next)) => sorting::midpoint(next, this),
+                        (Drag::Above, _) => sorting::before(this),
+                        (Drag::Below, Some(next)) => sorting::midpoint(this, next),
+                        (Drag::Below, _) => sorting::after(this),
+                    }
                 };
 
-                let Some(sort) = self
-                    .objects
-                    .get_mut(&source)
-                    .and_then(|o| o.data.sort_mut())
-                else {
-                    return Ok(false);
+                let Some(sort) = self.objects.get_mut(&id).and_then(|o| o.data.sort_mut()) else {
+                    return Ok(true);
                 };
 
                 let Some(sort) = sort.replace(new.clone()) else {
-                    return Ok(false);
+                    return Ok(true);
                 };
 
-                self._set_sort = self::update(ctx, source, Key::SORT, Value::from(new.clone()));
-                self.order.remove(&(sort, source));
-                self.order.insert((new, source));
+                self._set_sort = self::update(ctx, id, Key::SORT, Value::from(new.clone()));
+                self.order.remove(&(sort, id));
+                self.order.insert((new, id));
                 Ok(true)
             }
-            Msg::DragOver(id) => {
-                if self.drag_source == Some(id) {
-                    self.drag_over = None;
-                } else {
-                    self.drag_over = Some(id);
-                }
-
+            Msg::DragOver(ev, id) => {
+                let element = into_target!(ev, HtmlElement);
+                let drag = Drag::from_event(ev, &element);
+                tracing::warn!(?drag, ?id, "drag over");
+                self.drag_over = Some((drag, id));
                 Ok(true)
             }
             // Removed misplaced enum variants

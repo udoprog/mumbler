@@ -20,6 +20,15 @@ pub fn midpoint(lo: &[u8], hi: &[u8]) -> Vec<u8> {
     midpoint_impl(len, lo, &mut hi.iter().copied())
 }
 
+/// Generate a byte string that sorts before the given string and tries to avoid
+/// growing the string if possible.
+///
+/// The string is generated as the conceptual midpoint between the first sorted
+/// string (b"") and the specifie string.
+pub fn before(s: &[u8]) -> Vec<u8> {
+    midpoint_impl(s.len(), b"", &mut s.iter().copied())
+}
+
 /// Generate a byte string that sorts after the given string and tries to avoid
 /// growing the string if possible.
 ///
@@ -45,12 +54,17 @@ fn midpoint_impl(len: usize, lo: &[u8], hi: &mut dyn Iterator<Item = u8>) -> Vec
         let mut mid = Vec::with_capacity(cap);
 
         // We can increment a at this position to get a value strictly between lo and hi.
-        mid.extend_from_slice(&lo[..i]);
+        if let Some(lo) = lo.get(..i) {
+            mid.extend_from_slice(lo);
+        } else {
+            mid.extend(iter::repeat(0).take(i));
+        }
+
         mid.push(((a + b) / 2) as u8);
 
         // Fill remaining bytes if needed to match lo's length.
         if extended {
-            mid.extend_from_slice(&lo[i + 1..]);
+            mid.extend_from_slice(lo.get(i + 1..).unwrap_or_default());
         }
 
         return mid;
