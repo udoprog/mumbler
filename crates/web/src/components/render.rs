@@ -273,29 +273,26 @@ pub(crate) fn draw_look_at(
 pub(crate) fn draw_token_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
-    a: &RenderToken,
+    token: &RenderToken,
     arrow_target: Option<VecXZ>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let pos = t.world_to_canvas(a.transform.position.x, a.transform.position.z);
+    let pos = t.world_to_canvas(token.transform.position.x, token.transform.position.z);
 
-    let token_radius = a.token_radius as f64 * t.scale;
+    let token_radius = token.token_radius as f64 * t.scale;
 
-    let color = a.color.to_css_string();
+    let color = token.color.to_css_string();
 
-    if a.selected {
+    if token.selected {
         cx.set_stroke_style_str("#ffffff");
-    } else {
-        cx.set_stroke_style_str(&color);
+        cx.set_line_width(token_radius * 0.1);
+        cx.begin_path();
+        cx.arc(pos.x, pos.y, token_radius * 1.0, 0.0, PI * 2.0)?;
+        cx.stroke();
     }
 
-    cx.set_line_width(token_radius * 0.1);
-    cx.begin_path();
-    cx.arc(pos.x, pos.y, token_radius * 1.0, 0.0, PI * 2.0)?;
-    cx.stroke();
-
     let image_drawn = 'draw: {
-        let Some(id) = a.image else {
+        let Some(id) = token.image else {
             break 'draw false;
         };
 
@@ -334,23 +331,23 @@ pub(crate) fn draw_token_token(
         cx.fill();
     }
 
-    let front = if a.player
+    let front = if token.player
         && let Some(m) = arrow_target
     {
-        a.transform.position.xz().direction_to(m).xyz(0.0)
+        token.transform.position.xz().direction_to(m).xyz(0.0)
     } else {
-        a.transform.front
+        token.transform.front
     };
 
     if front.x.hypot(front.z) > 0.01 {
         let angle = front.xz().angle() as f64;
         let arc_radius = token_radius * 1.5;
-        let color = a.color.to_transparent_rgba(0.5);
+        let color = token.color.to_transparent_rgba(0.5);
         cx.set_stroke_style_str(&color);
         draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
     }
 
-    if let Some(name) = &a.name {
+    if let Some(name) = &token.name {
         let font_size = (token_radius * 0.6).max(10.0);
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
@@ -371,7 +368,7 @@ pub(crate) fn draw_token_token(
         cx.set_shadow_blur(0.0);
     }
 
-    if a.hidden {
+    if token.hidden {
         draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 

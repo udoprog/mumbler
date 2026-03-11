@@ -3415,6 +3415,7 @@ dependencies = [
  "gloo",
  "musli-web",
  "slab",
+ "sorting",
  "tracing",
  "tracing-wasm",
  "url",

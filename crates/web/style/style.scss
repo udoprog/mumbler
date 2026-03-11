@@ -70,8 +70,8 @@ h6 {
     padding: 0.25em;
     gap: 0.25em;
 
-    & > .right {
-        margin-left: auto;
+    .fill {
+        flex: 1;
     }
 }
 
@@ -455,6 +455,13 @@ canvas#map {
     display: flex;
     flex-direction: column;
     gap: 0.25em;
+
+    &-drop {
+        display: block;
+        border: 2px dashed var(--link-color);
+        border-radius: $border-radius;
+        height: 20px;
+    }
 
     &-item {
         display: flex;

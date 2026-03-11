@@ -4,7 +4,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
+
 api = { path = "../api" }
+sorting = { path = "../sorting" }
 
 anyhow = "1.0.83"
 gloo = "0.11.0"

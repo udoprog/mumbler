@@ -119,16 +119,6 @@ impl LocalObject {
             arrow_target: None,
         }
     }
-
-    #[inline]
-    fn image(&self) -> Option<Id> {
-        self.data.image()
-    }
-
-    #[inline]
-    fn order(&self) -> &[u8] {
-        self.data.sort()
-    }
 }
 
 pub(crate) struct Token {
@@ -302,6 +292,15 @@ impl ObjectData {
     }
 
     #[inline]
+    fn sort_mut(&mut self) -> Option<&mut State<Vec<u8>>> {
+        match &mut self.kind {
+            ObjectKind::Token(this) => Some(&mut this.sort),
+            ObjectKind::Static(this) => Some(&mut this.sort),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
     fn sort(&self) -> &[u8] {
         match &self.kind {
             ObjectKind::Token(this) => &this.sort,
@@ -439,70 +438,47 @@ impl ObjectData {
 }
 
 pub(crate) struct Map {
-    _initialize: ws::Request,
-    /// Per-object in-flight transform update requests.
-    transform_requests: HashMap<Id, ws::Request>,
-    /// Per-object in-flight look-at update requests.
-    look_at_requests: HashMap<Id, ws::Request>,
-    _update_world: ws::Request,
-    _state_change: ws::StateListener,
-    _local_update_listener: ws::Listener,
-    _remote_update_listener: ws::Listener,
-    state: ws::State,
-    log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
-    canvas_sizer: NodeRef,
-    canvas_ref: NodeRef,
-    /// World configuration.
-    config: Config,
-    /// Object IDs whose transforms need to be sent to the server.
-    update_transform_ids: HashSet<Id>,
-    /// Object IDs whose look-at needs to be sent to the server.
-    update_look_at_ids: HashSet<Id>,
-    /// Whether world settings need to be updated.
-    update_world: bool,
-    /// The selected object.
-    selected: Option<Id>,
-    /// The list of local objects used to iterate over them in a consistent
-    /// order.
-    order: BTreeSet<(Vec<u8>, Id)>,
-    /// The list of local objects.
-    objects: HashMap<Id, LocalObject>,
-    /// The list of remote objects.
-    peers: HashMap<(PeerId, Id), PeerObject>,
-    /// Mouse position at the start of a middle-mouse drag.
-    pan_anchor: Option<(f64, f64)>,
-    /// Canvas-space position where the left button was pressed.
-    start_press: Option<(VecXZ, bool)>,
-    /// Keeps the ResizeObserver and its closure alive for the component's lifetime.
-    _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
-    /// Cache of loaded images.
-    images: Images<Self>,
-    /// Animation interval for smooth movement.
-    animation_interval: Option<Interval>,
-    /// Current world-space mouse position while cursor is over the canvas.
-    mouse_world_pos: Option<VecXZ>,
-    /// Keeps the document keydown listener alive.
-    _keydown_listener: EventListener,
-    /// Keeps the document keyup listener alive.
-    _keyup_listener: EventListener,
-    /// In-flight create-object request.
     _create_object: ws::Request,
-    /// In-flight create-static-object request.
     _create_static: ws::Request,
-    /// In-flight delete-object request.
     _delete_object: ws::Request,
-    /// Index of the object pending delete confirmation.
-    delete: Option<Id>,
-    /// Object whose settings modal is currently open.
-    open_settings: Option<Id>,
-    _toggle_mumble_request: ws::Request,
-    _toggle_locked_request: ws::Request,
+    _initialize: ws::Request,
+    _keydown_listener: EventListener,
+    _keyup_listener: EventListener,
+    _local_update_listener: ws::Listener,
+    _log_handle: ContextHandle<log::Log>,
+    _remote_update_listener: ws::Listener,
+    _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
     _set_mumble_follow_selection: ws::Request,
-    /// In-flight visibility toggle requests, per object.
-    hide_requests: HashMap<Id, ws::Request>,
-    /// Position and target of the right-click context menu, if visible.
+    _set_sort: ws::Request,
+    _state_change: ws::StateListener,
+    _toggle_locked_request: ws::Request,
+    _toggle_mumble_request: ws::Request,
+    _update_world: ws::Request,
+    animation_interval: Option<Interval>,
+    canvas_ref: NodeRef,
+    canvas_sizer: NodeRef,
+    config: Config,
     context_menu: Option<ContextMenu>,
+    delete: Option<Id>,
+    drag_over: Option<Id>,
+    drag_source: Option<Id>,
+    hide_requests: HashMap<Id, ws::Request>,
+    images: Images<Self>,
+    log: log::Log,
+    look_at_requests: HashMap<Id, ws::Request>,
+    mouse_world_pos: Option<VecXZ>,
+    objects: HashMap<Id, LocalObject>,
+    open_settings: Option<Id>,
+    order: BTreeSet<(Vec<u8>, Id)>,
+    pan_anchor: Option<(f64, f64)>,
+    peers: HashMap<(PeerId, Id), PeerObject>,
+    selected: Option<Id>,
+    start_press: Option<(VecXZ, bool)>,
+    state: ws::State,
+    transform_requests: HashMap<Id, ws::Request>,
+    update_look_at_ids: HashSet<Id>,
+    update_transform_ids: HashSet<Id>,
+    update_world: bool,
 }
 
 /// State for the right-click context menu.
@@ -516,43 +492,45 @@ struct ContextMenu {
 }
 
 pub(crate) enum Msg {
+    AnimationFrame,
+    CancelDelete,
+    CloseContextMenu,
+    CloseObjectSettings,
+    ConfigResult(Result<Packet<api::UpdateConfig>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
+    ConfirmDelete(Id),
+    ContextMenu(MouseEvent),
+    CreateStatic,
+    CreateToken,
+    DeleteObject(Id),
+    DragEnd(Id),
+    DragOver(Id),
+    DragStart(Id),
+    ImageMessage(ImageMessage),
+    InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
-    InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
-    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
-    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    UpdateResult(Result<Packet<api::Update>, ws::Error>),
-    WorldUpdated(Result<Packet<api::UpdateConfig>, ws::Error>),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
-    StaticObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
-    StateChanged(ws::State),
-    Resized,
-    ImageMessage(ImageMessage),
-    PointerDown(PointerEvent),
-    PointerMove(PointerEvent),
-    PointerUp(PointerEvent),
-    PointerLeave,
-    Wheel(WheelEvent),
-    AnimationFrame,
-    SelectObject(Option<Id>),
-    CreateToken,
-    CreateStatic,
-    ConfirmDelete(Id),
-    CancelDelete,
-    DeleteObject(Id),
     ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
-    CloseObjectSettings,
-    ToggleMumbleObject(Id),
-    ToggleLocked(Id),
-    SetConfig(Result<Packet<api::UpdateConfig>, ws::Error>),
+    PointerDown(PointerEvent),
+    PointerLeave,
+    PointerMove(PointerEvent),
+    PointerUp(PointerEvent),
+    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
+    Resized,
+    SelectObject(Option<Id>),
+    SetLog(log::Log),
+    StateChanged(ws::State),
+    StaticObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     ToggleFollowMumbleSelection,
     ToggleHidden(Id),
     ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
-    SetLog(log::Log),
-    ContextMenu(MouseEvent),
-    CloseContextMenu,
+    ToggleLocked(Id),
+    ToggleMumbleObject(Id),
+    UpdateResult(Result<Packet<api::Update>, ws::Error>),
+    Wheel(WheelEvent),
 }
 
 impl From<ImageMessage> for Msg {
@@ -617,44 +595,47 @@ impl Component for Map {
         });
 
         let mut this = Self {
-            _initialize: ws::Request::new(),
-            transform_requests: HashMap::new(),
-            look_at_requests: HashMap::new(),
-            _update_world: ws::Request::new(),
-            _local_update_listener,
-            _remote_update_listener,
-            _state_change,
-            state,
-            log,
-            _log_handle,
-            canvas_sizer: NodeRef::default(),
-            canvas_ref: NodeRef::default(),
-            config: Config::default(),
-            selected: None,
-            order: BTreeSet::new(),
-            objects: HashMap::new(),
-            peers: HashMap::new(),
-            update_transform_ids: HashSet::new(),
-            update_look_at_ids: HashSet::new(),
-            update_world: false,
-            pan_anchor: None,
-            start_press: None,
-            _resize_observer: None,
-            images: Images::new(),
-            animation_interval: None,
-            mouse_world_pos: None,
-            _keydown_listener,
-            _keyup_listener,
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
             _delete_object: ws::Request::new(),
-            delete: None,
-            open_settings: None,
-            _toggle_mumble_request: ws::Request::new(),
-            _toggle_locked_request: ws::Request::new(),
+            _initialize: ws::Request::new(),
+            _keydown_listener,
+            _keyup_listener,
+            _local_update_listener,
+            _log_handle,
+            _remote_update_listener,
+            _resize_observer: None,
             _set_mumble_follow_selection: ws::Request::new(),
-            hide_requests: HashMap::new(),
+            _set_sort: ws::Request::new(),
+            _state_change,
+            _toggle_locked_request: ws::Request::new(),
+            _toggle_mumble_request: ws::Request::new(),
+            _update_world: ws::Request::new(),
+            animation_interval: None,
+            canvas_ref: NodeRef::default(),
+            canvas_sizer: NodeRef::default(),
+            config: Config::default(),
             context_menu: None,
+            delete: None,
+            drag_over: None,
+            drag_source: None,
+            hide_requests: HashMap::new(),
+            images: Images::new(),
+            log,
+            look_at_requests: HashMap::new(),
+            mouse_world_pos: None,
+            objects: HashMap::new(),
+            open_settings: None,
+            order: BTreeSet::new(),
+            pan_anchor: None,
+            peers: HashMap::new(),
+            selected: None,
+            start_press: None,
+            state,
+            transform_requests: HashMap::new(),
+            update_look_at_ids: HashSet::new(),
+            update_transform_ids: HashSet::new(),
+            update_world: false,
         };
 
         this.refresh(ctx);
@@ -738,6 +719,32 @@ impl Component for Map {
         }
 
         let object_list_header = {
+            let o = self.selected.and_then(|id| self.objects.get(&id));
+
+            let settings_classes = classes! {
+                "btn",
+                "square",
+                o.is_some().then_some("primary"),
+                o.is_none().then_some("disabled"),
+            };
+
+            let settings_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
+            });
+
+            let delete_click = o.map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ConfirmDelete(id))
+            });
+
+            let delete_classes = classes! {
+                "btn",
+                "square",
+                o.is_some().then_some("danger"),
+                o.is_none().then_some("disabled"),
+            };
+
             html! {
                 <div class="control-group">
                     <button class="btn square primary" title="Add token" onclick={ctx.link().callback(|_| Msg::CreateToken)}>
@@ -745,6 +752,13 @@ impl Component for Map {
                     </button>
                     <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStatic)}>
                         <Icon name="squares-plus" title="Add static" />
+                    </button>
+                    <div class="fill"></div>
+                    <button class={settings_classes} title="Object settings" onclick={settings_click}>
+                        <Icon name="cog" />
+                    </button>
+                    <button class={delete_classes} title="Delete object" onclick={delete_click}>
+                        <Icon name="x-mark" />
                     </button>
                 </div>
             }
@@ -785,21 +799,6 @@ impl Component for Map {
                 "Enable MumbleLink selection following"
             };
 
-            let settings_classes = classes! {
-                "btn",
-                "square",
-                o.is_some().then_some("primary"),
-                o.is_none().then_some("disabled"),
-            };
-
-            let delete_classes = classes! {
-                "btn",
-                "square",
-                "right",
-                o.is_some().then_some("danger"),
-                o.is_none().then_some("disabled"),
-            };
-
             let mumble_classes = classes! {
                 "btn", "square",
                 is_mumble.then_some("success"),
@@ -818,16 +817,6 @@ impl Component for Map {
                 o.is_none().then_some("disabled"),
             };
 
-            let settings_click = o.map(|o| {
-                let id = o.data.id;
-                ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
-            });
-
-            let delete_click = o.map(|o| {
-                let id = o.data.id;
-                ctx.link().callback(move |_| Msg::ConfirmDelete(id))
-            });
-
             let mumble_click = o.map(|o| {
                 let id = o.data.id;
                 ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
@@ -845,14 +834,8 @@ impl Component for Map {
 
             html! {
                 <div class="control-group">
-                    <button class={settings_classes} title="Object settings" onclick={settings_click}>
-                        <Icon name="cog" />
-                    </button>
                     <button class={mumble_classes} title="Toggle as MumbleLink Source" onclick={mumble_click}>
                         <Icon name="mumble" />
-                    </button>
-                    <button class={follow_classes} title={follow_title} onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
-                        <Icon name="cursor-arrow-rays" />
                     </button>
                     <button class={hidden_classes} title={hidden_title} onclick={hidden_click}>
                         <Icon name={hidden_icon} />
@@ -860,8 +843,9 @@ impl Component for Map {
                     <button class={locked_classes} title={locked_title} onclick={locked_click}>
                         <Icon name={locked_icon} />
                     </button>
-                    <button class={delete_classes} title="Delete object" onclick={delete_click}>
-                        <Icon name="x-mark" />
+                    <div class="fill"></div>
+                    <button class={follow_classes} title={follow_title} onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
+                        <Icon name="cursor-arrow-rays" />
                     </button>
                 </div>
             }
@@ -898,9 +882,9 @@ impl Component for Map {
                         {for self.order.iter().flat_map(|(_, id)| {
                             let o = self.objects.get(id)?;
 
-                            let object_id = o.data.id;
-                            let selected = self.selected == Some(object_id);
-                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(object_id)));
+                            let id = o.data.id;
+                            let selected = self.selected == Some(id);
+                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(id)));
                             let classes = classes!("object-list-item", selected.then_some("selected"));
                             let label = o.data.name().unwrap_or("");
 
@@ -910,7 +894,7 @@ impl Component for Map {
                             let hidden_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
                             let locked_icon = if is_locked { "lock-closed" } else { "lock-open" };
                             let locked_title = if is_locked { "Locked" } else { "Unlocked" };
-                            let is_mumble = *self.config.mumble_object == Some(object_id);
+                            let is_mumble = *self.config.mumble_object == Some(id);
 
                             let mumble_classes = classes! {
                                 "btn", "sm", "square", "object-list-item-action",
@@ -935,8 +919,20 @@ impl Component for Map {
                                 _ => "squares-2x2",
                             };
 
+                            // Drag-and-drop handlers
+                            let on_drag_start = ctx.link().callback(move |_| Msg::DragStart(id));
+                            let on_drag_end = ctx.link().callback(move |_| Msg::DragEnd(id));
+                            let on_drag_over = ctx.link().callback(move |_| Msg::DragOver(id));
+
                             let node = html! {
-                                <div class={classes} onclick={on_click}>
+                                <div
+                                    class={classes}
+                                    onclick={on_click}
+                                    draggable={true}
+                                    ondragstart={on_drag_start}
+                                    ondragend={on_drag_end}
+                                    ondragover={on_drag_over}
+                                >
                                     <Icon name={icon_name} invert={true} />
 
                                     <span class="object-list-item-label">{label}</span>
@@ -945,7 +941,7 @@ impl Component for Map {
                                         title="Toggle as MumbleLink Source"
                                         onclick={ctx.link().callback(move |ev: MouseEvent| {
                                             ev.stop_propagation();
-                                            Msg::ToggleMumbleObject(object_id)
+                                            Msg::ToggleMumbleObject(id)
                                         })}>
                                         <Icon name="mumble" />
                                     </button>
@@ -953,7 +949,7 @@ impl Component for Map {
                                         title={hidden_title}
                                         onclick={ctx.link().callback(move |ev: MouseEvent| {
                                             ev.stop_propagation();
-                                            Msg::ToggleHidden(object_id)
+                                            Msg::ToggleHidden(id)
                                         })}>
                                         <Icon name={hidden_icon} />
                                     </button>
@@ -961,14 +957,27 @@ impl Component for Map {
                                         title={locked_title}
                                         onclick={ctx.link().callback(move |ev: MouseEvent| {
                                             ev.stop_propagation();
-                                            Msg::ToggleLocked(object_id)
+                                            Msg::ToggleLocked(id)
                                         })}>
                                         <Icon name={locked_icon} />
                                     </button>
                                 </div>
                             };
 
-                            Some(node)
+                            let drop_handle = if self.drag_over == Some(id) {
+                                Some(html! {
+                                    <div class="object-list-drop" />
+                                })
+                            } else {
+                                None
+                            };
+
+                            Some(html! {
+                                <>
+                                    {node}
+                                    {for drop_handle}
+                                </>
+                            })
                         })}
                     </div>
                 </div>
@@ -1041,6 +1050,66 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::DragStart(id) => {
+                self.drag_source = Some(id);
+                Ok(true)
+            }
+            Msg::DragEnd(source) => {
+                self.drag_source = None;
+
+                let Some(target) = self.drag_over.take() else {
+                    return Ok(false);
+                };
+
+                let new = {
+                    let Some(this) = self.objects.get(&target).map(|o| o.data.sort()) else {
+                        return Ok(false);
+                    };
+
+                    let next = self
+                        .order
+                        .iter()
+                        .skip_while(|(_, id)| *id != target)
+                        .skip(1)
+                        .next()
+                        .map(|(_, id)| *id);
+                    let next = next.and_then(|id| Some(self.objects.get(&id)?.data.sort()));
+
+                    let new = match next {
+                        Some(next) => sorting::midpoint(this, next),
+                        None => sorting::after(this),
+                    };
+
+                    new
+                };
+
+                let Some(sort) = self
+                    .objects
+                    .get_mut(&source)
+                    .and_then(|o| o.data.sort_mut())
+                else {
+                    return Ok(false);
+                };
+
+                let Some(sort) = sort.replace(new.clone()) else {
+                    return Ok(false);
+                };
+
+                self._set_sort = self::update(ctx, source, Key::SORT, Value::from(new.clone()));
+                self.order.remove(&(sort, source));
+                self.order.insert((new, source));
+                Ok(true)
+            }
+            Msg::DragOver(id) => {
+                if self.drag_source == Some(id) {
+                    self.drag_over = None;
+                } else {
+                    self.drag_over = Some(id);
+                }
+
+                Ok(true)
+            }
+            // Removed misplaced enum variants
             Msg::OpenObjectSettings(id) => {
                 self.context_menu = None;
                 self.open_settings = Some(id);
@@ -1068,7 +1137,7 @@ impl Map {
                     .body(api::UpdateConfigRequest {
                         values: vec![(Key::MUMBLE_OBJECT, Value::from(update))],
                     })
-                    .on_packet(ctx.link().callback(Msg::SetConfig))
+                    .on_packet(ctx.link().callback(Msg::ConfigResult))
                     .send();
 
                 Ok(true)
@@ -1089,21 +1158,10 @@ impl Map {
                 let new = !**locked;
                 **locked = new;
 
-                self._toggle_locked_request = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: id,
-                        key: Key::LOCKED,
-                        value: Value::from(new),
-                    })
-                    .on_packet(ctx.link().callback(Msg::SetConfig))
-                    .send();
-
+                self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
                 Ok(true)
             }
-            Msg::SetConfig(result) => {
+            Msg::ConfigResult(result) => {
                 result?;
                 Ok(false)
             }
@@ -1163,7 +1221,7 @@ impl Map {
                 self.order.extend(
                     self.objects
                         .values()
-                        .map(|o| (o.order().to_vec(), o.data.id)),
+                        .map(|o| (o.data.sort().to_vec(), o.data.id)),
                 );
 
                 self.peers = body
@@ -1196,7 +1254,7 @@ impl Map {
                 let update = match body {
                     LocalUpdateBody::Create { object } => {
                         let o = LocalObject::from_remote(&object);
-                        self.order.insert((o.order().to_vec(), o.data.id));
+                        self.order.insert((o.data.sort().to_vec(), o.data.id));
                         self.objects.insert(o.data.id, o);
                         true
                     }
@@ -1222,8 +1280,6 @@ impl Map {
                             let Some(o) = self.objects.get_mut(&object_id) else {
                                 break 'done false;
                             };
-
-                            tracing::warn!(?key);
 
                             let update = match key {
                                 // Don't support local updates of transform and
@@ -1359,11 +1415,6 @@ impl Map {
                 _ = body.decode()?;
                 Ok(false)
             }
-            Msg::WorldUpdated(body) => {
-                let body = body?;
-                _ = body.decode()?;
-                Ok(false)
-            }
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
@@ -1430,7 +1481,7 @@ impl Map {
                         .body(api::UpdateConfigRequest {
                             values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
                         })
-                        .on_packet(ctx.link().callback(Msg::SetConfig))
+                        .on_packet(ctx.link().callback(Msg::ConfigResult))
                         .send();
                 }
 
@@ -1449,7 +1500,7 @@ impl Map {
                             Value::from(*self.config.mumble_follow_selection),
                         )],
                     })
-                    .on_packet(ctx.link().callback(Msg::SetConfig))
+                    .on_packet(ctx.link().callback(Msg::ConfigResult))
                     .send();
 
                 Ok(true)
@@ -1667,7 +1718,7 @@ impl Map {
                 continue;
             };
 
-            let req = send_update(ctx, id, Key::TRANSFORM, *transform);
+            let req = update(ctx, id, Key::TRANSFORM, *transform);
             self.transform_requests.insert(id, req);
         }
     }
@@ -1687,7 +1738,7 @@ impl Map {
                 continue;
             };
 
-            let req = send_update(ctx, id, Key::LOOK_AT, *look_at);
+            let req = update(ctx, id, Key::LOOK_AT, *look_at);
             self.look_at_requests.insert(id, req);
         }
     }
@@ -1700,7 +1751,7 @@ impl Map {
             .body(api::UpdateConfigRequest {
                 values: self.config.world_values(),
             })
-            .on_packet(ctx.link().callback(Msg::WorldUpdated))
+            .on_packet(ctx.link().callback(Msg::ConfigResult))
             .send();
     }
 
@@ -2052,7 +2103,7 @@ impl Map {
     fn load_initialize_images(&mut self, ctx: &Context<Self>) {
         self.images.clear();
 
-        let ids = self.objects.values().filter_map(|o| o.image());
+        let ids = self.objects.values().filter_map(|o| o.data.image());
         let ids = ids.chain(self.peers.values().filter_map(|a| a.data.image()));
 
         for id in ids {
@@ -2141,13 +2192,14 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
-                .flat_map(|a| RenderToken::from_data(&a.data))
-                .filter(|a| !a.hidden);
+                .flat_map(|peer| RenderToken::from_data(&peer.data))
+                .filter(|render| !render.hidden);
 
-            let locals = self.objects.values().flat_map(move |a| {
-                let mut token = RenderToken::from_data(&a.data)?;
+            let locals = self.order.iter().flat_map(move |(_, id)| {
+                let data = &self.objects.get(id)?.data;
+                let mut token = RenderToken::from_data(data)?;
                 token.player = true;
-                token.selected = selected == Some(a.data.id);
+                token.selected = selected == Some(data.id);
                 Some(token)
             });
 
@@ -2159,14 +2211,14 @@ impl Map {
             .and_then(|id| self.objects.get(&id))
             .and_then(|o| o.arrow_target);
 
-        for a in renders() {
-            let arrow = a.selected.then_some(selected_arrow).flatten();
-            render::draw_token_token(&cx, &t, &a, arrow, |id| self.images.get(id).cloned())?;
+        for token in renders() {
+            let arrow = token.selected.then_some(selected_arrow).flatten();
+            render::draw_token_token(&cx, &t, &token, arrow, |id| self.images.get(id).cloned())?;
         }
 
-        for a in renders() {
-            if let Some(target) = a.look_at {
-                render::draw_look_at(&cx, &t, target, &a.color, *self.config.zoom as f64)?;
+        for token in renders() {
+            if let Some(target) = token.look_at {
+                render::draw_look_at(&cx, &t, target, &token.color, *self.config.zoom as f64)?;
             }
         }
 
@@ -2174,12 +2226,7 @@ impl Map {
     }
 }
 
-fn send_update(
-    ctx: &Context<Map>,
-    object_id: Id,
-    key: Key,
-    value: impl Into<Value>,
-) -> ws::Request {
+fn update(ctx: &Context<Map>, object_id: Id, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()

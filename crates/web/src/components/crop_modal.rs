@@ -402,19 +402,20 @@ impl Component for CropModal {
                                 onclick={ctx.link().callback(|_| Msg::Confirm)}>
                                 {"Upload"}
                             </button>
-                            <button class="btn" title="Select the largest region"
-                                onclick={ctx.link().callback(|_| Msg::SelectAll)}>
-                                {"Select All"}
-                            </button>
                             {if ctx.props().rescale.is_some() {
                                 html! {
                                     <button class="btn" title="Rescale to original aspect ratio"
                                         onclick={ctx.link().callback(|_| Msg::Rescale)}>
-                                        {"Rescale"}
+                                        {"Select All"}
                                     </button>
                                 }
                             } else {
-                                html! {}
+                                html! {
+                                    <button class="btn" title="Select the largest region"
+                                        onclick={ctx.link().callback(|_| Msg::SelectAll)}>
+                                        {"Select Centered"}
+                                    </button>
+                                }
                             }}
                             <button class="btn danger right"
                                 onclick={ctx.link().callback(|_| Msg::Cancel)}>
