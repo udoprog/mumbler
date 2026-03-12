@@ -42,6 +42,8 @@ pub(crate) struct IconProps {
     pub(crate) title: Option<String>,
     #[prop_or_default]
     pub(crate) invert: bool,
+    #[prop_or_default]
+    pub(crate) small: bool,
 }
 
 #[function_component(Icon)]
@@ -53,7 +55,12 @@ pub(crate) fn icon(props: &IconProps) -> Html {
         _ => "icon",
     };
 
-    let class = classes!(class, props.name.clone(), props.invert.then_some("invert"));
+    let class = classes! {
+        class,
+        props.name.clone(),
+        props.invert.then_some("invert"),
+        props.small.then_some("sm"),
+    };
 
     html! {
         <span {class} {title} />

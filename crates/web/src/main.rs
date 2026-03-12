@@ -154,8 +154,8 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
                 <components::MumbleStatus ws={ws.clone()} />
                 <components::RemoteStatus ws={ws.clone()} />
                 <section class="connection control-group" {title}>
-                    <Icon name={connected} title="Application connection" />
-                    <Icon name={icon} />
+                    <Icon name={connected} title="Application connection" invert={true} small={true} />
+                    <Icon name={icon} invert={true} small={true} />
                 </section>
             </div>
 

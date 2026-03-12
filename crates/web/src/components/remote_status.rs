@@ -100,7 +100,8 @@ impl Component for RemoteStatus {
 
         html! {
             <section class="remote control-group">
-                <Icon name="remote" title="Status of Remote Server connection" />
+                <Icon name="remote" title="Status of Remote Server connection" invert={true} small={true} />
+
                 <button
                     class="btn square sm"
                     onclick={on_restart}

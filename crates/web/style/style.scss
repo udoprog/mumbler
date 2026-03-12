@@ -454,27 +454,36 @@ canvas#map {
 .object-list {
     display: flex;
     flex-direction: column;
-    gap: 0.25em;
 
     &-drop {
         display: block;
-        border: 2px dashed var(--link-color);
-        border-radius: $border-radius;
-        height: 1em;
-        padding: 0.25em 0.4em;
-        user-select: none;
+        height: 0.25em;
+
+        & > .dotted {
+            display: none;
+            border: 1px dashed var(--link-color);
+            border-radius: $border-radius;
+            height: 1.4em;
+            user-select: none;
+        }
+
+        &.active {
+            height: fit-content;
+            padding: 0.25em 0;
+
+            & > .dotted {
+                display: block;
+            }
+        }
     }
 
     &-item {
+        font-size: 0.8em;
         display: flex;
-        align-items: center;
+        flex-direction: column;
         gap: 0.25em;
-        padding: 0.25em 0.5em;
         border-radius: $border-radius;
-        cursor: pointer;
         background-color: var(--background-color);
-        font-size: 0.9em;
-        user-select: none;
 
         &:hover {
             background-color: var(--input-color);
@@ -483,6 +492,23 @@ canvas#map {
         &.selected {
             background-color: var(--info-background-color);
             color: var(--link-color);
+        }
+
+        &:hover &-action {
+            opacity: 1;
+        }
+
+        & > section {
+            display: flex;
+            align-items: center;
+            gap: 0.25em;
+            padding: 0.25em;
+            cursor: pointer;
+            user-select: none;
+
+            .icon {
+                font-size: 1.2em;
+            }
         }
 
         &-label {
@@ -501,10 +527,6 @@ canvas#map {
             &.active {
                 opacity: 1;
             }
-        }
-
-        &:hover &-action {
-            opacity: 1;
         }
     }
 }

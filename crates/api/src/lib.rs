@@ -22,6 +22,8 @@ crate::macros::ids! {
         TOKEN = 0x1000;
         /// The static object type (furniture, props, etc.).
         STATIC = 0x1001;
+        /// The group type.
+        GROUP = 0x1002;
     }
 }
 

@@ -2,10 +2,10 @@
     &.#{$name} {
         mask-image: url('/static/icons/#{$name}.svg');
         background-color: var(--icon-color);
-    }
 
-    &.invert {
-        background-color: var(--icon-color-invert);
+        &.invert {
+            background-color: var(--icon-color-invert);
+        }
     }
 }
 
@@ -36,6 +36,11 @@
     mask-repeat: no-repeat;
     mask-position: center;
 
+    &.sm {
+        width: $btn-height-sm;
+        height: $btn-height-sm;
+    }
+
     @include icon('x-mark');
     @include icon('check');
     @include icon('restart');
@@ -54,6 +59,9 @@
     @include icon('user');
     @include icon('lock-open');
     @include icon('lock-closed');
+    @include icon('folder');
+    @include icon('folder-plus');
+    @include icon('question-mark-circle');
 }
 
 .image-icon {

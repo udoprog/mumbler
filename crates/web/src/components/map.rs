@@ -23,7 +23,7 @@ use crate::state::State;
 use crate::ws;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
-use super::{ObjectSettings, StaticSettings, into_target};
+use super::{ObjectSettings, StaticSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -121,7 +121,7 @@ impl LocalObject {
     }
 }
 
-pub(crate) struct Token {
+pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
@@ -134,7 +134,38 @@ pub(crate) struct Token {
     pub(crate) sort: State<Vec<u8>>,
 }
 
-impl Token {
+impl TokenObject {
+    fn from_remote(o: &RemoteObject) -> Self {
+        Self {
+            transform: State::new(
+                o.props
+                    .get(Key::TRANSFORM)
+                    .as_transform()
+                    .unwrap_or_else(Transform::origin),
+            ),
+            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+            look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
+            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            color: State::new(o.props.get(Key::COLOR).as_color()),
+            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
+            token_radius: State::new(
+                o.props
+                    .get(Key::TOKEN_RADIUS)
+                    .as_f32()
+                    .unwrap_or(DEFAULT_TOKEN_RADIUS),
+            ),
+            speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
+            sort: State::new(
+                o.props
+                    .get(Key::SORT)
+                    .as_bytes()
+                    .unwrap_or_default()
+                    .to_vec(),
+            ),
+        }
+    }
+
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::TRANSFORM => self
@@ -171,6 +202,41 @@ pub(crate) struct StaticObject {
 }
 
 impl StaticObject {
+    fn from_remote(o: &RemoteObject) -> Self {
+        Self {
+            transform: State::new(
+                o.props
+                    .get(Key::TRANSFORM)
+                    .as_transform()
+                    .unwrap_or_else(Transform::origin),
+            ),
+            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            color: State::new(o.props.get(Key::COLOR).as_color()),
+            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
+            width: State::new(
+                o.props
+                    .get(Key::STATIC_WIDTH)
+                    .as_f32()
+                    .unwrap_or(DEFAULT_STATIC_WIDTH),
+            ),
+            height: State::new(
+                o.props
+                    .get(Key::STATIC_HEIGHT)
+                    .as_f32()
+                    .unwrap_or(DEFAULT_STATIC_HEIGHT),
+            ),
+            sort: State::new(
+                o.props
+                    .get(Key::SORT)
+                    .as_bytes()
+                    .unwrap_or_default()
+                    .to_vec(),
+            ),
+        }
+    }
+
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::TRANSFORM => self
@@ -195,9 +261,46 @@ impl StaticObject {
     }
 }
 
+pub(crate) struct GroupObject {
+    pub(crate) locked: State<bool>,
+    pub(crate) name: State<Option<String>>,
+    pub(crate) hidden: State<bool>,
+    pub(crate) sort: State<Vec<u8>>,
+}
+
+impl GroupObject {
+    fn from_remote(o: &RemoteObject) -> Self {
+        Self {
+            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
+            sort: State::new(
+                o.props
+                    .get(Key::SORT)
+                    .as_bytes()
+                    .unwrap_or_default()
+                    .to_vec(),
+            ),
+        }
+    }
+
+    fn update(&mut self, key: Key, value: Value) -> bool {
+        match key {
+            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
+            Key::NAME => self.name.update(value.into_string()),
+            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            Key::SORT => self
+                .sort
+                .update(value.as_bytes().unwrap_or_default().to_vec()),
+            _ => false,
+        }
+    }
+}
+
 pub(crate) enum ObjectKind {
-    Token(Token),
+    Token(TokenObject),
     Static(StaticObject),
+    Group(GroupObject),
     Unknown,
 }
 
@@ -207,88 +310,31 @@ pub(crate) struct ObjectData {
 }
 
 impl ObjectData {
+    #[inline]
     fn from_remote(o: &RemoteObject) -> Self {
         let kind = match o.ty {
-            api::Type::TOKEN => {
-                let token = Token {
-                    transform: State::new(
-                        o.props
-                            .get(Key::TRANSFORM)
-                            .as_transform()
-                            .unwrap_or_else(Transform::origin),
-                    ),
-                    locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-                    look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
-                    image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
-                    color: State::new(o.props.get(Key::COLOR).as_color()),
-                    name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-                    hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-                    token_radius: State::new(
-                        o.props
-                            .get(Key::TOKEN_RADIUS)
-                            .as_f32()
-                            .unwrap_or(DEFAULT_TOKEN_RADIUS),
-                    ),
-                    speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
-                    sort: State::new(
-                        o.props
-                            .get(Key::SORT)
-                            .as_bytes()
-                            .unwrap_or_default()
-                            .to_vec(),
-                    ),
-                };
-
-                ObjectKind::Token(token)
-            }
-            api::Type::STATIC => {
-                let s = StaticObject {
-                    transform: State::new(
-                        o.props
-                            .get(Key::TRANSFORM)
-                            .as_transform()
-                            .unwrap_or_else(Transform::origin),
-                    ),
-                    locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-                    image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
-                    color: State::new(o.props.get(Key::COLOR).as_color()),
-                    name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-                    hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-                    width: State::new(
-                        o.props
-                            .get(Key::STATIC_WIDTH)
-                            .as_f32()
-                            .unwrap_or(DEFAULT_STATIC_WIDTH),
-                    ),
-                    height: State::new(
-                        o.props
-                            .get(Key::STATIC_HEIGHT)
-                            .as_f32()
-                            .unwrap_or(DEFAULT_STATIC_HEIGHT),
-                    ),
-                    sort: State::new(
-                        o.props
-                            .get(Key::SORT)
-                            .as_bytes()
-                            .unwrap_or_default()
-                            .to_vec(),
-                    ),
-                };
-
-                ObjectKind::Static(s)
-            }
+            api::Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
+            api::Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
+            api::Type::GROUP => ObjectKind::Group(GroupObject::from_remote(o)),
             _ => ObjectKind::Unknown,
         };
 
         Self { id: o.id, kind }
     }
 
+    #[inline]
     fn update(&mut self, key: Key, value: Value) -> bool {
         match &mut self.kind {
             ObjectKind::Token(this) => this.update(key, value),
             ObjectKind::Static(this) => this.update(key, value),
+            ObjectKind::Group(this) => this.update(key, value),
             ObjectKind::Unknown => false,
         }
+    }
+
+    #[inline]
+    fn is_interactive(&self) -> bool {
+        matches!(self.kind, ObjectKind::Token(_) | ObjectKind::Static(_))
     }
 
     #[inline]
@@ -296,6 +342,7 @@ impl ObjectData {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.sort),
             ObjectKind::Static(this) => Some(&mut this.sort),
+            ObjectKind::Group(this) => Some(&mut this.sort),
             ObjectKind::Unknown => None,
         }
     }
@@ -305,6 +352,7 @@ impl ObjectData {
         match &self.kind {
             ObjectKind::Token(this) => &this.sort,
             ObjectKind::Static(this) => &this.sort,
+            ObjectKind::Group(this) => &this.sort,
             ObjectKind::Unknown => &[],
         }
     }
@@ -314,7 +362,7 @@ impl ObjectData {
         match &self.kind {
             ObjectKind::Token(this) => Some(&this.transform),
             ObjectKind::Static(this) => Some(&this.transform),
-            ObjectKind::Unknown => None,
+            _ => None,
         }
     }
 
@@ -323,7 +371,7 @@ impl ObjectData {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.transform),
             ObjectKind::Static(this) => Some(&mut this.transform),
-            ObjectKind::Unknown => None,
+            _ => None,
         }
     }
 
@@ -338,16 +386,18 @@ impl ObjectData {
                 Some(*this.speed),
             )),
             ObjectKind::Static(this) => Some((&mut this.transform, None, None)),
-            ObjectKind::Unknown => None,
+            _ => None,
         }
     }
 
     #[inline]
-    fn click_radius(&self) -> f32 {
+    fn as_click_geometry(&self) -> Option<(&Transform, f32)> {
         match &self.kind {
-            ObjectKind::Token(this) => *this.token_radius,
-            ObjectKind::Static(this) => (*this.width).hypot(*this.height) / 2.0,
-            ObjectKind::Unknown => 0.5,
+            ObjectKind::Token(this) => Some((&this.transform, *this.token_radius)),
+            ObjectKind::Static(this) => {
+                Some((&this.transform, (*this.width).hypot(*this.height) / 2.0))
+            }
+            _ => None,
         }
     }
 
@@ -361,7 +411,7 @@ impl ObjectData {
     fn look_at(&self) -> Option<&Vec3> {
         match &self.kind {
             ObjectKind::Token(this) => this.look_at.as_ref(),
-            ObjectKind::Static(_) | ObjectKind::Unknown => None,
+            _ => None,
         }
     }
 
@@ -369,7 +419,7 @@ impl ObjectData {
     fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.look_at),
-            ObjectKind::Static(_) | ObjectKind::Unknown => None,
+            _ => None,
         }
     }
 
@@ -378,24 +428,7 @@ impl ObjectData {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.hidden),
             ObjectKind::Static(this) => Some(&mut this.hidden),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn name(&self) -> Option<&str> {
-        match &self.kind {
-            ObjectKind::Token(this) => this.name.as_deref(),
-            ObjectKind::Static(this) => this.name.as_deref(),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn image(&self) -> Option<Id> {
-        match &self.kind {
-            ObjectKind::Token(this) => *this.image,
-            ObjectKind::Static(this) => *this.image,
+            ObjectKind::Group(this) => Some(&mut this.hidden),
             ObjectKind::Unknown => None,
         }
     }
@@ -405,7 +438,27 @@ impl ObjectData {
         match &self.kind {
             ObjectKind::Token(this) => *this.hidden,
             ObjectKind::Static(this) => *this.hidden,
+            ObjectKind::Group(this) => *this.hidden,
             ObjectKind::Unknown => false,
+        }
+    }
+
+    #[inline]
+    fn name(&self) -> Option<&str> {
+        match &self.kind {
+            ObjectKind::Token(this) => this.name.as_deref(),
+            ObjectKind::Static(this) => this.name.as_deref(),
+            ObjectKind::Group(this) => this.name.as_deref(),
+            ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    fn image(&self) -> Option<Id> {
+        match &self.kind {
+            ObjectKind::Token(this) => *this.image,
+            ObjectKind::Static(this) => *this.image,
+            _ => None,
         }
     }
 
@@ -414,6 +467,7 @@ impl ObjectData {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.locked),
             ObjectKind::Static(this) => Some(&mut this.locked),
+            ObjectKind::Group(this) => Some(&mut this.locked),
             ObjectKind::Unknown => None,
         }
     }
@@ -423,33 +477,23 @@ impl ObjectData {
         match &self.kind {
             ObjectKind::Token(this) => *this.locked,
             ObjectKind::Static(this) => *this.locked,
+            ObjectKind::Group(this) => *this.locked,
             ObjectKind::Unknown => false,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Drag {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Drag {
     Above,
+    Into,
     Below,
-}
-
-impl Drag {
-    fn from_event(ev: DragEvent, element: &HtmlElement) -> Self {
-        let rect = element.get_bounding_client_rect();
-        let offset = ev.client_y() as f64 - rect.top();
-
-        if offset < rect.height() / 2.0 {
-            Drag::Above
-        } else {
-            Drag::Below
-        }
-    }
 }
 
 pub(crate) struct Map {
     _create_object: ws::Request,
     _create_static: ws::Request,
+    _create_group: ws::Request,
     _delete_object: ws::Request,
     _initialize: ws::Request,
     _keydown_listener: EventListener,
@@ -509,12 +553,12 @@ pub(crate) enum Msg {
     ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     ConfirmDelete(Id),
     ContextMenu(MouseEvent),
-    CreateStatic,
     CreateToken,
+    CreateStatic,
+    CreateGroup,
     DeleteObject(Id),
     DragEnd(Id),
-    DragOver(DragEvent, Id),
-    DragStart(DragEvent, Id),
+    DragOver(Drag, Id),
     ImageMessage(ImageMessage),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
@@ -532,7 +576,6 @@ pub(crate) enum Msg {
     SelectObject(Option<Id>),
     SetLog(log::Log),
     StateChanged(ws::State),
-    StaticObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     ToggleFollowMumbleSelection,
     ToggleHidden(Id),
     ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
@@ -606,6 +649,7 @@ impl Component for Map {
         let mut this = Self {
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
+            _create_group: ws::Request::new(),
             _delete_object: ws::Request::new(),
             _initialize: ws::Request::new(),
             _keydown_listener,
@@ -761,6 +805,9 @@ impl Component for Map {
                     <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStatic)}>
                         <Icon name="squares-plus" title="Add static" />
                     </button>
+                    <button class="btn square primary" title="Add group" onclick={ctx.link().callback(|_| Msg::CreateGroup)}>
+                        <Icon name="folder-plus" title="Add group" />
+                    </button>
                     <div class="fill"></div>
                     <button class={settings_classes} title="Object settings" onclick={settings_click}>
                         <Icon name="cog" />
@@ -807,12 +854,6 @@ impl Component for Map {
                 "Enable MumbleLink selection following"
             };
 
-            let mumble_classes = classes! {
-                "btn", "square",
-                is_mumble.then_some("success"),
-                o.is_none().then_some("disabled"),
-            };
-
             let hidden_classes = classes! {
                 "btn", "square",
                 is_hidden.then_some("danger"),
@@ -825,11 +866,6 @@ impl Component for Map {
                 o.is_none().then_some("disabled"),
             };
 
-            let mumble_click = o.map(|o| {
-                let id = o.data.id;
-                ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
-            });
-
             let hidden_click = o.map(|o| {
                 let id = o.data.id;
                 ctx.link().callback(move |_| Msg::ToggleHidden(id))
@@ -839,6 +875,17 @@ impl Component for Map {
                 let id = o.data.id;
                 ctx.link().callback(move |_| Msg::ToggleLocked(id))
             });
+
+            let mumble_click = o.filter(|o| o.data.is_interactive()).map(|o| {
+                let id = o.data.id;
+                ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
+            });
+
+            let mumble_classes = classes! {
+                "btn", "square",
+                is_mumble.then_some("success"),
+                mumble_click.is_none().then_some("disabled"),
+            };
 
             html! {
                 <div class="control-group">
@@ -887,7 +934,7 @@ impl Component for Map {
                     {object_list_header}
 
                     <div class="object-list">
-                        {for self.order.iter().flat_map(|(_, id)| {
+                        {for self.order.iter().enumerate().flat_map(|(n, (_, id))| {
                             let o = self.objects.get(id)?;
 
                             let id = o.data.id;
@@ -922,82 +969,117 @@ impl Component for Map {
                                 is_locked.then_some("active"),
                             };
 
-                            let icon_name = match o.data.kind {
-                                ObjectKind::Token(..) => "user",
-                                _ => "squares-2x2",
+                            let (icon_name, mumble_button, is_group) = match o.data.kind {
+                                ObjectKind::Token(..) => ("user", true, false),
+                                ObjectKind::Static(..) => ("squares-2x2", true, false),
+                                ObjectKind::Group(..) => ("folder", false, true),
+                                _ => ("question-mark-circle", false, false),
                             };
 
-                            // Drag-and-drop handlers
-                            let on_drag_end = ctx.link().callback(move |_| Msg::DragEnd(id));
-                            let on_drag_start = ctx.link().callback(move |ev| Msg::DragStart(ev, id));
-                            let on_drag_over = ctx.link().callback(move |ev| Msg::DragOver(ev, id));
+                            let mumble_button = mumble_button.then(|| html! {
+                                <button class={mumble_classes}
+                                    title="Toggle as MumbleLink Source"
+                                    onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                        ev.stop_propagation();
+                                        Msg::ToggleMumbleObject(id)
+                                    })}>
+                                    <Icon name="mumble" />
+                                </button>
+                            });
 
-                            let node = html! {
-                                <div
-                                    key={id.to_string()}
-                                    class={classes}
-                                    onclick={on_click}
-                                    draggable={true}
-                                    ondragstart={on_drag_start}
-                                    ondragend={on_drag_end}
-                                    ondragover={on_drag_over}
-                                >
-                                    <Icon name={icon_name} invert={true} />
+                            let on_drag_end = ctx.link().callback(move |_ev| Msg::DragEnd(id));
 
-                                    <span class="object-list-item-label">{label}</span>
+                            let drag_into = if is_group {
+                                Drag::Into
+                            } else {
+                                Drag::Below
+                            };
 
-                                    <button class={mumble_classes}
-                                        title="Toggle as MumbleLink Source"
-                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                            ev.stop_propagation();
-                                            Msg::ToggleMumbleObject(id)
-                                        })}>
-                                        <Icon name="mumble" />
-                                    </button>
-                                    <button class={hidden_classes}
-                                        title={hidden_title}
-                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                            ev.stop_propagation();
-                                            Msg::ToggleHidden(id)
-                                        })}>
-                                        <Icon name={hidden_icon} />
-                                    </button>
-                                    <button class={locked_classes}
-                                        title={locked_title}
-                                        onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                            ev.stop_propagation();
-                                            Msg::ToggleLocked(id)
-                                        })}>
-                                        <Icon name={locked_icon} />
-                                    </button>
+                            let on_drag_start = is_group.then(|| ctx.link().callback(move |_ev| Msg::DragOver(Drag::Below, id)));
+                            let on_drag_into = is_group.then(|| ctx.link().callback(move |_ev| Msg::DragOver(drag_into, id)));
+
+                            let drop_above = if n == 0 {
+                                let ondragover = ctx.link().callback(move |_ev| Msg::DragOver(Drag::Above, id));
+
+                                let class = classes! {
+                                    "object-list-drop",
+                                    (self.drag_over == Some((Drag::Above, id))).then_some("active"),
+                                };
+
+                                Some(html! {
+                                    <div key={format!("drag-above-{id}")} {class} {ondragover}>
+                                        <div class="dotted" />
+                                    </div>
+                                })
+                            } else {
+                                None
+                            };
+
+                            let drop_into = (self.drag_over == Some((Drag::Into, o.data.id))).then(|| {
+                                html! {
+                                    <div key={format!("drag-into-{id}")} class="object-list-drop active">
+                                        <div class="dotted" />
+                                    </div>
+                                }
+                            });
+
+                            let class = classes! {
+                                "object-list-drop",
+                                (self.drag_over == Some((Drag::Below, id))).then_some("active"),
+                            };
+                            let ondragover = ctx.link().callback(move |_ev| Msg::DragOver(Drag::Below, id));
+                            let drop_below = html! {
+                                <div key={format!("drag-below-{id}")} {class} {ondragover}>
+                                    <div class="dotted" />
                                 </div>
                             };
 
-                            let drop_above;
-                            let drop_below;
-
-                            match self.drag_over {
-                                Some((Drag::Above, id)) if id == o.data.id => {
-                                    drop_above = Some(html!(<div key={format!("above-{id}")} class="object-list-drop" />));
-                                    drop_below = None;
-                                }
-                                Some((Drag::Below, id)) if id == o.data.id => {
-                                    drop_above = None;
-                                    drop_below = Some(html!(<div key={format!("below-{id}")} class="object-list-drop" />));
-                                }
-                                _ => {
-                                    drop_above = None;
-                                    drop_below = None;
-                                },
-                            }
-
-                            Some(html! {
+                            let node = html! {
                                 <>
-                                    {for drop_above}
-                                    {node}
-                                    {for drop_below}
+                                {drop_above}
+
+                                <div
+                                    key={id.to_string()}
+                                    class={classes}
+                                >
+                                    <section
+                                        draggable={true}
+                                        onclick={on_click}
+                                        ondragstart={on_drag_start}
+                                        ondragover={on_drag_into}
+                                        ondragend={on_drag_end}
+                                    >
+                                        <Icon name={icon_name} invert={true} small={true} />
+
+                                        <span class="object-list-item-label">{label}</span>
+
+                                        {mumble_button}
+                                        <button class={hidden_classes}
+                                            title={hidden_title}
+                                            onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                                ev.stop_propagation();
+                                                Msg::ToggleHidden(id)
+                                            })}>
+                                            <Icon name={hidden_icon} />
+                                        </button>
+                                        <button class={locked_classes}
+                                            title={locked_title}
+                                            onclick={ctx.link().callback(move |ev: MouseEvent| {
+                                                ev.stop_propagation();
+                                                Msg::ToggleLocked(id)
+                                            })}>
+                                            <Icon name={locked_icon} />
+                                        </button>
+                                    </section>
+
+                                    {drop_into}
+                                </div>
+
+                                {drop_below}
                                 </>
-                            })
+                            };
+
+                            Some(node)
                         })}
                     </div>
                 </div>
@@ -1070,10 +1152,7 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::DragStart(ev, id) => {
-                let element = into_target!(ev, HtmlElement);
-                let drag = Drag::from_event(ev, &element);
-                tracing::warn!(?drag, ?id, "drag start");
+            Msg::DragOver(drag, id) => {
                 self.drag_over = Some((drag, id));
                 Ok(true)
             }
@@ -1083,21 +1162,23 @@ impl Map {
                 };
 
                 let new = {
-                    let Some(this) = self.objects.get(&target).map(|o| o.data.sort()) else {
+                    let Some(object) = self.objects.get(&target) else {
                         return Ok(true);
                     };
 
+                    let this = object.data.sort();
+
                     let next = match drag {
-                        Drag::Below => self
-                            .order
-                            .iter()
-                            .skip_while(|(_, id)| *id != target)
-                            .nth(1)
-                            .map(|(_, id)| *id),
                         Drag::Above => self
                             .order
                             .iter()
                             .rev()
+                            .skip_while(|(_, id)| *id != target)
+                            .nth(1)
+                            .map(|(_, id)| *id),
+                        Drag::Below | Drag::Into => self
+                            .order
+                            .iter()
                             .skip_while(|(_, id)| *id != target)
                             .nth(1)
                             .map(|(_, id)| *id),
@@ -1108,8 +1189,8 @@ impl Map {
                     match (drag, next) {
                         (Drag::Above, Some(next)) => sorting::midpoint(next, this),
                         (Drag::Above, _) => sorting::before(this),
-                        (Drag::Below, Some(next)) => sorting::midpoint(this, next),
-                        (Drag::Below, _) => sorting::after(this),
+                        (Drag::Below | Drag::Into, Some(next)) => sorting::midpoint(this, next),
+                        (Drag::Below | Drag::Into, _) => sorting::after(this),
                     }
                 };
 
@@ -1124,13 +1205,6 @@ impl Map {
                 self._set_sort = self::update(ctx, id, Key::SORT, Value::from(new.clone()));
                 self.order.remove(&(sort, id));
                 self.order.insert((new, id));
-                Ok(true)
-            }
-            Msg::DragOver(ev, id) => {
-                let element = into_target!(ev, HtmlElement);
-                let drag = Drag::from_event(ev, &element);
-                tracing::warn!(?drag, ?id, "drag over");
-                self.drag_over = Some((drag, id));
                 Ok(true)
             }
             // Removed misplaced enum variants
@@ -1519,11 +1593,6 @@ impl Map {
 
                 Ok(false)
             }
-            Msg::ObjectCreated(result) => {
-                let result = result?;
-                _ = result.decode()?;
-                Ok(true)
-            }
             Msg::CreateStatic => {
                 self._create_static = ctx
                     .props()
@@ -1538,12 +1607,29 @@ impl Map {
                             (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
                         ]),
                     })
-                    .on_packet(ctx.link().callback(Msg::StaticObjectCreated))
+                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
                     .send();
 
                 Ok(false)
             }
-            Msg::StaticObjectCreated(result) => {
+            Msg::CreateGroup => {
+                self._create_group = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::CreateObjectRequest {
+                        ty: api::Type::GROUP,
+                        props: api::Properties::from([
+                            (Key::NAME, Value::from("Group")),
+                            (Key::HIDDEN, Value::from(false)),
+                        ]),
+                    })
+                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
+                    .send();
+
+                Ok(false)
+            }
+            Msg::ObjectCreated(result) => {
                 let result = result?;
                 _ = result.decode()?;
                 Ok(true)
@@ -1764,11 +1850,11 @@ impl Map {
             .objects
             .values()
             .find(|o| {
-                let Some(transform) = o.data.as_transform() else {
+                let Some((transform, click_radius)) = o.data.as_click_geometry() else {
                     return false;
                 };
 
-                transform.position.xz().dist(w) < o.data.click_radius() && !o.data.is_locked()
+                transform.position.xz().dist(w) < click_radius && !o.data.is_locked()
             })
             .map(|o| o.data.id);
 
@@ -1855,11 +1941,12 @@ impl Map {
                             .objects
                             .values()
                             .find(|o| {
-                                let Some(transform) = o.data.as_transform() else {
+                                let Some((transform, click_radius)) = o.data.as_click_geometry()
+                                else {
                                     return false;
                                 };
 
-                                transform.position.xz().dist(e) < o.data.click_radius()
+                                transform.position.xz().dist(e) < click_radius
                                     && !o.data.is_locked()
                             })
                             .map(|o| o.data.id);
