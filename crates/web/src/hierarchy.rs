@@ -9,13 +9,8 @@ use api::Id;
 use crate::objects::LocalObject;
 
 #[derive(Default)]
-struct Mutable {
-    values: HashMap<Id, BTreeSet<(Vec<u8>, Id)>>,
-}
-
-#[derive(Default)]
 struct Inner {
-    mutable: RefCell<Mutable>,
+    mutable: RefCell<HierarchyRef>,
     version: Cell<u64>,
 }
 
@@ -35,45 +30,47 @@ impl PartialEq for Hierarchy {
 impl Hierarchy {
     /// Borrow hiearchy read-only.
     #[inline]
-    pub(crate) fn borrow(&self) -> HierarchyRef<'_> {
-        HierarchyRef {
-            mutable: self.inner.mutable.borrow(),
-        }
+    pub(crate) fn borrow(&self) -> Ref<'_, HierarchyRef> {
+        self.inner.mutable.borrow()
     }
 
     /// Borrow hiearchy mutably.
     #[inline]
-    pub(crate) fn borrow_mut(&self) -> HierarchyRefMut<'_> {
-        HierarchyRefMut {
-            mutable: self.inner.mutable.borrow_mut(),
-            version: &self.inner.version,
-        }
+    pub(crate) fn borrow_mut(&self) -> RefMut<'_, HierarchyRef> {
+        self.inner
+            .version
+            .set(self.inner.version.get().wrapping_add(1));
+        self.inner.mutable.borrow_mut()
     }
 }
 
-/// A borrowed hierarchy reference.
-#[repr(transparent)]
-pub(crate) struct HierarchyRef<'a> {
-    mutable: Ref<'a, Mutable>,
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
+pub(crate) struct Node {
+    id: Id,
+    sort: Vec<u8>,
 }
 
-impl HierarchyRef<'_> {
+/// Reference to the mutable data of a hierarchy.
+#[derive(Default)]
+pub(crate) struct HierarchyRef {
+    values: HashMap<Id, BTreeSet<Node>>,
+}
+
+impl HierarchyRef {
     /// Get the children of the given group, sorted by their sort key.
     pub(crate) fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
-        self.mutable
-            .values
+        self.values
             .get(&group)
             .into_iter()
             .flatten()
-            .map(|(_, id)| *id)
+            .map(|node| node.id)
     }
 
     /// Get all objects in the hierarchy.
     pub(crate) fn iter_all(&self) -> impl DoubleEndedIterator<Item = Id> {
         Walk {
-            mutable: &self.mutable,
+            mutable: self,
             stack: self
-                .mutable
                 .values
                 .get(&Id::ZERO)
                 .map(|s| s.iter())
@@ -81,66 +78,38 @@ impl HierarchyRef<'_> {
                 .collect(),
         }
     }
-}
 
-/// A borrowed hierarchy reference.
-pub(crate) struct HierarchyRefMut<'a> {
-    mutable: RefMut<'a, Mutable>,
-    version: &'a Cell<u64>,
-}
-
-impl HierarchyRefMut<'_> {
     /// Remove the given id from all groups.
     pub(crate) fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = (sort, id);
+        let key = Node { id, sort };
 
-        if let Some(values) = self.mutable.values.get_mut(&group) {
+        if let Some(values) = self.values.get_mut(&group) {
             values.remove(&key);
         }
     }
 
     /// Insert a child into the given group with the given sort key.
     pub(crate) fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        self.mutable
-            .values
-            .entry(group)
-            .or_default()
-            .insert((sort, id));
+        let key = Node { id, sort };
+        self.values.entry(group).or_default().insert(key);
     }
 
     /// Extend the hierarchy with the given objects.
     pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
         for object in objects {
-            self.mutable
-                .values
-                .entry(*object.group)
-                .or_default()
-                .insert((object.sort().to_vec(), object.id));
+            let key = Node {
+                id: object.id,
+                sort: object.sort().to_vec(),
+            };
+
+            self.values.entry(*object.group).or_default().insert(key);
         }
-    }
-
-    /// Get the children of the given group, sorted by their sort key.
-    pub(crate) fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
-        self.mutable
-            .values
-            .get(&group)
-            .into_iter()
-            .flatten()
-            .map(|(_, id)| *id)
-    }
-}
-
-impl Drop for HierarchyRefMut<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        let version = self.version.get().wrapping_add(1);
-        self.version.set(version);
     }
 }
 
 pub(crate) struct Walk<'a> {
-    mutable: &'a Mutable,
-    stack: Vec<Iter<'a, (Vec<u8>, Id)>>,
+    mutable: &'a HierarchyRef,
+    stack: Vec<Iter<'a, Node>>,
 }
 
 impl Iterator for Walk<'_> {
@@ -150,16 +119,16 @@ impl Iterator for Walk<'_> {
         loop {
             let iter = self.stack.last_mut()?;
 
-            let Some((_, id)) = iter.next() else {
+            let Some(node) = iter.next() else {
                 self.stack.pop();
                 continue;
             };
 
-            if let Some(children) = self.mutable.values.get(id) {
+            if let Some(children) = self.mutable.values.get(&node.id) {
                 self.stack.push(children.iter());
             }
 
-            return Some(*id);
+            return Some(node.id);
         }
     }
 }
@@ -169,16 +138,16 @@ impl DoubleEndedIterator for Walk<'_> {
         loop {
             let iter = self.stack.last_mut()?;
 
-            let Some((_, id)) = iter.next_back() else {
+            let Some(node) = iter.next_back() else {
                 self.stack.pop();
                 continue;
             };
 
-            if let Some(children) = self.mutable.values.get(id) {
+            if let Some(children) = self.mutable.values.get(&node.id) {
                 self.stack.push(children.iter());
             }
 
-            return Some(*id);
+            return Some(node.id);
         }
     }
 }

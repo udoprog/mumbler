@@ -79,13 +79,8 @@ impl DerefMut for LocalObject {
 }
 
 #[derive(Default)]
-struct Mutable {
-    values: HashMap<Id, LocalObject>,
-}
-
-#[derive(Default)]
 struct Inner {
-    mutable: RefCell<Mutable>,
+    mutable: RefCell<ObjectsRef>,
     version: Cell<u64>,
 }
 
@@ -104,89 +99,62 @@ impl PartialEq for Objects {
 
 impl Objects {
     #[inline]
-    pub(crate) fn borrow(&self) -> ObjectsRef<'_> {
-        ObjectsRef {
-            inner: self.inner.mutable.borrow(),
-        }
+    pub(crate) fn borrow(&self) -> Ref<'_, ObjectsRef> {
+        self.inner.mutable.borrow()
     }
 
     #[inline]
-    pub(crate) fn borrow_mut(&self) -> ObjectsRefMut<'_> {
-        ObjectsRefMut {
-            inner: self.inner.mutable.borrow_mut(),
-            version: &self.inner.version,
-        }
+    pub(crate) fn borrow_mut(&self) -> RefMut<'_, ObjectsRef> {
+        self.inner
+            .version
+            .set(self.inner.version.get().wrapping_add(1));
+        self.inner.mutable.borrow_mut()
     }
 }
 
-#[repr(transparent)]
-pub(crate) struct ObjectsRef<'a> {
-    inner: Ref<'a, Mutable>,
+#[derive(Default)]
+pub(crate) struct ObjectsRef {
+    values: HashMap<Id, LocalObject>,
 }
 
-impl ObjectsRef<'_> {
+impl ObjectsRef {
     #[inline]
     pub(crate) fn get(&self, id: Id) -> Option<&LocalObject> {
-        self.inner.values.get(&id)
+        self.values.get(&id)
     }
 
     #[inline]
     pub(crate) fn values(&self) -> impl Iterator<Item = &LocalObject> {
-        self.inner.values.values()
+        self.values.values()
     }
 
     #[inline]
     pub(crate) fn is_interactive(&self, id: Id) -> bool {
-        let Some(object) = self.inner.values.get(&id) else {
+        let Some(object) = self.values.get(&id) else {
             return false;
         };
 
         object.data.is_interactive()
     }
-}
 
-pub(crate) struct ObjectsRefMut<'a> {
-    inner: RefMut<'a, Mutable>,
-    version: &'a Cell<u64>,
-}
-
-impl ObjectsRefMut<'_> {
     #[inline]
     pub(crate) fn remove(&mut self, id: Id) -> Option<LocalObject> {
-        self.inner.values.remove(&id)
+        self.values.remove(&id)
     }
 
     #[inline]
     pub(crate) fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
-        self.inner.values.insert(id, object)
-    }
-
-    #[inline]
-    pub(crate) fn get(&self, id: Id) -> Option<&LocalObject> {
-        self.inner.values.get(&id)
+        self.values.insert(id, object)
     }
 
     #[inline]
     pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
-        self.inner.values.get_mut(&id)
-    }
-
-    #[inline]
-    pub(crate) fn values(&self) -> impl Iterator<Item = &LocalObject> {
-        self.inner.values.values()
+        self.values.get_mut(&id)
     }
 
     #[inline]
     pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
-        self.inner.values.values_mut()
-    }
-}
-
-impl Drop for ObjectsRefMut<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        let version = self.version.get().wrapping_add(1);
-        self.version.set(version);
+        self.values.values_mut()
     }
 }
 
@@ -196,7 +164,7 @@ impl FromIterator<LocalObject> for Objects {
     where
         I: IntoIterator<Item = LocalObject>,
     {
-        let mutable = Mutable {
+        let mutable = ObjectsRef {
             values: iter.into_iter().map(|o| (o.data.id, o)).collect(),
         };
 

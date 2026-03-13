@@ -19,7 +19,7 @@ use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
 use crate::log;
-use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRefMut, PeerObject};
+use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRef, PeerObject};
 use crate::peers::Peers;
 use crate::state::State;
 
@@ -42,7 +42,7 @@ struct Updates {
 }
 
 impl Updates {
-    fn look_at(&mut self, objects: &mut ObjectsRefMut, p: VecXZ, m: VecXZ) {
+    fn look_at(&mut self, objects: &mut ObjectsRef, p: VecXZ, m: VecXZ) {
         let Some(o) = self.selected.and_then(|id| objects.get_mut(id)) else {
             return;
         };
