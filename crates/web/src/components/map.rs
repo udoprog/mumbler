@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use api::{Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteUpdateBody, Value, Vec3, VecXZ};
 use gloo::events::EventListener;
@@ -15,6 +15,7 @@ use yew::virtual_dom::{VList, VNode};
 
 use crate::components::Icon;
 use crate::error::Error;
+use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, PeerObject};
@@ -91,44 +92,14 @@ pub(crate) enum Drag {
     Below,
 }
 
-#[derive(Default)]
-struct Hierarchy {
-    inner: HashMap<Id, BTreeSet<(Vec<u8>, Id)>>,
-}
-
-impl Hierarchy {
-    /// Get the children of the given group, sorted by their sort key.
-    fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
-        self.inner
-            .get(&group)
-            .into_iter()
-            .flatten()
-            .map(|(_, id)| *id)
-    }
-
-    /// Remove the given id from all groups.
-    fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = (sort, id);
-
-        if let Some(values) = self.inner.get_mut(&group) {
-            values.remove(&key);
-        }
-    }
-
-    /// Insert a child into the given group with the given sort key.
-    fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        self.inner.entry(group).or_default().insert((sort, id));
-    }
-
-    /// Extend the hierarchy with the given objects.
-    fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
-        for object in objects {
-            self.inner
-                .entry(*object.group)
-                .or_default()
-                .insert((object.sort().to_vec(), object.id));
-        }
-    }
+/// State for the right-click context menu.
+struct ContextMenu {
+    /// Object the menu was opened for.
+    object_id: Id,
+    /// CSS left position (pixels from the map-sizer left edge).
+    x: f64,
+    /// CSS top position (pixels from the map-sizer top edge).
+    y: f64,
 }
 
 pub(crate) struct Map {
@@ -174,16 +145,6 @@ pub(crate) struct Map {
     update_look_at_ids: HashSet<Id>,
     update_transform_ids: HashSet<Id>,
     update_world: bool,
-}
-
-/// State for the right-click context menu.
-struct ContextMenu {
-    /// Object the menu was opened for.
-    object_id: Id,
-    /// CSS left position (pixels from the map-sizer left edge).
-    x: f64,
-    /// CSS top position (pixels from the map-sizer top edge).
-    y: f64,
 }
 
 pub(crate) enum Msg {
@@ -1991,6 +1952,7 @@ impl Map {
                 render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
             }
         }
+
         // Draw remote static objects.
         for o in self.peers.values() {
             if let Some(s) = RenderStatic::from_data(o)
@@ -2007,7 +1969,7 @@ impl Map {
                 .flat_map(|peer| RenderToken::from_data(peer))
                 .filter(|render| !render.hidden);
 
-            let locals = self.order.iter(Id::ZERO).flat_map(move |id| {
+            let locals = self.order.iter_all().rev().flat_map(move |id| {
                 let data = &self.objects.get(id)?;
                 let mut token = RenderToken::from_data(data)?;
                 token.player = true;

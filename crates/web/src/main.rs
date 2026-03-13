@@ -4,6 +4,7 @@
 
 mod components;
 mod error;
+mod hierarchy;
 mod images;
 mod log;
 mod objects;
