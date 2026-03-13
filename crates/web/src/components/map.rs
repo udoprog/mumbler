@@ -1,9 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use api::{
-    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteObject, RemotePeerObject,
-    RemoteUpdateBody, Transform, Value, Vec3, VecXZ,
-};
+use api::{Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteUpdateBody, Value, Vec3, VecXZ};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
@@ -20,6 +17,7 @@ use crate::components::Icon;
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
+use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, PeerObject};
 use crate::state::State;
 use crate::ws;
 
@@ -31,10 +29,6 @@ const MIDDLE_MOUSE_BUTTON: i16 = 1;
 
 const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
-const DEFAULT_SPEED: f32 = 5.0;
-const DEFAULT_STATIC_WIDTH: f32 = 1.0;
-const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
-const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 const ANIMATION_FPS: u32 = 60;
 
 pub(crate) struct Config {
@@ -90,454 +84,6 @@ impl Default for Config {
     }
 }
 
-pub(crate) struct PeerObject {
-    pub(crate) peer_id: PeerId,
-    pub(crate) data: ObjectData,
-}
-
-impl PeerObject {
-    #[inline]
-    fn from_peer(remote: &RemotePeerObject) -> Self {
-        Self {
-            peer_id: remote.peer_id,
-            data: ObjectData::from_remote(&remote.object),
-        }
-    }
-}
-
-pub(crate) struct LocalObject {
-    pub(crate) data: ObjectData,
-    pub(crate) move_target: Option<VecXZ>,
-    pub(crate) arrow_target: Option<VecXZ>,
-}
-
-impl LocalObject {
-    fn from_remote(remote: &RemoteObject) -> Self {
-        Self {
-            data: ObjectData::from_remote(remote),
-            move_target: None,
-            arrow_target: None,
-        }
-    }
-}
-
-#[derive(Default)]
-struct Objects {
-    values: HashMap<Id, LocalObject>,
-}
-
-impl Objects {
-    #[inline]
-    fn get(&self, id: Id) -> Option<&LocalObject> {
-        self.values.get(&id)
-    }
-
-    #[inline]
-    fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
-        self.values.get_mut(&id)
-    }
-
-    #[inline]
-    fn remove(&mut self, id: Id) -> Option<LocalObject> {
-        self.values.remove(&id)
-    }
-
-    #[inline]
-    fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
-        self.values.insert(id, object)
-    }
-
-    #[inline]
-    fn values(&self) -> impl Iterator<Item = &LocalObject> {
-        self.values.values()
-    }
-
-    #[inline]
-    fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
-        self.values.values_mut()
-    }
-
-    #[inline]
-    fn is_interactive(&self, id: Id) -> bool {
-        let Some(object) = self.values.get(&id) else {
-            return false;
-        };
-
-        object.data.is_interactive()
-    }
-}
-
-impl FromIterator<(Id, LocalObject)> for Objects {
-    #[inline]
-    fn from_iter<I>(iter: I) -> Self
-    where
-        I: IntoIterator<Item = (Id, LocalObject)>,
-    {
-        Self {
-            values: iter.into_iter().collect(),
-        }
-    }
-}
-
-pub(crate) struct TokenObject {
-    pub(crate) transform: State<Transform>,
-    pub(crate) locked: State<bool>,
-    pub(crate) look_at: State<Option<Vec3>>,
-    pub(crate) image: State<Option<Id>>,
-    pub(crate) color: State<Option<Color>>,
-    pub(crate) name: State<Option<String>>,
-    pub(crate) hidden: State<bool>,
-    pub(crate) token_radius: State<f32>,
-    pub(crate) speed: State<f32>,
-    pub(crate) sort: State<Vec<u8>>,
-}
-
-impl TokenObject {
-    fn from_remote(o: &RemoteObject) -> Self {
-        Self {
-            transform: State::new(
-                o.props
-                    .get(Key::TRANSFORM)
-                    .as_transform()
-                    .unwrap_or_else(Transform::origin),
-            ),
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
-            color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-            token_radius: State::new(
-                o.props
-                    .get(Key::TOKEN_RADIUS)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_TOKEN_RADIUS),
-            ),
-            speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
-        }
-    }
-
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::TRANSFORM => self
-                .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::LOOK_AT => self.look_at.update(value.as_vec3()),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
-            Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
-            Key::TOKEN_RADIUS => self
-                .token_radius
-                .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
-            Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
-            _ => false,
-        }
-    }
-}
-
-pub(crate) struct StaticObject {
-    pub(crate) transform: State<Transform>,
-    pub(crate) locked: State<bool>,
-    pub(crate) image: State<Option<Id>>,
-    pub(crate) color: State<Option<Color>>,
-    pub(crate) name: State<Option<String>>,
-    pub(crate) hidden: State<bool>,
-    pub(crate) width: State<f32>,
-    pub(crate) height: State<f32>,
-    pub(crate) sort: State<Vec<u8>>,
-}
-
-impl StaticObject {
-    fn from_remote(o: &RemoteObject) -> Self {
-        Self {
-            transform: State::new(
-                o.props
-                    .get(Key::TRANSFORM)
-                    .as_transform()
-                    .unwrap_or_else(Transform::origin),
-            ),
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
-            color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-            width: State::new(
-                o.props
-                    .get(Key::STATIC_WIDTH)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_STATIC_WIDTH),
-            ),
-            height: State::new(
-                o.props
-                    .get(Key::STATIC_HEIGHT)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_STATIC_HEIGHT),
-            ),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
-        }
-    }
-
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::TRANSFORM => self
-                .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
-            Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
-            Key::STATIC_WIDTH => self
-                .width
-                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
-            Key::STATIC_HEIGHT => self
-                .height
-                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
-            _ => false,
-        }
-    }
-}
-
-pub(crate) struct GroupObject {
-    pub(crate) locked: State<bool>,
-    pub(crate) name: State<Option<String>>,
-    pub(crate) hidden: State<bool>,
-    pub(crate) sort: State<Vec<u8>>,
-}
-
-impl GroupObject {
-    fn from_remote(o: &RemoteObject) -> Self {
-        Self {
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
-        }
-    }
-
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
-            _ => false,
-        }
-    }
-}
-
-pub(crate) enum ObjectKind {
-    Token(TokenObject),
-    Static(StaticObject),
-    Group(GroupObject),
-    Unknown,
-}
-
-pub(crate) struct ObjectData {
-    pub(crate) id: Id,
-    pub(crate) group: State<Id>,
-    pub(crate) kind: ObjectKind,
-}
-
-impl ObjectData {
-    #[inline]
-    fn from_remote(o: &RemoteObject) -> Self {
-        let kind = match o.ty {
-            api::Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
-            api::Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
-            api::Type::GROUP => ObjectKind::Group(GroupObject::from_remote(o)),
-            _ => ObjectKind::Unknown,
-        };
-
-        let group = State::new(o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO));
-        Self {
-            id: o.id,
-            group,
-            kind,
-        }
-    }
-
-    #[inline]
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match &mut self.kind {
-            ObjectKind::Token(this) => this.update(key, value),
-            ObjectKind::Static(this) => this.update(key, value),
-            ObjectKind::Group(this) => this.update(key, value),
-            ObjectKind::Unknown => false,
-        }
-    }
-
-    #[inline]
-    fn is_interactive(&self) -> bool {
-        matches!(self.kind, ObjectKind::Token(_) | ObjectKind::Static(_))
-    }
-
-    #[inline]
-    fn sort_mut(&mut self) -> Option<(&mut State<Id>, &mut State<Vec<u8>>)> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Group(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn sort(&self) -> &[u8] {
-        match &self.kind {
-            ObjectKind::Token(this) => &this.sort,
-            ObjectKind::Static(this) => &this.sort,
-            ObjectKind::Group(this) => &this.sort,
-            ObjectKind::Unknown => &[],
-        }
-    }
-
-    #[inline]
-    fn as_transform(&self) -> Option<&Transform> {
-        match &self.kind {
-            ObjectKind::Token(this) => Some(&this.transform),
-            ObjectKind::Static(this) => Some(&this.transform),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn as_transform_mut(&mut self) -> Option<&mut State<Transform>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.transform),
-            ObjectKind::Static(this) => Some(&mut this.transform),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn as_interpolate_mut(
-        &mut self,
-    ) -> Option<(&mut State<Transform>, Option<&Vec3>, Option<f32>)> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some((
-                &mut this.transform,
-                this.look_at.as_ref(),
-                Some(*this.speed),
-            )),
-            ObjectKind::Static(this) => Some((&mut this.transform, None, None)),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn as_click_geometry(&self) -> Option<(&Transform, f32)> {
-        match &self.kind {
-            ObjectKind::Token(this) => Some((&this.transform, *this.token_radius)),
-            ObjectKind::Static(this) => {
-                Some((&this.transform, (*this.width).hypot(*this.height) / 2.0))
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns `true` if this is a static object (rectangle, snap movement).
-    #[inline]
-    fn is_static(&self) -> bool {
-        matches!(&self.kind, ObjectKind::Static(_))
-    }
-
-    #[inline]
-    fn look_at(&self) -> Option<&Vec3> {
-        match &self.kind {
-            ObjectKind::Token(this) => this.look_at.as_ref(),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn as_look_at_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.look_at),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.hidden),
-            ObjectKind::Static(this) => Some(&mut this.hidden),
-            ObjectKind::Group(this) => Some(&mut this.hidden),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn is_hidden(&self) -> bool {
-        match &self.kind {
-            ObjectKind::Token(this) => *this.hidden,
-            ObjectKind::Static(this) => *this.hidden,
-            ObjectKind::Group(this) => *this.hidden,
-            ObjectKind::Unknown => false,
-        }
-    }
-
-    #[inline]
-    fn name(&self) -> Option<&str> {
-        match &self.kind {
-            ObjectKind::Token(this) => this.name.as_deref(),
-            ObjectKind::Static(this) => this.name.as_deref(),
-            ObjectKind::Group(this) => this.name.as_deref(),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn as_locked_mut(&mut self) -> Option<&mut State<bool>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.locked),
-            ObjectKind::Static(this) => Some(&mut this.locked),
-            ObjectKind::Group(this) => Some(&mut this.locked),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
-    fn is_locked(&self) -> bool {
-        match &self.kind {
-            ObjectKind::Token(this) => *this.locked,
-            ObjectKind::Static(this) => *this.locked,
-            ObjectKind::Group(this) => *this.locked,
-            ObjectKind::Unknown => false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Drag {
     Above,
@@ -578,9 +124,9 @@ impl Hierarchy {
     fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
         for object in objects {
             self.inner
-                .entry(*object.data.group)
+                .entry(*object.group)
                 .or_default()
-                .insert((object.data.sort().to_vec(), object.data.id));
+                .insert((object.sort().to_vec(), object.id));
         }
     }
 }
@@ -852,7 +398,7 @@ impl Component for Map {
         let pos;
 
         if let Some(o) = self.selected.and_then(|id| self.objects.get(id))
-            && let Some(transform) = o.data.as_transform()
+            && let Some(transform) = o.as_transform()
         {
             let p = transform.position;
             let f = transform.front;
@@ -878,12 +424,12 @@ impl Component for Map {
             };
 
             let settings_click = o.map(|o| {
-                let id = o.data.id;
+                let id = o.id;
                 ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
             });
 
             let delete_click = o.map(|o| {
-                let id = o.data.id;
+                let id = o.id;
                 ctx.link().callback(move |_| Msg::ConfirmDelete(id))
             });
 
@@ -919,10 +465,10 @@ impl Component for Map {
         let toolbar = {
             let o = self.selected.and_then(|id| self.objects.get(id));
 
-            let is_hidden = o.map(|o| o.data.is_hidden()).unwrap_or_default();
-            let is_locked = o.map(|o| o.data.is_locked()).unwrap_or_default();
+            let is_hidden = o.map(|o| o.is_hidden()).unwrap_or_default();
+            let is_locked = o.map(|o| o.is_locked()).unwrap_or_default();
             let is_mumble = o
-                .map(|o| *self.config.mumble_object == Some(o.data.id))
+                .map(|o| *self.config.mumble_object == Some(o.id))
                 .unwrap_or_default();
 
             let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
@@ -966,17 +512,17 @@ impl Component for Map {
             };
 
             let hidden_click = o.map(|o| {
-                let id = o.data.id;
+                let id = o.id;
                 ctx.link().callback(move |_| Msg::ToggleHidden(id))
             });
 
             let locked_click = o.map(|o| {
-                let id = o.data.id;
+                let id = o.id;
                 ctx.link().callback(move |_| Msg::ToggleLocked(id))
             });
 
-            let mumble_click = o.filter(|o| o.data.is_interactive()).map(|o| {
-                let id = o.data.id;
+            let mumble_click = o.filter(|o| o.is_interactive()).map(|o| {
+                let id = o.id;
                 ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
             });
 
@@ -1047,7 +593,7 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body rows">
-                            <p>{format!("Remove \"{}\"?", self.objects.get(id).and_then(|o| o.data.name()).unwrap_or("unnamed"))}</p>
+                            <p>{format!("Remove \"{}\"?", self.objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
                             <div class="btn-group">
                                 <button class="btn danger"
                                     onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
@@ -1074,7 +620,7 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body">
-                            if self.objects.get(id).is_some_and(|o| o.data.is_static()) {
+                            if self.objects.get(id).is_some_and(|o| o.is_static()) {
                                 <StaticSettings ws={ctx.props().ws.clone()} {id} />
                             } else {
                                 <ObjectSettings ws={ctx.props().ws.clone()} {id} />
@@ -1098,17 +644,17 @@ impl Map {
             .flat_map(|id| self.objects.get(id))
             .enumerate()
         {
-            let (icon_name, mumble_button, is_group) = match o.data.kind {
+            let (icon_name, mumble_button, is_group) = match o.kind {
                 ObjectKind::Token(..) => ("user", true, false),
                 ObjectKind::Static(..) => ("squares-2x2", true, false),
                 ObjectKind::Group(..) => ("folder", false, true),
                 _ => ("question-mark-circle", false, false),
             };
 
-            let id = o.data.id;
+            let id = o.id;
             let selected = self.selected == Some(id);
 
-            let label = o.data.name().unwrap_or("");
+            let label = o.name().unwrap_or("");
 
             let onclick = ctx.link().callback(move |ev: MouseEvent| {
                 ev.stop_propagation();
@@ -1150,8 +696,8 @@ impl Map {
                 });
             }
 
-            let is_hidden = o.data.is_hidden();
-            let is_locked = o.data.is_locked();
+            let is_hidden = o.is_hidden();
+            let is_locked = o.is_locked();
             let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
             let hidden_title = if is_hidden {
                 "Hidden from others"
@@ -1204,7 +750,7 @@ impl Map {
                 is_locked.then_some("active"),
             };
 
-            let drop_into = (self.drag_over == Some((Drag::Into, group, o.data.id))).then(|| {
+            let drop_into = (self.drag_over == Some((Drag::Into, group, o.id))).then(|| {
                 html! {
                     <div key={format!("drop-into")} class="object-drop active">
                         <div class="dotted" />
@@ -1212,9 +758,9 @@ impl Map {
                 }
             });
 
-            let children = match o.data.kind {
+            let children = match o.kind {
                 ObjectKind::Group(..) => {
-                    let children = self.object_list(ctx, o.data.id);
+                    let children = self.object_list(ctx, o.id);
 
                     Some(html! {
                         <section key={format!("{id}-children")} class="object-children">
@@ -1347,15 +893,15 @@ impl Map {
                             .nth(1),
                     };
 
-                    let next = next.and_then(|id| Some(self.objects.get(id)?.data.sort()));
+                    let next = next.and_then(|id| Some(self.objects.get(id)?.sort()));
 
                     let sort = match (drag, next) {
-                        (Drag::Above, Some(next)) => sorting::midpoint(next, target.data.sort()),
-                        (Drag::Above, _) => sorting::before(target.data.sort()),
-                        (Drag::Below, Some(next)) => sorting::midpoint(target.data.sort(), next),
-                        (Drag::Below, _) => sorting::after(target.data.sort()),
+                        (Drag::Above, Some(next)) => sorting::midpoint(next, target.sort()),
+                        (Drag::Above, _) => sorting::before(target.sort()),
+                        (Drag::Below, Some(next)) => sorting::midpoint(target.sort(), next),
+                        (Drag::Below, _) => sorting::after(target.sort()),
                         (Drag::Into, Some(next)) => sorting::after(next),
-                        (Drag::Into, _) => target.data.id.as_bytes().to_vec(),
+                        (Drag::Into, _) => target.id.as_bytes().to_vec(),
                     };
 
                     let group = match drag {
@@ -1366,10 +912,8 @@ impl Map {
                     (sort, group)
                 };
 
-                let Some((o_group, o_sort)) = self
-                    .objects
-                    .get_mut(object_id)
-                    .and_then(|o| o.data.sort_mut())
+                let Some((o_group, o_sort)) =
+                    self.objects.get_mut(object_id).and_then(|o| o.sort_mut())
                 else {
                     return Ok(true);
                 };
@@ -1435,7 +979,7 @@ impl Map {
                     return Ok(false);
                 };
 
-                let Some(locked) = object.data.as_locked_mut() else {
+                let Some(locked) = object.as_locked_mut() else {
                     return Ok(false);
                 };
 
@@ -1460,7 +1004,7 @@ impl Map {
                     return Ok(false);
                 };
 
-                let Some(hidden) = object.data.as_hidden_mut() else {
+                let Some(hidden) = object.as_hidden_mut() else {
                     return Ok(false);
                 };
 
@@ -1503,7 +1047,7 @@ impl Map {
                     .objects
                     .iter()
                     .map(LocalObject::from_remote)
-                    .map(|o| (o.data.id, (o)))
+                    .map(|o| (o.id, (o)))
                     .collect();
 
                 self.order.extend(self.objects.values());
@@ -1512,7 +1056,7 @@ impl Map {
                     .remote_objects
                     .iter()
                     .map(PeerObject::from_peer)
-                    .map(|peer| ((peer.peer_id, peer.data.id), peer))
+                    .map(|peer| ((peer.peer_id, peer.id), peer))
                     .collect();
 
                 self.images.clear();
@@ -1547,15 +1091,13 @@ impl Map {
                 let update = match body {
                     LocalUpdateBody::ObjectCreated { object } => {
                         let o = LocalObject::from_remote(&object);
-                        self.order
-                            .insert(*o.data.group, o.data.sort().to_vec(), o.data.id);
-                        self.objects.insert(o.data.id, o);
+                        self.order.insert(*o.group, o.sort().to_vec(), o.id);
+                        self.objects.insert(o.id, o);
                         true
                     }
                     LocalUpdateBody::ObjectRemoved { object_id } => {
                         if let Some(o) = self.objects.remove(object_id) {
-                            self.order
-                                .remove(*o.data.group, o.data.sort().to_vec(), o.data.id);
+                            self.order.remove(*o.group, o.sort().to_vec(), o.id);
                         }
 
                         if self.selected == Some(object_id) {
@@ -1582,7 +1124,7 @@ impl Map {
                                     break 'done false;
                                 }
                                 Key::SORT => {
-                                    let Some((_, sort)) = o.data.sort_mut() else {
+                                    let Some((_, sort)) = o.sort_mut() else {
                                         break 'done false;
                                     };
 
@@ -1592,18 +1134,14 @@ impl Map {
                                         break 'done false;
                                     };
 
-                                    self.order.remove(*o.data.group, old, o.data.id);
-                                    self.order.insert(
-                                        *o.data.group,
-                                        o.data.sort().to_vec(),
-                                        o.data.id,
-                                    );
+                                    self.order.remove(*o.group, old, o.id);
+                                    self.order.insert(*o.group, o.sort().to_vec(), o.id);
                                     true
                                 }
                                 _ => false,
                             };
 
-                            o.data.update(key, value) || update
+                            o.update(key, value) || update
                         }
                     }
                     LocalUpdateBody::ImageAdded { image_id, .. } => {
@@ -1658,7 +1196,7 @@ impl Map {
                             break 'done;
                         };
 
-                        a.data.update(key, value);
+                        a.update(key, value);
                     }
                     RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
@@ -1892,9 +1430,9 @@ impl Map {
         o.arrow_target = None;
         self.start_press = None;
 
-        let object_id = o.data.id;
+        let object_id = o.id;
 
-        if let Some(look_at) = o.data.as_look_at_mut() {
+        if let Some(look_at) = o.as_look_at_mut() {
             **look_at = None;
             self.update_look_at_ids.insert(object_id);
         }
@@ -1916,14 +1454,14 @@ impl Map {
             return Ok(());
         };
 
-        let object_id = o.data.id;
+        let object_id = o.id;
 
-        if let Some(look_at) = o.data.as_look_at_mut() {
+        if let Some(look_at) = o.as_look_at_mut() {
             **look_at = Some(Vec3::new(m.x, 0.0, m.z));
             self.update_look_at_ids.insert(object_id);
         }
 
-        if let Some(transform) = o.data.as_transform() {
+        if let Some(transform) = o.as_transform() {
             let p = transform.position.xz();
             self.start_press = Some((p, true));
             self.look_at(p, m);
@@ -1935,7 +1473,7 @@ impl Map {
 
     fn interpolate_movement(&mut self) {
         for o in self.objects.values_mut() {
-            let id = o.data.id;
+            let id = o.id;
 
             let Some((transform, look_at, speed)) = o.data.as_interpolate_mut() else {
                 continue;
@@ -2001,7 +1539,7 @@ impl Map {
                 continue;
             };
 
-            let Some(transform) = o.data.as_transform() else {
+            let Some(transform) = o.as_transform() else {
                 continue;
             };
 
@@ -2021,7 +1559,7 @@ impl Map {
                 continue;
             };
 
-            let Some(look_at) = o.data.look_at() else {
+            let Some(look_at) = o.look_at() else {
                 continue;
             };
 
@@ -2054,13 +1592,13 @@ impl Map {
             .objects
             .values()
             .find(|o| {
-                let Some((transform, click_radius)) = o.data.as_click_geometry() else {
+                let Some((transform, click_radius)) = o.as_click_geometry() else {
                     return false;
                 };
 
-                transform.position.xz().dist(w) < click_radius && !o.data.is_locked()
+                transform.position.xz().dist(w) < click_radius && !o.is_locked()
             })
-            .map(|o| o.data.id);
+            .map(|o| o.id);
 
         if let Some(object_id) = hit {
             self.selected = Some(object_id);
@@ -2084,7 +1622,7 @@ impl Map {
             return html! {};
         };
 
-        let is_hidden = o.data.is_hidden();
+        let is_hidden = o.is_hidden();
         let eye_label = if is_hidden { "Show" } else { "Hide" };
         let eye_icon = if is_hidden { "eye" } else { "eye-slash" };
         let is_mumble = *self.config.mumble_object == Some(object_id);
@@ -2145,15 +1683,13 @@ impl Map {
                             .objects
                             .values()
                             .find(|o| {
-                                let Some((transform, click_radius)) = o.data.as_click_geometry()
-                                else {
+                                let Some((transform, click_radius)) = o.as_click_geometry() else {
                                     return false;
                                 };
 
-                                transform.position.xz().dist(e) < click_radius
-                                    && !o.data.is_locked()
+                                transform.position.xz().dist(e) < click_radius && !o.is_locked()
                             })
-                            .map(|o| o.data.id);
+                            .map(|o| o.id);
 
                         if let Some(hit_id) = hit
                             && self.selected != Some(hit_id)
@@ -2172,10 +1708,10 @@ impl Map {
 
                     object.arrow_target = None;
 
-                    let object_id = object.data.id;
-                    let is_static = object.data.is_static();
+                    let object_id = object.id;
+                    let is_static = object.is_static();
 
-                    let Some(transform) = object.data.as_transform_mut() else {
+                    let Some(transform) = object.as_transform_mut() else {
                         break 'out hit_something;
                     };
 
@@ -2187,7 +1723,7 @@ impl Map {
                         if is_static {
                             // Shift-drag on a static object rotates it.
                             self.look_at(p, e);
-                        } else if let Some(look_at) = object.data.as_look_at_mut() {
+                        } else if let Some(look_at) = object.as_look_at_mut() {
                             **look_at = Some(e.xyz(0.0));
                             self.look_at(p, e);
                             self.update_look_at_ids.insert(object_id);
@@ -2259,11 +1795,11 @@ impl Map {
                     break 'done;
                 };
 
-                if o.data.is_static() {
+                if o.is_static() {
                     self.look_at(p, m);
-                } else if let Some(look_at) = o.data.as_look_at_mut() {
+                } else if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-                    self.update_look_at_ids.insert(o.data.id);
+                    self.update_look_at_ids.insert(o.id);
                     self.look_at(p, m);
                 }
 
@@ -2271,12 +1807,12 @@ impl Map {
                 break 'done;
             }
 
-            if o.data.is_static()
-                && let Some(transform) = o.data.as_transform_mut()
+            if o.is_static()
+                && let Some(transform) = o.as_transform_mut()
             {
                 // Static objects snap immediately while dragging.
                 transform.position = m.xyz(0.0);
-                self.update_transform_ids.insert(o.data.id);
+                self.update_transform_ids.insert(o.id);
                 needs_redraw = true;
                 break 'done;
             }
@@ -2303,7 +1839,7 @@ impl Map {
 
         o.arrow_target = Some(m);
         transform.front = p.direction_to(m).xyz(0.0);
-        self.update_transform_ids.insert(o.data.id);
+        self.update_transform_ids.insert(o.id);
     }
 
     fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
@@ -2450,14 +1986,14 @@ impl Map {
 
         // Draw static objects first (behind tokens).
         for o in self.objects.values() {
-            if let Some(mut s) = RenderStatic::from_data(&o.data) {
-                s.selected = selected == Some(o.data.id);
+            if let Some(mut s) = RenderStatic::from_data(o) {
+                s.selected = selected == Some(o.id);
                 render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
             }
         }
         // Draw remote static objects.
         for o in self.peers.values() {
-            if let Some(s) = RenderStatic::from_data(&o.data)
+            if let Some(s) = RenderStatic::from_data(o)
                 && !s.hidden
             {
                 render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
@@ -2468,11 +2004,11 @@ impl Map {
             let remotes = self
                 .peers
                 .values()
-                .flat_map(|peer| RenderToken::from_data(&peer.data))
+                .flat_map(|peer| RenderToken::from_data(peer))
                 .filter(|render| !render.hidden);
 
             let locals = self.order.iter(Id::ZERO).flat_map(move |id| {
-                let data = &self.objects.get(id)?.data;
+                let data = &self.objects.get(id)?;
                 let mut token = RenderToken::from_data(data)?;
                 token.player = true;
                 token.selected = selected == Some(data.id);
@@ -2485,7 +2021,7 @@ impl Map {
         let selected_arrow = self
             .selected
             .and_then(|id| self.objects.get(id))
-            .and_then(|o| o.arrow_target);
+            .and_then(|o| o.arrow_target.as_ref());
 
         for token in renders() {
             let arrow = token.selected.then_some(selected_arrow).flatten();

@@ -6,6 +6,7 @@ mod components;
 mod error;
 mod images;
 mod log;
+mod objects;
 mod state;
 
 use components::{Icon, Route};

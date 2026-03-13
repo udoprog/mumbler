@@ -218,7 +218,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
         for image in state.images.values() {
             images.push(RemoteImage {
                 id: image.id,
-                content_type: image.content_type.clone(),
+                content_type: image.content_type,
                 bytes: Box::from(image.bytes.as_slice()),
                 width: image.width,
                 height: image.height,

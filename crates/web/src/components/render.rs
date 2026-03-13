@@ -3,8 +3,9 @@ use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 use api::{Extent, Id, Vec3, VecXZ};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
-use crate::components::map::{Config, ObjectData, ObjectKind};
+use crate::components::map::Config;
 use crate::error::Error;
+use crate::objects::{ObjectData, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
@@ -274,7 +275,7 @@ pub(crate) fn draw_token_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
     token: &RenderToken,
-    arrow_target: Option<VecXZ>,
+    arrow_target: Option<&VecXZ>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
     let pos = t.world_to_canvas(token.transform.position.x, token.transform.position.z);
@@ -334,7 +335,7 @@ pub(crate) fn draw_token_token(
     let front = if token.player
         && let Some(m) = arrow_target
     {
-        token.transform.position.xz().direction_to(m).xyz(0.0)
+        token.transform.position.xz().direction_to(*m).xyz(0.0)
     } else {
         token.transform.front
     };
