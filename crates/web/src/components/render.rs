@@ -22,7 +22,10 @@ pub(crate) struct RenderToken<'a> {
 }
 
 impl<'a> RenderToken<'a> {
-    pub(crate) fn from_data(data: &'a ObjectData) -> Option<Self> {
+    pub(crate) fn from_data(
+        data: &'a ObjectData,
+        is_hidden: impl FnOnce(Id) -> bool,
+    ) -> Option<Self> {
         let token = match &data.kind {
             ObjectKind::Token(token) => token,
             _ => return None,
@@ -36,7 +39,7 @@ impl<'a> RenderToken<'a> {
             name: token.name.as_deref(),
             player: false,
             selected: false,
-            hidden: *token.hidden,
+            hidden: *token.hidden || is_hidden(*data.group),
             token_radius: *token.token_radius,
         })
     }

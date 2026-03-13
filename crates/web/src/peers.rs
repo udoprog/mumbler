@@ -39,6 +39,26 @@ impl Peers {
     pub(crate) fn insert(&mut self, peer_id: PeerId, object_id: Id, peer: PeerObject) {
         self.values.insert((peer_id, object_id), peer);
     }
+
+    /// Test if the given group or any of its ancestors is hidden.
+    #[inline]
+    pub(crate) fn is_hidden(&self, peer_id: PeerId, group: Id) -> bool {
+        let mut current = group;
+
+        while current != Id::ZERO {
+            let Some(peer) = self.values.get(&(peer_id, current)) else {
+                break;
+            };
+
+            if peer.is_hidden() {
+                return true;
+            }
+
+            current = *peer.group;
+        }
+
+        false
+    }
 }
 
 impl FromIterator<PeerObject> for Peers {

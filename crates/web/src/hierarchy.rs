@@ -14,16 +14,27 @@ struct Inner {
     version: Cell<u64>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct Hierarchy {
     inner: Rc<Inner>,
+    // The version this instance saw when it was cloned.
+    version: u64,
 }
 
 impl PartialEq for Hierarchy {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
-            && self.inner.version.get() == other.inner.version.get()
+        Rc::ptr_eq(&self.inner, &other.inner) && self.version == other.inner.version.get()
+    }
+}
+
+impl Clone for Hierarchy {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+            version: self.inner.version.get(),
+        }
     }
 }
 

@@ -84,16 +84,26 @@ struct Inner {
     version: Cell<u64>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct Objects {
     inner: Rc<Inner>,
+    version: u64,
 }
 
 impl PartialEq for Objects {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
-            && self.inner.version.get() == other.inner.version.get()
+        Rc::ptr_eq(&self.inner, &other.inner) && self.version == other.inner.version.get()
+    }
+}
+
+impl Clone for Objects {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+            version: self.inner.version.get(),
+        }
     }
 }
 
@@ -156,6 +166,26 @@ impl ObjectsRef {
     pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
         self.values.values_mut()
     }
+
+    /// Test if the given group or any of its ancestors is hidden.
+    #[inline]
+    pub(crate) fn is_group_hidden(&self, group: Id) -> bool {
+        let mut current = group;
+
+        while current != Id::ZERO {
+            let Some(object) = self.values.get(&current) else {
+                break;
+            };
+
+            if object.data.is_hidden() {
+                return true;
+            }
+
+            current = *object.data.group;
+        }
+
+        false
+    }
 }
 
 impl FromIterator<LocalObject> for Objects {
@@ -175,6 +205,7 @@ impl FromIterator<LocalObject> for Objects {
 
         Self {
             inner: Rc::new(inner),
+            version: 0,
         }
     }
 }

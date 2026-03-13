@@ -1808,12 +1808,14 @@ impl Map {
             let remotes = self
                 .peers
                 .iter()
-                .flat_map(|peer| RenderToken::from_data(peer))
+                .flat_map(|peer| {
+                    RenderToken::from_data(peer, |id| self.peers.is_hidden(peer.peer_id, id))
+                })
                 .filter(|render| !render.hidden);
 
             let locals = order.iter_all().rev().flat_map(|id| {
                 let data = objects.get(id)?;
-                let mut token = RenderToken::from_data(data)?;
+                let mut token = RenderToken::from_data(data, |id| objects.is_group_hidden(id))?;
                 token.player = true;
                 token.selected = selected == Some(data.id);
                 Some(token)
