@@ -18,28 +18,28 @@ use super::ImageGalleryModal;
 use super::{into_target, render};
 
 pub(crate) enum Msg {
-    StateChanged(ws::State),
-    AvatarImageSelected(Event),
     AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
-    CropConfirmed(api::CropRegion),
+    AvatarImageSelected(Event),
+    CloseGallery,
+    ColorChanged(Event),
     CropCancelled,
-    ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
-    SelectImage(api::Id),
+    CropConfirmed(api::CropRegion),
     DeleteImage(api::Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
-    ColorChanged(Event),
-    SelectColor(api::Color),
-    NameChanged(Event),
-    UpdateName(Option<String>),
-    RadiusChanged(Event),
-    SpeedChanged(Event),
-    UpdateResult(Result<Packet<api::Update>, ws::Error>),
+    GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
-    SetLog(log::Log),
+    ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
+    NameChanged(Event),
     OpenGallery,
-    CloseGallery,
+    RadiusChanged(Event),
+    SelectColor(api::Color),
+    SelectImage(api::Id),
+    SetLog(log::Log),
+    SpeedChanged(Event),
+    StateChanged(ws::State),
+    UpdateName(Option<String>),
+    UpdateResult(Result<Packet<api::Update>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -48,32 +48,32 @@ pub(crate) struct Props {
     pub(crate) id: Id,
 }
 
-pub(crate) struct ObjectSettings {
-    state: ws::State,
-    image: State<Option<api::Id>>,
-    color: State<Option<api::Color>>,
-    name: State<Option<String>>,
-    token_radius: State<f32>,
-    speed: State<f32>,
-    images: Vec<api::Image>,
-    gallery_open: bool,
-    crop_source_url: Option<String>,
-    crop_source_data: Option<(String, Vec<u8>)>,
-    preview_canvas: NodeRef,
-    preview_images: Images<Self>,
-    log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
-    _state_change: ws::StateListener,
-    _file_reader: Option<FileReader>,
-    upload_image: ws::Request,
-    image_uploading: bool,
-    _list_settings: ws::Request,
-    _select_image: ws::Request,
+pub(crate) struct TokenSettings {
     _delete_image: ws::Request,
+    _file_reader: Option<FileReader>,
+    _list_settings: ws::Request,
+    _local_update_listener: ws::Listener,
+    _log_handle: ContextHandle<log::Log>,
     _select_color: ws::Request,
+    _select_image: ws::Request,
+    _state_change: ws::StateListener,
     _update_name: ws::Request,
     _update_radius: ws::Request,
-    _local_update_listener: ws::Listener,
+    color: State<Option<api::Color>>,
+    crop_source_data: Option<(String, Vec<u8>)>,
+    crop_source_url: Option<String>,
+    gallery_open: bool,
+    image_uploading: bool,
+    image: State<Option<api::Id>>,
+    images: Vec<api::Image>,
+    log: log::Log,
+    name: State<Option<String>>,
+    preview_canvas: NodeRef,
+    preview_images: Images<Self>,
+    speed: State<f32>,
+    state: ws::State,
+    token_radius: State<f32>,
+    upload_image: ws::Request,
 }
 
 impl From<ImageMessage> for Msg {
@@ -83,7 +83,7 @@ impl From<ImageMessage> for Msg {
     }
 }
 
-impl Component for ObjectSettings {
+impl Component for TokenSettings {
     type Message = Msg;
     type Properties = Props;
 
@@ -104,31 +104,31 @@ impl Component for ObjectSettings {
             .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
 
         let mut this = Self {
-            state,
-            image: State::new(None),
-            color: State::new(None),
-            name: State::new(None),
-            token_radius: State::new(0.25),
-            speed: State::new(5.0),
-            images: Vec::new(),
-            gallery_open: false,
-            crop_source_url: None,
-            crop_source_data: None,
-            preview_canvas: NodeRef::default(),
-            preview_images: Images::new(),
-            log,
-            _log_handle,
-            _state_change,
-            _file_reader: None,
-            upload_image: ws::Request::new(),
-            image_uploading: false,
-            _list_settings: ws::Request::new(),
-            _select_image: ws::Request::new(),
             _delete_image: ws::Request::new(),
+            _file_reader: None,
+            _list_settings: ws::Request::new(),
+            _local_update_listener,
+            _log_handle,
             _select_color: ws::Request::new(),
+            _select_image: ws::Request::new(),
+            _state_change,
             _update_name: ws::Request::new(),
             _update_radius: ws::Request::new(),
-            _local_update_listener,
+            color: State::new(None),
+            crop_source_data: None,
+            crop_source_url: None,
+            gallery_open: false,
+            image_uploading: false,
+            image: State::new(None),
+            images: Vec::new(),
+            log,
+            name: State::new(None),
+            preview_canvas: NodeRef::default(),
+            preview_images: Images::new(),
+            speed: State::new(5.0),
+            state,
+            token_radius: State::new(0.25),
+            upload_image: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -265,7 +265,7 @@ impl Component for ObjectSettings {
     }
 }
 
-impl ObjectSettings {
+impl TokenSettings {
     fn refresh(&mut self, ctx: &Context<Self>) {
         if matches!(self.state, ws::State::Open) {
             self._list_settings = ctx
@@ -559,7 +559,7 @@ impl ObjectSettings {
     }
 }
 
-fn send_update(ctx: &Context<ObjectSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn send_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()

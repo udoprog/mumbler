@@ -121,14 +121,14 @@ impl Objects {
     }
 }
 
-impl FromIterator<(Id, LocalObject)> for Objects {
+impl FromIterator<LocalObject> for Objects {
     #[inline]
     fn from_iter<I>(iter: I) -> Self
     where
-        I: IntoIterator<Item = (Id, LocalObject)>,
+        I: IntoIterator<Item = LocalObject>,
     {
         Self {
-            values: iter.into_iter().collect(),
+            values: iter.into_iter().map(|o| (o.data.id, o)).collect(),
         }
     }
 }

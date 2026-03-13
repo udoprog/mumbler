@@ -8,6 +8,7 @@ mod hierarchy;
 mod images;
 mod log;
 mod objects;
+mod peers;
 mod state;
 
 use components::{Icon, Route};

@@ -67,35 +67,39 @@ impl Iterator for Walk<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let Some(iter) = self.stack.last_mut() else {
-                return None;
+            let iter = self.stack.last_mut()?;
+
+            let Some((_, id)) = iter.next() else {
+                self.stack.pop();
+                continue;
             };
 
-            if let Some((_, id)) = iter.next() {
-                if let Some(children) = self.inner.get(id) {
-                    self.stack.push(children.iter());
-                }
-
-                return Some(*id);
+            if let Some(children) = self.inner.get(id) {
+                self.stack.push(children.iter());
             }
+
+            return Some(*id);
         }
     }
 }
 
 impl DoubleEndedIterator for Walk<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
+        tracing::warn!("here...");
+
         loop {
-            let Some(iter) = self.stack.last_mut() else {
-                return None;
+            let iter = self.stack.last_mut()?;
+
+            let Some((_, id)) = iter.next_back() else {
+                self.stack.pop();
+                continue;
             };
 
-            if let Some((_, id)) = iter.next_back() {
-                if let Some(children) = self.inner.get(id) {
-                    self.stack.push(children.iter());
-                }
-
-                return Some(*id);
+            if let Some(children) = self.inner.get(id) {
+                self.stack.push(children.iter());
             }
+
+            return Some(*id);
         }
     }
 }

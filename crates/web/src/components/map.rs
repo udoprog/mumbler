@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use api::{Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteUpdateBody, Value, Vec3, VecXZ};
+use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3, VecXZ};
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
@@ -19,11 +19,12 @@ use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, PeerObject};
+use crate::peers::Peers;
 use crate::state::State;
 use crate::ws;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
-use super::{ObjectSettings, StaticSettings};
+use super::{GroupSettings, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -137,7 +138,7 @@ pub(crate) struct Map {
     open_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
-    peers: HashMap<(PeerId, Id), PeerObject>,
+    peers: Peers,
     selected: Option<Id>,
     start_press: Option<(VecXZ, bool)>,
     state: ws::State,
@@ -151,7 +152,7 @@ pub(crate) enum Msg {
     AnimationFrame,
     CancelDelete,
     CloseContextMenu,
-    CloseObjectSettings,
+    CloseSettings,
     ConfigResult(Result<Packet<api::UpdateConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     ConfirmDelete(Id),
@@ -284,7 +285,7 @@ impl Component for Map {
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
-            peers: HashMap::new(),
+            peers: Peers::default(),
             selected: None,
             start_press: None,
             state,
@@ -571,21 +572,28 @@ impl Component for Map {
             }
 
             if let Some(id) = self.open_settings {
-                <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
+                <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
                     <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                         <div class="modal-header">
-                            <h2>{"Object Settings"}</h2>
+                            <h2>{"Settings"}</h2>
                             <button class="btn sm square danger" title="Close"
-                                onclick={ctx.link().callback(|_| Msg::CloseObjectSettings)}>
+                                onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
                                 <Icon name="x-mark" />
                             </button>
                         </div>
                         <div class="modal-body">
-                            if self.objects.get(id).is_some_and(|o| o.is_static()) {
-                                <StaticSettings ws={ctx.props().ws.clone()} {id} />
-                            } else {
-                                <ObjectSettings ws={ctx.props().ws.clone()} {id} />
-                            }
+                            {match self.objects.get(id).map(|o| &o.data.kind).unwrap_or(&ObjectKind::Unknown) {
+                                ObjectKind::Static(..) => {
+                                    html! { <StaticSettings ws={ctx.props().ws.clone()} {id} /> }
+                                }
+                                ObjectKind::Group(..) => {
+                                    html! { <GroupSettings ws={ctx.props().ws.clone()} {id} /> }
+                                }
+                                ObjectKind::Token(..) => {
+                                    html! { <TokenSettings ws={ctx.props().ws.clone()} {id} /> }
+                                }
+                                _ => html! { <p class="hint">{"Unknown object type"}</p> },
+                            }}
                         </div>
                     </div>
                 </div>
@@ -908,7 +916,7 @@ impl Map {
                 self.open_settings = Some(id);
                 Ok(true)
             }
-            Msg::CloseObjectSettings => {
+            Msg::CloseSettings => {
                 self.open_settings = None;
                 Ok(true)
             }
@@ -1004,12 +1012,7 @@ impl Map {
 
                 self.config = Config::from_config(body.config);
 
-                self.objects = body
-                    .objects
-                    .iter()
-                    .map(LocalObject::from_remote)
-                    .map(|o| (o.id, (o)))
-                    .collect();
+                self.objects = body.objects.iter().map(LocalObject::from_remote).collect();
 
                 self.order.extend(self.objects.values());
 
@@ -1017,7 +1020,6 @@ impl Map {
                     .remote_objects
                     .iter()
                     .map(PeerObject::from_peer)
-                    .map(|peer| ((peer.peer_id, peer.id), peer))
                     .collect();
 
                 self.images.clear();
@@ -1137,7 +1139,7 @@ impl Map {
                             let data = ObjectData::from_remote(&object);
 
                             self.peers
-                                .insert((peer_id, data.id), PeerObject { peer_id, data });
+                                .insert(peer_id, data.id, PeerObject { peer_id, data });
                         }
 
                         for id in images {
@@ -1145,7 +1147,7 @@ impl Map {
                         }
                     }
                     RemoteUpdateBody::Leave { peer_id } => {
-                        self.peers.retain(|&(pid, _), _| pid != peer_id);
+                        self.peers.remove_peer(peer_id);
                     }
                     RemoteUpdateBody::Update {
                         object_id,
@@ -1153,7 +1155,7 @@ impl Map {
                         key,
                         value,
                     } => 'done: {
-                        let Some(a) = self.peers.get_mut(&(peer_id, object_id)) else {
+                        let Some(a) = self.peers.get_mut(peer_id, object_id) else {
                             break 'done;
                         };
 
@@ -1163,10 +1165,10 @@ impl Map {
                         let data = ObjectData::from_remote(&object);
 
                         self.peers
-                            .insert((peer_id, data.id), PeerObject { peer_id, data });
+                            .insert(peer_id, data.id, PeerObject { peer_id, data });
                     }
                     RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        self.peers.remove(&(peer_id, object_id));
+                        self.peers.remove(peer_id, object_id);
                     }
                     RemoteUpdateBody::ImageAdded { image_id, .. } => {
                         self.images.load(ctx, image_id);
@@ -1954,7 +1956,7 @@ impl Map {
         }
 
         // Draw remote static objects.
-        for o in self.peers.values() {
+        for o in self.peers.iter() {
             if let Some(s) = RenderStatic::from_data(o)
                 && !s.hidden
             {
@@ -1965,7 +1967,7 @@ impl Map {
         let renders = || {
             let remotes = self
                 .peers
-                .values()
+                .iter()
                 .flat_map(|peer| RenderToken::from_data(peer))
                 .filter(|render| !render.hidden);
 

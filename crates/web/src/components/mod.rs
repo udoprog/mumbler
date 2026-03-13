@@ -16,10 +16,13 @@ mod settings;
 pub(crate) use self::settings::Settings;
 
 mod object_settings;
-pub(crate) use self::object_settings::ObjectSettings;
+pub(crate) use self::object_settings::TokenSettings;
 
 mod static_settings;
 pub(crate) use self::static_settings::StaticSettings;
+
+mod group_settings;
+pub(crate) use self::group_settings::GroupSettings;
 
 mod mumble_status;
 pub(crate) use self::mumble_status::MumbleStatus;
