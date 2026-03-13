@@ -4,6 +4,7 @@ use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3, 
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
+use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
@@ -21,7 +22,6 @@ use crate::log;
 use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, PeerObject};
 use crate::peers::Peers;
 use crate::state::State;
-use crate::ws;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
 use super::{GroupSettings, StaticSettings, TokenSettings};
