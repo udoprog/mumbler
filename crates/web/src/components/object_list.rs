@@ -131,9 +131,7 @@ impl Component for ObjectList {
                 });
 
                 list.push(html! {
-                    <div key={format!("drop-above-{id}")} {class} {ondragover}>
-                        <div class="dotted" />
-                    </div>
+                    <div key={format!("drop-above-{id}")} {class} {ondragover} />
                 });
             }
 
@@ -193,9 +191,7 @@ impl Component for ObjectList {
 
             let drop_into = (ctx.props().drag_over == Some((Drag::Into, group, o.id))).then(|| {
                 html! {
-                    <div key={format!("drop-into")} class="object-drop active">
-                        <div class="dotted" />
-                    </div>
+                    <div key={format!("drop-into")} class="object-drop active" />
                 }
             });
 
@@ -226,6 +222,8 @@ impl Component for ObjectList {
                 selected.then_some("selected"),
             };
 
+            let sort = format!("{:?}", o.sort());
+
             let node = html! {
                 <div key={format!("object-{id}")} class="object-item">
                     <section
@@ -237,7 +235,7 @@ impl Component for ObjectList {
                         {ondragend}
                         {ondragover}
                     >
-                        <section {class}>
+                        <section {class} title={sort}>
                             <Icon name={icon_name} invert={true} small={true} />
 
                             <span class="object-label">{label}</span>
@@ -279,16 +277,18 @@ impl Component for ObjectList {
             });
 
             list.push(html! {
-                <div key={format!("drag-below-{id}")} {class} {ondragover}>
-                    <div class="dotted" />
-                </div>
+                <div key={format!("drag-below-{id}")} {class} {ondragover} />
             });
         }
 
+        let class = classes! {
+            "object-list",
+            ctx.props().drag_over.is_some().then_some("dragging"),
+        };
         let objects = VNode::from(VList::from(list));
 
         html! {
-            <div key={"objects-list"} class="object-list">{objects}</div>
+            <div key={"objects-list"} {class}>{objects}</div>
         }
     }
 }

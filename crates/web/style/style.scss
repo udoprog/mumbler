@@ -455,32 +455,28 @@ canvas#map {
     &-list {
         display: flex;
         flex-direction: column;
+
+        &.dragging {
+            .object-drop.active {
+                margin: 0.25em 0;
+            }
+        }
     }
 
     &-drop {
         display: block;
         height: 0.25em;
 
-        & > .dotted {
-            display: none;
+        &.active {
             border: 1px dashed var(--link-color);
             border-radius: $border-radius;
             height: 1.4em;
-            user-select: none;
-        }
-
-        &.active {
-            height: fit-content;
-            padding: 0.25em 0;
-
-            & > .dotted {
-                display: block;
-            }
+            display: block;
         }
     }
 
     &-children {
-        padding-left: 1em;
+        padding-left: 0.5em;
     }
 
     &-action {

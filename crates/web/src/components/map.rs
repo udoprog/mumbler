@@ -681,48 +681,65 @@ impl Map {
                     return Ok(false);
                 };
 
-                if object_id == target_id {
-                    return Ok(true);
-                }
-
                 let mut objects = self.objects.borrow_mut();
                 let mut order = self.order.borrow_mut();
 
-                let (new_sort, new_group) = {
+                let new_group = match drag {
+                    Drag::Into => target_id,
+                    _ => group,
+                };
+
+                // We have to refuse to drag a group into itself.
+                if object_id == new_group {
+                    return Ok(true);
+                }
+
+                let new_sort = {
                     let Some(target) = objects.get(target_id) else {
                         return Ok(true);
                     };
 
-                    let next = match drag {
+                    match drag {
                         Drag::Into => {
                             // When inserting into, we insert after the last element in the group.
-                            order.iter(target_id).last()
+                            let last = order
+                                .iter(target_id)
+                                .last()
+                                .and_then(|id| Some(objects.get(id)?.sort()));
+
+                            if let Some(last) = last {
+                                sorting::after(last)
+                            } else {
+                                target.id.as_bytes().to_vec()
+                            }
                         }
-                        Drag::Above => order
-                            .iter(group)
-                            .rev()
-                            .skip_while(|id| *id != target_id)
-                            .nth(1),
-                        Drag::Below => order.iter(group).skip_while(|id| *id != target_id).nth(1),
-                    };
+                        Drag::Above => {
+                            let prev = order
+                                .iter(group)
+                                .rev()
+                                .skip_while(|id| *id != target_id)
+                                .nth(1);
 
-                    let next = next.and_then(|id| Some(objects.get(id)?.sort()));
+                            let prev = prev.and_then(|id| Some(objects.get(id)?.sort()));
 
-                    let sort = match (drag, next) {
-                        (Drag::Above, Some(next)) => sorting::midpoint(next, target.sort()),
-                        (Drag::Above, _) => sorting::before(target.sort()),
-                        (Drag::Below, Some(next)) => sorting::midpoint(target.sort(), next),
-                        (Drag::Below, _) => sorting::after(target.sort()),
-                        (Drag::Into, Some(next)) => sorting::after(next),
-                        (Drag::Into, _) => target.id.as_bytes().to_vec(),
-                    };
+                            if let Some(prev) = prev {
+                                sorting::midpoint(prev, target.sort())
+                            } else {
+                                sorting::before(target.sort())
+                            }
+                        }
+                        Drag::Below => {
+                            let next = order.iter(group).skip_while(|id| *id != target_id).nth(1);
 
-                    let group = match drag {
-                        Drag::Into => target_id,
-                        _ => group,
-                    };
+                            let next = next.and_then(|id| Some(objects.get(id)?.sort()));
 
-                    (sort, group)
+                            if let Some(next) = next {
+                                sorting::midpoint(target.sort(), next)
+                            } else {
+                                sorting::after(target.sort())
+                            }
+                        }
+                    }
                 };
 
                 let Some((o_group, o_sort)) = objects.get_mut(object_id).and_then(|o| o.sort_mut())

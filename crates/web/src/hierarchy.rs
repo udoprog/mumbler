@@ -56,15 +56,15 @@ impl Hierarchy {
 }
 
 #[derive(PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) struct Node {
-    id: Id,
+pub(crate) struct Key {
     sort: Vec<u8>,
+    id: Id,
 }
 
 /// Reference to the mutable data of a hierarchy.
 #[derive(Default)]
 pub(crate) struct HierarchyRef {
-    values: HashMap<Id, BTreeSet<Node>>,
+    values: HashMap<Id, BTreeSet<Key>>,
 }
 
 impl HierarchyRef {
@@ -92,7 +92,7 @@ impl HierarchyRef {
 
     /// Remove the given id from all groups.
     pub(crate) fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = Node { id, sort };
+        let key = Key { id, sort };
 
         if let Some(values) = self.values.get_mut(&group) {
             values.remove(&key);
@@ -101,14 +101,14 @@ impl HierarchyRef {
 
     /// Insert a child into the given group with the given sort key.
     pub(crate) fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = Node { id, sort };
+        let key = Key { id, sort };
         self.values.entry(group).or_default().insert(key);
     }
 
     /// Extend the hierarchy with the given objects.
     pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
         for object in objects {
-            let key = Node {
+            let key = Key {
                 id: object.id,
                 sort: object.sort().to_vec(),
             };
@@ -120,7 +120,7 @@ impl HierarchyRef {
 
 pub(crate) struct Walk<'a> {
     mutable: &'a HierarchyRef,
-    stack: Vec<Iter<'a, Node>>,
+    stack: Vec<Iter<'a, Key>>,
 }
 
 impl Iterator for Walk<'_> {

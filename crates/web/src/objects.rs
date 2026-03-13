@@ -409,7 +409,9 @@ impl ObjectData {
             _ => ObjectKind::Unknown,
         };
 
-        let group = State::new(o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO));
+        let group = o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO);
+        let group = State::new(group);
+
         Self {
             id: o.id,
             group,
