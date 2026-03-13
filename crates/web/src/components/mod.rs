@@ -39,6 +39,9 @@ pub(crate) use self::log::Log;
 mod navigation;
 pub(crate) use self::navigation::{Navigation, Route};
 
+mod object_list;
+use self::object_list::ObjectList;
+
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]

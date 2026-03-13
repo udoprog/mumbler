@@ -1,9 +1,12 @@
-use api::{Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Value, Vec3, VecXZ};
-
+use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::ops::{Deref, DerefMut};
-use std::collections::HashMap;
 
-use api::Type;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use api::{
+    Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3, VecXZ,
+};
 
 use crate::state::State;
 
@@ -76,48 +79,114 @@ impl DerefMut for LocalObject {
 }
 
 #[derive(Default)]
-pub(crate) struct Objects {
+struct Mutable {
     values: HashMap<Id, LocalObject>,
+}
+
+#[derive(Default)]
+struct Inner {
+    mutable: RefCell<Mutable>,
+    version: Cell<u64>,
+}
+
+#[derive(Default, Clone)]
+pub(crate) struct Objects {
+    inner: Rc<Inner>,
+}
+
+impl PartialEq for Objects {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+            && self.inner.version.get() == other.inner.version.get()
+    }
 }
 
 impl Objects {
     #[inline]
+    pub(crate) fn borrow(&self) -> ObjectsRef<'_> {
+        ObjectsRef {
+            inner: self.inner.mutable.borrow(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn borrow_mut(&self) -> ObjectsRefMut<'_> {
+        ObjectsRefMut {
+            inner: self.inner.mutable.borrow_mut(),
+            version: &self.inner.version,
+        }
+    }
+}
+
+#[repr(transparent)]
+pub(crate) struct ObjectsRef<'a> {
+    inner: Ref<'a, Mutable>,
+}
+
+impl ObjectsRef<'_> {
+    #[inline]
     pub(crate) fn get(&self, id: Id) -> Option<&LocalObject> {
-        self.values.get(&id)
-    }
-
-    #[inline]
-    pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
-        self.values.get_mut(&id)
-    }
-
-    #[inline]
-    pub(crate) fn remove(&mut self, id: Id) -> Option<LocalObject> {
-        self.values.remove(&id)
-    }
-
-    #[inline]
-    pub(crate) fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
-        self.values.insert(id, object)
+        self.inner.values.get(&id)
     }
 
     #[inline]
     pub(crate) fn values(&self) -> impl Iterator<Item = &LocalObject> {
-        self.values.values()
-    }
-
-    #[inline]
-    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
-        self.values.values_mut()
+        self.inner.values.values()
     }
 
     #[inline]
     pub(crate) fn is_interactive(&self, id: Id) -> bool {
-        let Some(object) = self.values.get(&id) else {
+        let Some(object) = self.inner.values.get(&id) else {
             return false;
         };
 
         object.data.is_interactive()
+    }
+}
+
+pub(crate) struct ObjectsRefMut<'a> {
+    inner: RefMut<'a, Mutable>,
+    version: &'a Cell<u64>,
+}
+
+impl ObjectsRefMut<'_> {
+    #[inline]
+    pub(crate) fn remove(&mut self, id: Id) -> Option<LocalObject> {
+        self.inner.values.remove(&id)
+    }
+
+    #[inline]
+    pub(crate) fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
+        self.inner.values.insert(id, object)
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, id: Id) -> Option<&LocalObject> {
+        self.inner.values.get(&id)
+    }
+
+    #[inline]
+    pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
+        self.inner.values.get_mut(&id)
+    }
+
+    #[inline]
+    pub(crate) fn values(&self) -> impl Iterator<Item = &LocalObject> {
+        self.inner.values.values()
+    }
+
+    #[inline]
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
+        self.inner.values.values_mut()
+    }
+}
+
+impl Drop for ObjectsRefMut<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let version = self.version.get().wrapping_add(1);
+        self.version.set(version);
     }
 }
 
@@ -127,8 +196,17 @@ impl FromIterator<LocalObject> for Objects {
     where
         I: IntoIterator<Item = LocalObject>,
     {
-        Self {
+        let mutable = Mutable {
             values: iter.into_iter().map(|o| (o.data.id, o)).collect(),
+        };
+
+        let inner = Inner {
+            mutable: RefCell::new(mutable),
+            version: Cell::new(0),
+        };
+
+        Self {
+            inner: Rc::new(inner),
         }
     }
 }

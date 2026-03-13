@@ -12,19 +12,19 @@ use web_sys::{
     ResizeObserver, WheelEvent,
 };
 use yew::prelude::*;
-use yew::virtual_dom::{VList, VNode};
 
 use crate::components::Icon;
+use crate::components::object_list::Drag;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
 use crate::log;
-use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, PeerObject};
+use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRefMut, PeerObject};
 use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
-use super::{GroupSettings, StaticSettings, TokenSettings};
+use super::{GroupSettings, ObjectList, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -33,6 +33,29 @@ const ZOOM_FACTOR: f64 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const ANIMATION_FPS: u32 = 60;
 
+#[derive(Default)]
+struct Updates {
+    updates: HashSet<Id>,
+    look_at: HashSet<Id>,
+    transforms: HashSet<Id>,
+    selected: Option<Id>,
+}
+
+impl Updates {
+    fn look_at(&mut self, objects: &mut ObjectsRefMut, p: VecXZ, m: VecXZ) {
+        let Some(o) = self.selected.and_then(|id| objects.get_mut(id)) else {
+            return;
+        };
+
+        let Some(transform) = o.data.as_transform_mut() else {
+            return;
+        };
+
+        o.arrow_target = Some(m);
+        transform.front = p.direction_to(m).xyz(0.0);
+        self.updates.insert(o.id);
+    }
+}
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
@@ -86,13 +109,6 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Drag {
-    Above,
-    Into,
-    Below,
-}
-
 /// State for the right-click context menu.
 struct ContextMenu {
     /// Object the menu was opened for.
@@ -143,9 +159,15 @@ pub(crate) struct Map {
     start_press: Option<(VecXZ, bool)>,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
-    update_look_at_ids: HashSet<Id>,
-    update_transform_ids: HashSet<Id>,
     update_world: bool,
+    needs_redraw: bool,
+    object_onselect: Callback<Id>,
+    object_ondragover: Callback<(Drag, Id, Id)>,
+    object_ondragend: Callback<Id>,
+    object_onhiddentoggle: Callback<Id>,
+    object_onlockedtoggle: Callback<Id>,
+    object_onmumbletoggle: Callback<Id>,
+    updates: Updates,
 }
 
 pub(crate) enum Msg {
@@ -290,9 +312,17 @@ impl Component for Map {
             start_press: None,
             state,
             transform_requests: HashMap::new(),
-            update_look_at_ids: HashSet::new(),
-            update_transform_ids: HashSet::new(),
             update_world: false,
+            needs_redraw: false,
+            object_onselect: ctx.link().callback(|id| Msg::SelectObject(Some(id))),
+            object_ondragover: ctx
+                .link()
+                .callback(|(drag, group, id)| Msg::DragOver(drag, group, id)),
+            object_ondragend: ctx.link().callback(Msg::DragEnd),
+            object_onhiddentoggle: ctx.link().callback(Msg::ToggleHidden),
+            object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
+            object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
+            updates: Updates::default(),
         };
 
         this.refresh(ctx);
@@ -328,11 +358,11 @@ impl Component for Map {
             }
         };
 
-        if !self.update_transform_ids.is_empty() {
+        if !self.updates.transforms.is_empty() {
             self.send_transform_updates(ctx);
         }
 
-        if !self.update_look_at_ids.is_empty() {
+        if !self.updates.look_at.is_empty() {
             self.send_look_at_updates(ctx);
         }
 
@@ -341,9 +371,17 @@ impl Component for Map {
             self.update_world = false;
         }
 
-        if self.animation_interval.is_none()
-            && self.objects.values().any(|o| o.move_target.is_some())
-        {
+        if self.needs_redraw {
+            if let Err(error) = self.redraw() {
+                self.log.error("map::redraw", error);
+            }
+
+            self.needs_redraw = false;
+        }
+
+        let objects = self.objects.borrow();
+
+        if self.animation_interval.is_none() && objects.values().any(|o| o.move_target.is_some()) {
             let link = ctx.link().clone();
 
             let interval = Interval::new(1000 / ANIMATION_FPS, move || {
@@ -357,9 +395,11 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        let objects = self.objects.borrow();
+
         let pos;
 
-        if let Some(o) = self.selected.and_then(|id| self.objects.get(id))
+        if let Some(o) = self.updates.selected.and_then(|id| objects.get(id))
             && let Some(transform) = o.as_transform()
         {
             let p = transform.position;
@@ -376,7 +416,7 @@ impl Component for Map {
         }
 
         let object_list_header = {
-            let o = self.selected.and_then(|id| self.objects.get(id));
+            let o = self.updates.selected.and_then(|id| objects.get(id));
 
             let settings_classes = classes! {
                 "btn",
@@ -425,7 +465,7 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = self.selected.and_then(|id| self.objects.get(id));
+            let o = self.updates.selected.and_then(|id| objects.get(id));
 
             let is_hidden = o.map(|o| o.is_hidden()).unwrap_or_default();
             let is_locked = o.map(|o| o.is_locked()).unwrap_or_default();
@@ -514,304 +554,110 @@ impl Component for Map {
         };
 
         html! {
-            <>
-            <div class="row">
-                <div class="col-9 rows">
-                    {toolbar}
+            <ContextProvider<Objects> context={self.objects.clone()}>
+                <ContextProvider<Hierarchy> context={self.order.clone()}>
+                    <div class="row">
+                        <div class="col-9 rows">
+                            {toolbar}
 
-                    <div class="map-sizer" ref={self.canvas_sizer.clone()}>
-                        <canvas id="map" ref={self.canvas_ref.clone()}
-                            onpointerdown={ctx.link().callback(Msg::PointerDown)}
-                            onpointermove={ctx.link().callback(Msg::PointerMove)}
-                            onpointerup={ctx.link().callback(Msg::PointerUp)}
-                            onpointerleave={ctx.link().callback(|_| Msg::PointerLeave)}
-                            onwheel={ctx.link().callback(Msg::Wheel)}
-                            oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
-                        ></canvas>
+                            <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                                <canvas id="map" ref={self.canvas_ref.clone()}
+                                    onpointerdown={ctx.link().callback(Msg::PointerDown)}
+                                    onpointermove={ctx.link().callback(Msg::PointerMove)}
+                                    onpointerup={ctx.link().callback(Msg::PointerUp)}
+                                    onpointerleave={ctx.link().callback(|_| Msg::PointerLeave)}
+                                    onwheel={ctx.link().callback(Msg::Wheel)}
+                                    oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
+                                ></canvas>
 
-                        if let Some(menu) = &self.context_menu {
-                            {self.render_context_menu(ctx, menu)}
-                        }
+                                if let Some(menu) = &self.context_menu {
+                                    {self.render_context_menu(ctx, menu)}
+                                }
+                            </div>
+
+                            {pos}
+                        </div>
+
+                        <div class="col-3 rows">
+                            {object_list_header}
+
+                            <ObjectList
+                                key={format!("{}", Id::ZERO)}
+                                group={Id::ZERO}
+                                drag_over={self.drag_over}
+                                mumble_object={*self.config.mumble_object}
+                                selected={self.updates.selected}
+                                onselect={self.object_onselect.clone()}
+                                ondragover={self.object_ondragover.clone()}
+                                ondragend={self.object_ondragend.clone()}
+                                onhiddentoggle={self.object_onhiddentoggle.clone()}
+                                onlockedtoggle={self.object_onlockedtoggle.clone()}
+                                onmumbletoggle={self.object_onmumbletoggle.clone()}
+                                />
+                        </div>
                     </div>
 
-                    {pos}
-                </div>
-
-                <div class="col-3 rows">
-                    {object_list_header}
-
-                    {self.object_list(ctx, Id::ZERO)}
-                </div>
-            </div>
-
-            if let Some(id) = self.delete {
-                <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                    <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                        <div class="modal-header">
-                            <h2>{"Confirm Deletion"}</h2>
-                            <button class="btn sm square danger" title="Cancel"
-                                onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                <Icon name="x-mark" />
-                            </button>
-                        </div>
-                        <div class="modal-body rows">
-                            <p>{format!("Remove \"{}\"?", self.objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
-                            <div class="btn-group">
-                                <button class="btn danger"
-                                    onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
-                                    {"Delete"}
-                                </button>
-                                <button class="btn"
-                                    onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                    {"Cancel"}
-                                </button>
+                    if let Some(id) = self.delete {
+                        <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                            <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                                <div class="modal-header">
+                                    <h2>{"Confirm Deletion"}</h2>
+                                    <button class="btn sm square danger" title="Cancel"
+                                        onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                        <Icon name="x-mark" />
+                                    </button>
+                                </div>
+                                <div class="modal-body rows">
+                                    <p>{format!("Remove \"{}\"?", objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
+                                    <div class="btn-group">
+                                        <button class="btn danger"
+                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
+                                            {"Delete"}
+                                        </button>
+                                        <button class="btn"
+                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                            {"Cancel"}
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-            }
+                    }
 
-            if let Some(id) = self.open_settings {
-                <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
-                    <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                        <div class="modal-header">
-                            <h2>{"Settings"}</h2>
-                            <button class="btn sm square danger" title="Close"
-                                onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
-                                <Icon name="x-mark" />
-                            </button>
+                    if let Some(id) = self.open_settings {
+                        <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
+                            <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                                <div class="modal-header">
+                                    <h2>{"Settings"}</h2>
+                                    <button class="btn sm square danger" title="Close"
+                                        onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
+                                        <Icon name="x-mark" />
+                                    </button>
+                                </div>
+                                <div class="modal-body">
+                                    {match objects.get(id).map(|o| &o.data.kind).unwrap_or(&ObjectKind::Unknown) {
+                                        ObjectKind::Static(..) => {
+                                            html! { <StaticSettings ws={ctx.props().ws.clone()} {id} /> }
+                                        }
+                                        ObjectKind::Group(..) => {
+                                            html! { <GroupSettings ws={ctx.props().ws.clone()} {id} /> }
+                                        }
+                                        ObjectKind::Token(..) => {
+                                            html! { <TokenSettings ws={ctx.props().ws.clone()} {id} /> }
+                                        }
+                                        _ => html! { <p class="hint">{"Unknown object type"}</p> },
+                                    }}
+                                </div>
+                            </div>
                         </div>
-                        <div class="modal-body">
-                            {match self.objects.get(id).map(|o| &o.data.kind).unwrap_or(&ObjectKind::Unknown) {
-                                ObjectKind::Static(..) => {
-                                    html! { <StaticSettings ws={ctx.props().ws.clone()} {id} /> }
-                                }
-                                ObjectKind::Group(..) => {
-                                    html! { <GroupSettings ws={ctx.props().ws.clone()} {id} /> }
-                                }
-                                ObjectKind::Token(..) => {
-                                    html! { <TokenSettings ws={ctx.props().ws.clone()} {id} /> }
-                                }
-                                _ => html! { <p class="hint">{"Unknown object type"}</p> },
-                            }}
-                        </div>
-                    </div>
-                </div>
-            }
-            </>
+                    }
+                </ContextProvider<Hierarchy>>
+            </ContextProvider<Objects>>
         }
     }
 }
 
 impl Map {
-    fn object_list(&self, ctx: &Context<Self>, group: Id) -> Html {
-        let mut objects = Vec::new();
-
-        for (n, o) in self
-            .order
-            .iter(group)
-            .flat_map(|id| self.objects.get(id))
-            .enumerate()
-        {
-            let (icon_name, mumble_button, is_group) = match o.kind {
-                ObjectKind::Token(..) => ("user", true, false),
-                ObjectKind::Static(..) => ("squares-2x2", true, false),
-                ObjectKind::Group(..) => ("folder", false, true),
-                _ => ("question-mark-circle", false, false),
-            };
-
-            let id = o.id;
-            let selected = self.selected == Some(id);
-
-            let label = o.name().unwrap_or("");
-
-            let onclick = ctx.link().callback(move |ev: MouseEvent| {
-                ev.stop_propagation();
-                Msg::SelectObject(Some(id))
-            });
-
-            let ondragend = ctx.link().callback(move |ev: DragEvent| {
-                ev.stop_propagation();
-                Msg::DragEnd(id)
-            });
-
-            let ondragstart = ctx.link().callback(move |ev: DragEvent| {
-                ev.stop_propagation();
-                Msg::DragOver(Drag::Below, group, id)
-            });
-
-            let drag_into = if is_group { Drag::Into } else { Drag::Below };
-
-            let ondragover = ctx.link().callback(move |ev: DragEvent| {
-                ev.stop_propagation();
-                Msg::DragOver(drag_into, group, id)
-            });
-
-            if n == 0 {
-                let class = classes! {
-                    "object-drop",
-                    (self.drag_over == Some((Drag::Above, group, id))).then_some("active"),
-                };
-
-                let ondragover = ctx.link().callback(move |ev: DragEvent| {
-                    ev.stop_propagation();
-                    Msg::DragOver(Drag::Above, group, id)
-                });
-
-                objects.push(html! {
-                    <div key={format!("drop-above-{id}")} {class} {ondragover}>
-                        <div class="dotted" />
-                    </div>
-                });
-            }
-
-            let is_hidden = o.is_hidden();
-            let is_locked = o.is_locked();
-            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
-            let hidden_title = if is_hidden {
-                "Hidden from others"
-            } else {
-                "Visible to others"
-            };
-
-            let hidden_onclick = ctx.link().callback(move |ev: MouseEvent| {
-                ev.stop_propagation();
-                Msg::ToggleHidden(id)
-            });
-
-            let locked_icon = if is_locked {
-                "lock-closed"
-            } else {
-                "lock-open"
-            };
-            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
-
-            let locked_onclick = ctx.link().callback(move |ev: MouseEvent| {
-                ev.stop_propagation();
-                Msg::ToggleLocked(id)
-            });
-
-            let is_mumble = *self.config.mumble_object == Some(id);
-
-            let mumble_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_mumble.then_some("success"),
-                is_mumble.then_some("active"),
-                (!mumble_button).then_some("disabled"),
-            };
-
-            let mumble_onclick = mumble_button.then(|| {
-                ctx.link().callback(move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    Msg::ToggleMumbleObject(id)
-                })
-            });
-
-            let hidden_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_hidden.then_some("danger"),
-                is_hidden.then_some("active"),
-            };
-
-            let locked_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_locked.then_some("danger"),
-                is_locked.then_some("active"),
-            };
-
-            let drop_into = (self.drag_over == Some((Drag::Into, group, o.id))).then(|| {
-                html! {
-                    <div key={format!("drop-into")} class="object-drop active">
-                        <div class="dotted" />
-                    </div>
-                }
-            });
-
-            let children = match o.kind {
-                ObjectKind::Group(..) => {
-                    let children = self.object_list(ctx, o.id);
-
-                    Some(html! {
-                        <section key={format!("{id}-children")} class="object-children">
-                            {children}
-                            {drop_into}
-                        </section>
-                    })
-                }
-                _ => None,
-            };
-
-            let class = classes! {
-                "object-button",
-                selected.then_some("selected"),
-            };
-
-            let node = html! {
-                <div key={format!("object-{id}")} class="object-item">
-                    <section
-                        key={format!("drag-{id}")}
-                        class="object-drag"
-                        draggable={true}
-                        {onclick}
-                        {ondragstart}
-                        {ondragend}
-                        {ondragover}
-                    >
-                        <section {class}>
-                            <Icon name={icon_name} invert={true} small={true} />
-
-                            <span class="object-label">{label}</span>
-
-                            <button class={mumble_classes}
-                                title="Toggle as MumbleLink Source"
-                                onclick={mumble_onclick}>
-                                <Icon name="mumble" />
-                            </button>
-
-                            <button class={hidden_classes}
-                                title={hidden_title}
-                                onclick={hidden_onclick}>
-                                <Icon name={hidden_icon} />
-                            </button>
-
-                            <button class={locked_classes}
-                                title={locked_title}
-                                onclick={locked_onclick}>
-                                <Icon name={locked_icon} />
-                            </button>
-                        </section>
-                    </section>
-
-                    {children}
-                </div>
-            };
-
-            objects.push(node);
-
-            let class = classes! {
-                "object-drop",
-                (self.drag_over == Some((Drag::Below, group, id))).then_some("active"),
-            };
-
-            let ondragover = ctx.link().callback(move |ev: DragEvent| {
-                ev.stop_propagation();
-                Msg::DragOver(Drag::Below, group, id)
-            });
-
-            objects.push(html! {
-                <div key={format!("drag-below-{id}")} {class} {ondragover}>
-                    <div class="dotted" />
-                </div>
-            });
-        }
-
-        let objects = VNode::from(VList::from(objects));
-
-        html! {
-            <div key={"objects-list"} class="object-list">{objects}</div>
-        }
-    }
-
     fn refresh(&mut self, ctx: &Context<Self>) {
         if matches!(self.state, ws::State::Open) {
             self._initialize = ctx
@@ -839,30 +685,28 @@ impl Map {
                     return Ok(true);
                 }
 
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
                 let (new_sort, new_group) = {
-                    let Some(target) = self.objects.get(target_id) else {
+                    let Some(target) = objects.get(target_id) else {
                         return Ok(true);
                     };
 
                     let next = match drag {
                         Drag::Into => {
                             // When inserting into, we insert after the last element in the group.
-                            self.order.iter(target_id).last()
+                            order.iter(target_id).last()
                         }
-                        Drag::Above => self
-                            .order
+                        Drag::Above => order
                             .iter(group)
                             .rev()
                             .skip_while(|id| *id != target_id)
                             .nth(1),
-                        Drag::Below => self
-                            .order
-                            .iter(group)
-                            .skip_while(|id| *id != target_id)
-                            .nth(1),
+                        Drag::Below => order.iter(group).skip_while(|id| *id != target_id).nth(1),
                     };
 
-                    let next = next.and_then(|id| Some(self.objects.get(id)?.sort()));
+                    let next = next.and_then(|id| Some(objects.get(id)?.sort()));
 
                     let sort = match (drag, next) {
                         (Drag::Above, Some(next)) => sorting::midpoint(next, target.sort()),
@@ -881,8 +725,7 @@ impl Map {
                     (sort, group)
                 };
 
-                let Some((o_group, o_sort)) =
-                    self.objects.get_mut(object_id).and_then(|o| o.sort_mut())
+                let Some((o_group, o_sort)) = objects.get_mut(object_id).and_then(|o| o.sort_mut())
                 else {
                     return Ok(true);
                 };
@@ -904,8 +747,8 @@ impl Map {
                 }
 
                 if sort_changed || group_changed {
-                    self.order.remove(old_group, old_sort, object_id);
-                    self.order.insert(new_group, new_sort, object_id);
+                    order.remove(old_group, old_sort, object_id);
+                    order.insert(new_group, new_sort, object_id);
                 }
 
                 Ok(true)
@@ -944,7 +787,9 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleLocked(id) => {
-                let Some(object) = self.objects.get_mut(id) else {
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(object) = objects.get_mut(id) else {
                     return Ok(false);
                 };
 
@@ -952,8 +797,8 @@ impl Map {
                     return Ok(false);
                 };
 
-                if self.selected == Some(id) {
-                    self.selected = None;
+                if self.updates.selected == Some(id) {
+                    self.updates.selected = None;
                 }
 
                 let new = !**locked;
@@ -969,7 +814,9 @@ impl Map {
             Msg::ToggleHidden(id) => {
                 self.context_menu = None;
 
-                let Some(object) = self.objects.get_mut(id) else {
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(object) = objects.get_mut(id) else {
                     return Ok(false);
                 };
 
@@ -1013,8 +860,9 @@ impl Map {
                 self.config = Config::from_config(body.config);
 
                 self.objects = body.objects.iter().map(LocalObject::from_remote).collect();
-
-                self.order.extend(self.objects.values());
+                self.order
+                    .borrow_mut()
+                    .extend(self.objects.borrow().values());
 
                 self.peers = body
                     .remote_objects
@@ -1032,38 +880,36 @@ impl Map {
                     self.images.load(ctx, image_id);
                 }
 
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(true)
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-
                 let changed = self.config.update(body.key, body.value);
-
-                if changed {
-                    self.redraw()?;
-                }
-
+                self.needs_redraw = changed;
                 Ok(changed)
             }
             Msg::LocalUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
 
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
                 let update = match body {
                     LocalUpdateBody::ObjectCreated { object } => {
                         let o = LocalObject::from_remote(&object);
-                        self.order.insert(*o.group, o.sort().to_vec(), o.id);
-                        self.objects.insert(o.id, o);
+                        order.insert(*o.group, o.sort().to_vec(), o.id);
+                        objects.insert(o.id, o);
                         true
                     }
                     LocalUpdateBody::ObjectRemoved { object_id } => {
-                        if let Some(o) = self.objects.remove(object_id) {
-                            self.order.remove(*o.group, o.sort().to_vec(), o.id);
+                        if let Some(o) = objects.remove(object_id) {
+                            order.remove(*o.group, o.sort().to_vec(), o.id);
                         }
 
-                        if self.selected == Some(object_id) {
+                        if self.updates.selected == Some(object_id) {
                             ctx.link().send_message(Msg::SelectObject(None));
                         }
 
@@ -1075,7 +921,7 @@ impl Map {
                         value,
                     } => {
                         'done: {
-                            let Some(o) = self.objects.get_mut(object_id) else {
+                            let Some(o) = objects.get_mut(object_id) else {
                                 break 'done false;
                             };
 
@@ -1097,8 +943,8 @@ impl Map {
                                         break 'done false;
                                     };
 
-                                    self.order.remove(*o.group, old, o.id);
-                                    self.order.insert(*o.group, o.sort().to_vec(), o.id);
+                                    order.remove(*o.group, old, o.id);
+                                    order.insert(*o.group, o.sort().to_vec(), o.id);
                                     true
                                 }
                                 _ => false,
@@ -1117,7 +963,7 @@ impl Map {
                     }
                 };
 
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(update)
             }
             Msg::RemoteUpdate(body) => {
@@ -1178,7 +1024,7 @@ impl Map {
                     }
                 }
 
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(false)
             }
             Msg::UpdateResult(body) => {
@@ -1193,12 +1039,12 @@ impl Map {
             }
             Msg::Resized => {
                 self.resize_canvas();
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(false)
             }
             Msg::ImageMessage(msg) => {
                 self.images.update(msg);
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(false)
             }
             Msg::PointerDown(ev) => {
@@ -1223,7 +1069,7 @@ impl Map {
             }
             Msg::AnimationFrame => {
                 self.interpolate_movement();
-                self.redraw()?;
+                self.needs_redraw = true;
                 Ok(false)
             }
             Msg::KeyDown(ev) => {
@@ -1235,7 +1081,7 @@ impl Map {
                 Ok(false)
             }
             Msg::SelectObject(id) => {
-                self.selected = id;
+                self.updates.selected = id;
                 self.context_menu = None;
 
                 if id == self.delete {
@@ -1244,8 +1090,10 @@ impl Map {
 
                 'out: {
                     if *self.config.mumble_follow && *self.config.mumble_object != id {
+                        let objects = self.objects.borrow();
+
                         if let Some(id) = id
-                            && !self.objects.is_interactive(id)
+                            && !objects.is_interactive(id)
                         {
                             break 'out;
                         }
@@ -1386,7 +1234,9 @@ impl Map {
             return Ok(());
         };
 
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
+        let mut objects = self.objects.borrow_mut();
+
+        let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
             return Ok(());
         };
 
@@ -1397,10 +1247,10 @@ impl Map {
 
         if let Some(look_at) = o.as_look_at_mut() {
             **look_at = None;
-            self.update_look_at_ids.insert(object_id);
+            self.updates.look_at.insert(object_id);
         }
 
-        self.redraw()?;
+        self.needs_redraw = true;
         Ok(())
     }
 
@@ -1413,7 +1263,9 @@ impl Map {
             return Ok(());
         };
 
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
+        let mut objects = self.objects.borrow_mut();
+
+        let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
             return Ok(());
         };
 
@@ -1421,21 +1273,23 @@ impl Map {
 
         if let Some(look_at) = o.as_look_at_mut() {
             **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-            self.update_look_at_ids.insert(object_id);
+            self.updates.look_at.insert(object_id);
         }
 
         if let Some(transform) = o.as_transform() {
             let p = transform.position.xz();
             self.start_press = Some((p, true));
-            self.look_at(p, m);
+            self.updates.look_at(&mut objects, p, m);
         }
 
-        self.redraw()?;
+        self.needs_redraw = true;
         Ok(())
     }
 
     fn interpolate_movement(&mut self) {
-        for o in self.objects.values_mut() {
+        let mut objects = self.objects.borrow_mut();
+
+        for o in objects.values_mut() {
             let id = o.id;
 
             let Some((transform, look_at, speed)) = o.data.as_interpolate_mut() else {
@@ -1456,7 +1310,7 @@ impl Map {
                 if distance < 0.01 {
                     transform.position = target.xyz(0.0);
                     o.move_target = None;
-                    self.update_transform_ids.insert(id);
+                    self.updates.transforms.insert(id);
                     break 'move_done;
                 }
 
@@ -1472,7 +1326,7 @@ impl Map {
                     transform.front = p.direction_to(target).xyz(0.0);
                 }
 
-                self.update_transform_ids.insert(id);
+                self.updates.transforms.insert(id);
             };
 
             'look_done: {
@@ -1482,23 +1336,25 @@ impl Map {
 
                 o.arrow_target = Some(t.xz());
                 transform.front = p.direction_to(t.xz()).xyz(0.0);
-                self.update_transform_ids.insert(id);
+                self.updates.transforms.insert(id);
             };
         }
 
-        if self.objects.values().all(|o| o.move_target.is_none()) {
+        if objects.values().all(|o| o.move_target.is_none()) {
             self.animation_interval = None;
         }
     }
 
     fn send_transform_updates(&mut self, ctx: &Context<Self>) {
         if !matches!(self.state, ws::State::Open) {
-            self.update_transform_ids.clear();
+            self.updates.transforms.clear();
             return;
         }
 
-        for id in self.update_transform_ids.drain() {
-            let Some(o) = self.objects.get(id) else {
+        let objects = self.objects.borrow();
+
+        for id in self.updates.transforms.drain() {
+            let Some(o) = objects.get(id) else {
                 continue;
             };
 
@@ -1513,12 +1369,14 @@ impl Map {
 
     fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
         if !matches!(self.state, ws::State::Open) {
-            self.update_look_at_ids.clear();
+            self.updates.look_at.clear();
             return;
         }
 
-        for id in self.update_look_at_ids.drain() {
-            let Some(o) = self.objects.get(id) else {
+        let objects = self.objects.borrow();
+
+        for id in self.updates.look_at.drain() {
+            let Some(o) = objects.get(id) else {
                 continue;
             };
 
@@ -1551,8 +1409,9 @@ impl Map {
         let t = ViewTransform::new(&canvas, &self.config);
         let w = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
 
-        let hit = self
-            .objects
+        let objects = self.objects.borrow();
+
+        let hit = objects
             .values()
             .find(|o| {
                 let Some((transform, click_radius)) = o.as_click_geometry() else {
@@ -1564,7 +1423,7 @@ impl Map {
             .map(|o| o.id);
 
         if let Some(object_id) = hit {
-            self.selected = Some(object_id);
+            self.updates.selected = Some(object_id);
             self.context_menu = Some(ContextMenu {
                 object_id,
                 x: ev.offset_x() as f64,
@@ -1581,7 +1440,9 @@ impl Map {
         let object_id = menu.object_id;
         let style = format!("left: {}px; top: {}px;", menu.x, menu.y);
 
-        let Some(o) = self.objects.get(object_id) else {
+        let objects = self.objects.borrow();
+
+        let Some(o) = objects.get(object_id) else {
             return html! {};
         };
 
@@ -1627,9 +1488,11 @@ impl Map {
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
         ev.prevent_default();
 
+        let mut objects = self.objects.borrow_mut();
+
         self.context_menu = None;
 
-        let needs_redraw = 'out: {
+        self.needs_redraw = 'out: {
             match ev.button() {
                 LEFT_MOUSE_BUTTON => {
                     let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
@@ -1642,8 +1505,7 @@ impl Map {
                     let mut hit_something = false;
 
                     if !ev.shift_key() {
-                        let hit = self
-                            .objects
+                        let hit = objects
                             .values()
                             .find(|o| {
                                 let Some((transform, click_radius)) = o.as_click_geometry() else {
@@ -1655,7 +1517,7 @@ impl Map {
                             .map(|o| o.id);
 
                         if let Some(hit_id) = hit
-                            && self.selected != Some(hit_id)
+                            && self.updates.selected != Some(hit_id)
                         {
                             ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
                             self.delete = None;
@@ -1665,7 +1527,8 @@ impl Map {
                         hit_something = hit.is_some();
                     }
 
-                    let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
+                    let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id))
+                    else {
                         break 'out hit_something;
                     };
 
@@ -1685,17 +1548,17 @@ impl Map {
 
                         if is_static {
                             // Shift-drag on a static object rotates it.
-                            self.look_at(p, e);
+                            self.updates.look_at(&mut objects, p, e);
                         } else if let Some(look_at) = object.as_look_at_mut() {
                             **look_at = Some(e.xyz(0.0));
-                            self.look_at(p, e);
-                            self.update_look_at_ids.insert(object_id);
+                            self.updates.look_at(&mut objects, p, e);
+                            self.updates.look_at.insert(object_id);
                         }
                     } else if is_static {
                         // Static objects snap immediately to where they are dropped.
                         transform.position = e.xyz(0.0);
                         self.start_press = Some((e, false));
-                        self.update_transform_ids.insert(object_id);
+                        self.updates.transforms.insert(object_id);
                     } else {
                         self.start_press = Some((e, false));
                         object.move_target = Some(e);
@@ -1712,14 +1575,12 @@ impl Map {
             }
         };
 
-        if needs_redraw {
-            self.redraw()?;
-        }
-
         Ok(())
     }
 
     fn on_pointer_move(&mut self, ev: PointerEvent) -> Result<(), Error> {
+        let mut objects = self.objects.borrow_mut();
+
         ev.prevent_default();
 
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
@@ -1728,15 +1589,13 @@ impl Map {
 
         let v = ViewTransform::new(&canvas, &self.config);
 
-        let mut needs_redraw = false;
-
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = ev.client_x() as f64 - ax;
             let dy = ev.client_y() as f64 - ay;
             *self.config.pan = self.config.pan.add(dx, dy);
             self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
             self.update_world = true;
-            needs_redraw = true;
+            self.needs_redraw = true;
         }
 
         let m = v.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
@@ -1747,7 +1606,7 @@ impl Map {
                 break 'done;
             };
 
-            let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
+            let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
                 break 'done;
             };
 
@@ -1759,14 +1618,14 @@ impl Map {
                 };
 
                 if o.is_static() {
-                    self.look_at(p, m);
+                    self.updates.look_at(&mut objects, p, m);
                 } else if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-                    self.update_look_at_ids.insert(o.id);
-                    self.look_at(p, m);
+                    self.updates.look_at.insert(o.id);
+                    self.updates.look_at(&mut objects, p, m);
                 }
 
-                needs_redraw = true;
+                self.needs_redraw = true;
                 break 'done;
             }
 
@@ -1775,43 +1634,27 @@ impl Map {
             {
                 // Static objects snap immediately while dragging.
                 transform.position = m.xyz(0.0);
-                self.update_transform_ids.insert(o.id);
-                needs_redraw = true;
+                self.updates.transforms.insert(o.id);
+                self.needs_redraw = true;
                 break 'done;
             }
 
             o.move_target = Some(m);
-            needs_redraw = true;
-        }
-
-        if needs_redraw {
-            self.redraw()?;
+            self.needs_redraw = true;
         }
 
         Ok(())
     }
 
-    fn look_at(&mut self, p: VecXZ, m: VecXZ) {
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
-            return;
-        };
-
-        let Some(transform) = o.data.as_transform_mut() else {
-            return;
-        };
-
-        o.arrow_target = Some(m);
-        transform.front = p.direction_to(m).xyz(0.0);
-        self.update_transform_ids.insert(o.id);
-    }
-
     fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
-        let needs_redraw = {
+        let mut objects = self.objects.borrow_mut();
+
+        self.needs_redraw = {
             match ev.button() {
                 LEFT_MOUSE_BUTTON => {
                     self.start_press = None;
 
-                    if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) {
+                    if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
                         object.arrow_target = None;
                     }
 
@@ -1825,31 +1668,25 @@ impl Map {
             }
         };
 
-        if needs_redraw {
-            self.redraw()?;
-        }
-
         Ok(())
     }
 
     fn on_pointer_leave(&mut self) -> Result<(), Error> {
+        let mut objects = self.objects.borrow_mut();
+
         let selected_arrow = self
             .selected
-            .and_then(|id| self.objects.get(id))
+            .and_then(|id| objects.get(id))
             .and_then(|o| o.arrow_target);
 
-        let needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
+        self.needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
 
         self.pan_anchor = None;
         self.start_press = None;
         self.mouse_world_pos = None;
 
-        if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) {
+        if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
             object.arrow_target = None;
-        }
-
-        if needs_redraw {
-            self.redraw()?;
         }
 
         Ok(())
@@ -1882,7 +1719,7 @@ impl Map {
         self.config.pan.y += my - c2.y;
 
         self.update_world = true;
-        self.redraw()?;
+        self.needs_redraw = true;
         Ok(())
     }
 
@@ -1945,10 +1782,13 @@ impl Map {
 
         render::draw_grid(&cx, &t, &self.config.extent, *self.config.zoom);
 
-        let selected = self.selected;
+        let selected = self.updates.selected;
+
+        let order = self.order.borrow();
+        let objects = self.objects.borrow();
 
         // Draw static objects first (behind tokens).
-        for o in self.objects.values() {
+        for o in objects.values() {
             if let Some(mut s) = RenderStatic::from_data(o) {
                 s.selected = selected == Some(o.id);
                 render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
@@ -1971,8 +1811,8 @@ impl Map {
                 .flat_map(|peer| RenderToken::from_data(peer))
                 .filter(|render| !render.hidden);
 
-            let locals = self.order.iter_all().rev().flat_map(move |id| {
-                let data = &self.objects.get(id)?;
+            let locals = order.iter_all().rev().flat_map(|id| {
+                let data = objects.get(id)?;
                 let mut token = RenderToken::from_data(data)?;
                 token.player = true;
                 token.selected = selected == Some(data.id);
@@ -1984,7 +1824,7 @@ impl Map {
 
         let selected_arrow = self
             .selected
-            .and_then(|id| self.objects.get(id))
+            .and_then(|id| objects.get(id))
             .and_then(|o| o.arrow_target.as_ref());
 
         for token in renders() {
