@@ -23,6 +23,9 @@ pub struct Id {
 }
 
 impl Id {
+    /// The zero id.
+    pub const ZERO: Self = Self { raw: [0u8; 8] };
+
     /// Create a new identifier from a u64.
     #[inline]
     pub const fn new(id: u64) -> Self {

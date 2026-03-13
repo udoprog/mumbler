@@ -408,25 +408,8 @@ impl Backend {
             changed: HashSet::new(),
         };
 
-        let sorts: Vec<(Id, Vec<u8>)>;
-
         let (sort, props) = {
             let mut state = self.inner.client_state.lock().await;
-
-            sorts = state
-                .objects
-                .values()
-                .map(|o| {
-                    (
-                        o.id,
-                        o.props
-                            .get(Key::SORT)
-                            .as_bytes()
-                            .unwrap_or_default()
-                            .to_vec(),
-                    )
-                })
-                .collect();
 
             let last = state
                 .objects
@@ -447,12 +430,6 @@ impl Backend {
             state.objects_added.insert(id);
             (sort, props)
         };
-
-        for (id, sort) in sorts {
-            tracing::warn!(?id, sort = ?bstr::BStr::new(&sort), "Existing sort value");
-        }
-
-        tracing::warn!(sort = ?bstr::BStr::new(&sort.as_bytes().unwrap_or_default()), "New sort value");
 
         self.db().set_property_value(id, Key::SORT, sort).await?;
         self.inner.client_notify.notify_one();

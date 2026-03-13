@@ -14,6 +14,7 @@ use web_sys::{
     ResizeObserver, WheelEvent,
 };
 use yew::prelude::*;
+use yew::virtual_dom::{VList, VNode};
 
 use crate::components::Icon;
 use crate::error::Error;
@@ -41,7 +42,7 @@ pub(crate) struct Config {
     pub(crate) pan: State<Pan>,
     pub(crate) extent: State<Extent>,
     pub(crate) mumble_object: State<Option<Id>>,
-    pub(crate) mumble_follow_selection: State<bool>,
+    pub(crate) mumble_follow: State<bool>,
 }
 
 impl Config {
@@ -63,9 +64,7 @@ impl Config {
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(value.as_id()),
-            Key::MUMBLE_FOLLOW_SELECTION => self
-                .mumble_follow_selection
-                .update(value.as_bool().unwrap_or(false)),
+            Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool().unwrap_or(false)),
             _ => false,
         }
     }
@@ -86,7 +85,7 @@ impl Default for Config {
             pan: State::new(Pan::zero()),
             extent: State::new(Extent::arena()),
             mumble_object: State::new(None),
-            mumble_follow_selection: State::new(false),
+            mumble_follow: State::new(false),
         }
     }
 }
@@ -97,6 +96,7 @@ pub(crate) struct PeerObject {
 }
 
 impl PeerObject {
+    #[inline]
     fn from_peer(remote: &RemotePeerObject) -> Self {
         Self {
             peer_id: remote.peer_id,
@@ -117,6 +117,64 @@ impl LocalObject {
             data: ObjectData::from_remote(remote),
             move_target: None,
             arrow_target: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct Objects {
+    values: HashMap<Id, LocalObject>,
+}
+
+impl Objects {
+    #[inline]
+    fn get(&self, id: Id) -> Option<&LocalObject> {
+        self.values.get(&id)
+    }
+
+    #[inline]
+    fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
+        self.values.get_mut(&id)
+    }
+
+    #[inline]
+    fn remove(&mut self, id: Id) -> Option<LocalObject> {
+        self.values.remove(&id)
+    }
+
+    #[inline]
+    fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
+        self.values.insert(id, object)
+    }
+
+    #[inline]
+    fn values(&self) -> impl Iterator<Item = &LocalObject> {
+        self.values.values()
+    }
+
+    #[inline]
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
+        self.values.values_mut()
+    }
+
+    #[inline]
+    fn is_interactive(&self, id: Id) -> bool {
+        let Some(object) = self.values.get(&id) else {
+            return false;
+        };
+
+        object.data.is_interactive()
+    }
+}
+
+impl FromIterator<(Id, LocalObject)> for Objects {
+    #[inline]
+    fn from_iter<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = (Id, LocalObject)>,
+    {
+        Self {
+            values: iter.into_iter().collect(),
         }
     }
 }
@@ -306,6 +364,7 @@ pub(crate) enum ObjectKind {
 
 pub(crate) struct ObjectData {
     pub(crate) id: Id,
+    pub(crate) group: State<Id>,
     pub(crate) kind: ObjectKind,
 }
 
@@ -319,7 +378,12 @@ impl ObjectData {
             _ => ObjectKind::Unknown,
         };
 
-        Self { id: o.id, kind }
+        let group = State::new(o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO));
+        Self {
+            id: o.id,
+            group,
+            kind,
+        }
     }
 
     #[inline]
@@ -338,11 +402,11 @@ impl ObjectData {
     }
 
     #[inline]
-    fn sort_mut(&mut self) -> Option<&mut State<Vec<u8>>> {
+    fn sort_mut(&mut self) -> Option<(&mut State<Id>, &mut State<Vec<u8>>)> {
         match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.sort),
-            ObjectKind::Static(this) => Some(&mut this.sort),
-            ObjectKind::Group(this) => Some(&mut this.sort),
+            ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
+            ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),
+            ObjectKind::Group(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Unknown => None,
         }
     }
@@ -454,15 +518,6 @@ impl ObjectData {
     }
 
     #[inline]
-    fn image(&self) -> Option<Id> {
-        match &self.kind {
-            ObjectKind::Token(this) => *this.image,
-            ObjectKind::Static(this) => *this.image,
-            _ => None,
-        }
-    }
-
-    #[inline]
     fn as_locked_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.locked),
@@ -490,6 +545,46 @@ pub(crate) enum Drag {
     Below,
 }
 
+#[derive(Default)]
+struct Hierarchy {
+    inner: HashMap<Id, BTreeSet<(Vec<u8>, Id)>>,
+}
+
+impl Hierarchy {
+    /// Get the children of the given group, sorted by their sort key.
+    fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
+        self.inner
+            .get(&group)
+            .into_iter()
+            .flatten()
+            .map(|(_, id)| *id)
+    }
+
+    /// Remove the given id from all groups.
+    fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
+        let key = (sort, id);
+
+        if let Some(values) = self.inner.get_mut(&group) {
+            values.remove(&key);
+        }
+    }
+
+    /// Insert a child into the given group with the given sort key.
+    fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
+        self.inner.entry(group).or_default().insert((sort, id));
+    }
+
+    /// Extend the hierarchy with the given objects.
+    fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
+        for object in objects {
+            self.inner
+                .entry(*object.data.group)
+                .or_default()
+                .insert((object.data.sort().to_vec(), object.data.id));
+        }
+    }
+}
+
 pub(crate) struct Map {
     _create_object: ws::Request,
     _create_static: ws::Request,
@@ -502,8 +597,9 @@ pub(crate) struct Map {
     _log_handle: ContextHandle<log::Log>,
     _remote_update_listener: ws::Listener,
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
-    _set_mumble_follow_selection: ws::Request,
+    _set_mumble_follow: ws::Request,
     _set_sort: ws::Request,
+    _set_group: ws::Request,
     _state_change: ws::StateListener,
     _toggle_locked_request: ws::Request,
     _toggle_mumble_request: ws::Request,
@@ -514,15 +610,15 @@ pub(crate) struct Map {
     config: Config,
     context_menu: Option<ContextMenu>,
     delete: Option<Id>,
-    drag_over: Option<(Drag, Id)>,
+    drag_over: Option<(Drag, Id, Id)>,
     hide_requests: HashMap<Id, ws::Request>,
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
     mouse_world_pos: Option<VecXZ>,
-    objects: HashMap<Id, LocalObject>,
+    objects: Objects,
     open_settings: Option<Id>,
-    order: BTreeSet<(Vec<u8>, Id)>,
+    order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: HashMap<(PeerId, Id), PeerObject>,
     selected: Option<Id>,
@@ -558,7 +654,7 @@ pub(crate) enum Msg {
     CreateGroup,
     DeleteObject(Id),
     DragEnd(Id),
-    DragOver(Drag, Id),
+    DragOver(Drag, Id, Id),
     ImageMessage(ImageMessage),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
@@ -658,8 +754,9 @@ impl Component for Map {
             _log_handle,
             _remote_update_listener,
             _resize_observer: None,
-            _set_mumble_follow_selection: ws::Request::new(),
+            _set_mumble_follow: ws::Request::new(),
             _set_sort: ws::Request::new(),
+            _set_group: ws::Request::new(),
             _state_change,
             _toggle_locked_request: ws::Request::new(),
             _toggle_mumble_request: ws::Request::new(),
@@ -676,9 +773,9 @@ impl Component for Map {
             log,
             look_at_requests: HashMap::new(),
             mouse_world_pos: None,
-            objects: HashMap::new(),
+            objects: Objects::default(),
             open_settings: None,
-            order: BTreeSet::new(),
+            order: Hierarchy::default(),
             pan_anchor: None,
             peers: HashMap::new(),
             selected: None,
@@ -754,7 +851,7 @@ impl Component for Map {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let pos;
 
-        if let Some(o) = self.selected.and_then(|id| self.objects.get(&id))
+        if let Some(o) = self.selected.and_then(|id| self.objects.get(id))
             && let Some(transform) = o.data.as_transform()
         {
             let p = transform.position;
@@ -771,7 +868,7 @@ impl Component for Map {
         }
 
         let object_list_header = {
-            let o = self.selected.and_then(|id| self.objects.get(&id));
+            let o = self.selected.and_then(|id| self.objects.get(id));
 
             let settings_classes = classes! {
                 "btn",
@@ -820,7 +917,7 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = self.selected.and_then(|id| self.objects.get(&id));
+            let o = self.selected.and_then(|id| self.objects.get(id));
 
             let is_hidden = o.map(|o| o.data.is_hidden()).unwrap_or_default();
             let is_locked = o.map(|o| o.data.is_locked()).unwrap_or_default();
@@ -845,14 +942,16 @@ impl Component for Map {
 
             let follow_classes = classes! {
                 "btn", "square",
-                self.config.mumble_follow_selection.then_some("success"),
+                self.config.mumble_follow.then_some("success"),
             };
 
-            let follow_title = if *self.config.mumble_follow_selection {
+            let follow_title = if *self.config.mumble_follow {
                 "Disable MumbleLink selection following"
             } else {
                 "Enable MumbleLink selection following"
             };
+
+            let follow_click = ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection);
 
             let hidden_classes = classes! {
                 "btn", "square",
@@ -899,7 +998,7 @@ impl Component for Map {
                         <Icon name={locked_icon} />
                     </button>
                     <div class="fill"></div>
-                    <button class={follow_classes} title={follow_title} onclick={ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection)}>
+                    <button class={follow_classes} title={follow_title} onclick={follow_click}>
                         <Icon name="cursor-arrow-rays" />
                     </button>
                 </div>
@@ -933,155 +1032,7 @@ impl Component for Map {
                 <div class="col-3 rows">
                     {object_list_header}
 
-                    <div class="object-list">
-                        {for self.order.iter().enumerate().flat_map(|(n, (_, id))| {
-                            let o = self.objects.get(id)?;
-
-                            let id = o.data.id;
-                            let selected = self.selected == Some(id);
-                            let on_click = ctx.link().callback(move |_| Msg::SelectObject(Some(id)));
-                            let classes = classes!("object-list-item", selected.then_some("selected"));
-                            let label = o.data.name().unwrap_or("");
-
-                            let is_hidden = o.data.is_hidden();
-                            let is_locked = o.data.is_locked();
-                            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
-                            let hidden_title = if is_hidden { "Hidden from others" } else { "Visible to others" };
-                            let locked_icon = if is_locked { "lock-closed" } else { "lock-open" };
-                            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
-                            let is_mumble = *self.config.mumble_object == Some(id);
-
-                            let mumble_classes = classes! {
-                                "btn", "sm", "square", "object-list-item-action",
-                                is_mumble.then_some("success"),
-                                is_mumble.then_some("active"),
-                            };
-
-                            let hidden_classes = classes! {
-                                "btn", "sm", "square", "object-list-item-action",
-                                is_hidden.then_some("danger"),
-                                is_hidden.then_some("active"),
-                            };
-
-                            let locked_classes = classes! {
-                                "btn", "sm", "square", "object-list-item-action",
-                                is_locked.then_some("danger"),
-                                is_locked.then_some("active"),
-                            };
-
-                            let (icon_name, mumble_button, is_group) = match o.data.kind {
-                                ObjectKind::Token(..) => ("user", true, false),
-                                ObjectKind::Static(..) => ("squares-2x2", true, false),
-                                ObjectKind::Group(..) => ("folder", false, true),
-                                _ => ("question-mark-circle", false, false),
-                            };
-
-                            let mumble_button = mumble_button.then(|| html! {
-                                <button class={mumble_classes}
-                                    title="Toggle as MumbleLink Source"
-                                    onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                        ev.stop_propagation();
-                                        Msg::ToggleMumbleObject(id)
-                                    })}>
-                                    <Icon name="mumble" />
-                                </button>
-                            });
-
-                            let on_drag_end = ctx.link().callback(move |_ev| Msg::DragEnd(id));
-
-                            let drag_into = if is_group {
-                                Drag::Into
-                            } else {
-                                Drag::Below
-                            };
-
-                            let on_drag_start = is_group.then(|| ctx.link().callback(move |_ev| Msg::DragOver(Drag::Below, id)));
-                            let on_drag_into = is_group.then(|| ctx.link().callback(move |_ev| Msg::DragOver(drag_into, id)));
-
-                            let drop_above = if n == 0 {
-                                let ondragover = ctx.link().callback(move |_ev| Msg::DragOver(Drag::Above, id));
-
-                                let class = classes! {
-                                    "object-list-drop",
-                                    (self.drag_over == Some((Drag::Above, id))).then_some("active"),
-                                };
-
-                                Some(html! {
-                                    <div key={format!("drag-above-{id}")} {class} {ondragover}>
-                                        <div class="dotted" />
-                                    </div>
-                                })
-                            } else {
-                                None
-                            };
-
-                            let drop_into = (self.drag_over == Some((Drag::Into, o.data.id))).then(|| {
-                                html! {
-                                    <div key={format!("drag-into-{id}")} class="object-list-drop active">
-                                        <div class="dotted" />
-                                    </div>
-                                }
-                            });
-
-                            let class = classes! {
-                                "object-list-drop",
-                                (self.drag_over == Some((Drag::Below, id))).then_some("active"),
-                            };
-                            let ondragover = ctx.link().callback(move |_ev| Msg::DragOver(Drag::Below, id));
-                            let drop_below = html! {
-                                <div key={format!("drag-below-{id}")} {class} {ondragover}>
-                                    <div class="dotted" />
-                                </div>
-                            };
-
-                            let node = html! {
-                                <>
-                                {drop_above}
-
-                                <div
-                                    key={id.to_string()}
-                                    class={classes}
-                                >
-                                    <section
-                                        draggable={true}
-                                        onclick={on_click}
-                                        ondragstart={on_drag_start}
-                                        ondragover={on_drag_into}
-                                        ondragend={on_drag_end}
-                                    >
-                                        <Icon name={icon_name} invert={true} small={true} />
-
-                                        <span class="object-list-item-label">{label}</span>
-
-                                        {mumble_button}
-                                        <button class={hidden_classes}
-                                            title={hidden_title}
-                                            onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                                ev.stop_propagation();
-                                                Msg::ToggleHidden(id)
-                                            })}>
-                                            <Icon name={hidden_icon} />
-                                        </button>
-                                        <button class={locked_classes}
-                                            title={locked_title}
-                                            onclick={ctx.link().callback(move |ev: MouseEvent| {
-                                                ev.stop_propagation();
-                                                Msg::ToggleLocked(id)
-                                            })}>
-                                            <Icon name={locked_icon} />
-                                        </button>
-                                    </section>
-
-                                    {drop_into}
-                                </div>
-
-                                {drop_below}
-                                </>
-                            };
-
-                            Some(node)
-                        })}
-                    </div>
+                    {self.object_list(ctx, Id::ZERO)}
                 </div>
             </div>
 
@@ -1096,7 +1047,7 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body rows">
-                            <p>{format!("Remove \"{}\"?", self.objects.get(&id).and_then(|o| o.data.name()).unwrap_or("unnamed"))}</p>
+                            <p>{format!("Remove \"{}\"?", self.objects.get(id).and_then(|o| o.data.name()).unwrap_or("unnamed"))}</p>
                             <div class="btn-group">
                                 <button class="btn danger"
                                     onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
@@ -1123,7 +1074,7 @@ impl Component for Map {
                             </button>
                         </div>
                         <div class="modal-body">
-                            if self.objects.get(&id).is_some_and(|o| o.data.is_static()) {
+                            if self.objects.get(id).is_some_and(|o| o.data.is_static()) {
                                 <StaticSettings ws={ctx.props().ws.clone()} {id} />
                             } else {
                                 <ObjectSettings ws={ctx.props().ws.clone()} {id} />
@@ -1138,6 +1089,214 @@ impl Component for Map {
 }
 
 impl Map {
+    fn object_list(&self, ctx: &Context<Self>, group: Id) -> Html {
+        let mut objects = Vec::new();
+
+        for (n, o) in self
+            .order
+            .iter(group)
+            .flat_map(|id| self.objects.get(id))
+            .enumerate()
+        {
+            let (icon_name, mumble_button, is_group) = match o.data.kind {
+                ObjectKind::Token(..) => ("user", true, false),
+                ObjectKind::Static(..) => ("squares-2x2", true, false),
+                ObjectKind::Group(..) => ("folder", false, true),
+                _ => ("question-mark-circle", false, false),
+            };
+
+            let id = o.data.id;
+            let selected = self.selected == Some(id);
+
+            let label = o.data.name().unwrap_or("");
+
+            let onclick = ctx.link().callback(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                Msg::SelectObject(Some(id))
+            });
+
+            let ondragend = ctx.link().callback(move |ev: DragEvent| {
+                ev.stop_propagation();
+                Msg::DragEnd(id)
+            });
+
+            let ondragstart = ctx.link().callback(move |ev: DragEvent| {
+                ev.stop_propagation();
+                Msg::DragOver(Drag::Below, group, id)
+            });
+
+            let drag_into = if is_group { Drag::Into } else { Drag::Below };
+
+            let ondragover = ctx.link().callback(move |ev: DragEvent| {
+                ev.stop_propagation();
+                Msg::DragOver(drag_into, group, id)
+            });
+
+            if n == 0 {
+                let class = classes! {
+                    "object-drop",
+                    (self.drag_over == Some((Drag::Above, group, id))).then_some("active"),
+                };
+
+                let ondragover = ctx.link().callback(move |ev: DragEvent| {
+                    ev.stop_propagation();
+                    Msg::DragOver(Drag::Above, group, id)
+                });
+
+                objects.push(html! {
+                    <div key={format!("drop-above-{id}")} {class} {ondragover}>
+                        <div class="dotted" />
+                    </div>
+                });
+            }
+
+            let is_hidden = o.data.is_hidden();
+            let is_locked = o.data.is_locked();
+            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
+            let hidden_title = if is_hidden {
+                "Hidden from others"
+            } else {
+                "Visible to others"
+            };
+
+            let hidden_onclick = ctx.link().callback(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                Msg::ToggleHidden(id)
+            });
+
+            let locked_icon = if is_locked {
+                "lock-closed"
+            } else {
+                "lock-open"
+            };
+            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
+
+            let locked_onclick = ctx.link().callback(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                Msg::ToggleLocked(id)
+            });
+
+            let is_mumble = *self.config.mumble_object == Some(id);
+
+            let mumble_classes = classes! {
+                "btn", "sm", "square", "object-action",
+                is_mumble.then_some("success"),
+                is_mumble.then_some("active"),
+                (!mumble_button).then_some("disabled"),
+            };
+
+            let mumble_onclick = mumble_button.then(|| {
+                ctx.link().callback(move |ev: MouseEvent| {
+                    ev.stop_propagation();
+                    Msg::ToggleMumbleObject(id)
+                })
+            });
+
+            let hidden_classes = classes! {
+                "btn", "sm", "square", "object-action",
+                is_hidden.then_some("danger"),
+                is_hidden.then_some("active"),
+            };
+
+            let locked_classes = classes! {
+                "btn", "sm", "square", "object-action",
+                is_locked.then_some("danger"),
+                is_locked.then_some("active"),
+            };
+
+            let drop_into = (self.drag_over == Some((Drag::Into, group, o.data.id))).then(|| {
+                html! {
+                    <div key={format!("drop-into")} class="object-drop active">
+                        <div class="dotted" />
+                    </div>
+                }
+            });
+
+            let children = match o.data.kind {
+                ObjectKind::Group(..) => {
+                    let children = self.object_list(ctx, o.data.id);
+
+                    Some(html! {
+                        <section key={format!("{id}-children")} class="object-children">
+                            {children}
+                            {drop_into}
+                        </section>
+                    })
+                }
+                _ => None,
+            };
+
+            let class = classes! {
+                "object-button",
+                selected.then_some("selected"),
+            };
+
+            let node = html! {
+                <div key={format!("object-{id}")} class="object-item">
+                    <section
+                        key={format!("drag-{id}")}
+                        class="object-drag"
+                        draggable={true}
+                        {onclick}
+                        {ondragstart}
+                        {ondragend}
+                        {ondragover}
+                    >
+                        <section {class}>
+                            <Icon name={icon_name} invert={true} small={true} />
+
+                            <span class="object-label">{label}</span>
+
+                            <button class={mumble_classes}
+                                title="Toggle as MumbleLink Source"
+                                onclick={mumble_onclick}>
+                                <Icon name="mumble" />
+                            </button>
+
+                            <button class={hidden_classes}
+                                title={hidden_title}
+                                onclick={hidden_onclick}>
+                                <Icon name={hidden_icon} />
+                            </button>
+
+                            <button class={locked_classes}
+                                title={locked_title}
+                                onclick={locked_onclick}>
+                                <Icon name={locked_icon} />
+                            </button>
+                        </section>
+                    </section>
+
+                    {children}
+                </div>
+            };
+
+            objects.push(node);
+
+            let class = classes! {
+                "object-drop",
+                (self.drag_over == Some((Drag::Below, group, id))).then_some("active"),
+            };
+
+            let ondragover = ctx.link().callback(move |ev: DragEvent| {
+                ev.stop_propagation();
+                Msg::DragOver(Drag::Below, group, id)
+            });
+
+            objects.push(html! {
+                <div key={format!("drag-below-{id}")} {class} {ondragover}>
+                    <div class="dotted" />
+                </div>
+            });
+        }
+
+        let objects = VNode::from(VList::from(objects));
+
+        html! {
+            <div key={"objects-list"} class="object-list">{objects}</div>
+        }
+    }
+
     fn refresh(&mut self, ctx: &Context<Self>) {
         if matches!(self.state, ws::State::Open) {
             self._initialize = ctx
@@ -1152,59 +1311,90 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::DragOver(drag, id) => {
-                self.drag_over = Some((drag, id));
+            Msg::DragOver(drag, group, id) => {
+                self.drag_over = Some((drag, group, id));
                 Ok(true)
             }
-            Msg::DragEnd(id) => {
-                let Some((drag, target)) = self.drag_over.take() else {
+            Msg::DragEnd(object_id) => {
+                let Some((drag, group, target_id)) = self.drag_over.take() else {
                     return Ok(false);
                 };
 
-                let new = {
-                    let Some(object) = self.objects.get(&target) else {
+                if object_id == target_id {
+                    return Ok(true);
+                }
+
+                let (new_sort, new_group) = {
+                    let Some(target) = self.objects.get(target_id) else {
                         return Ok(true);
                     };
 
-                    let this = object.data.sort();
-
                     let next = match drag {
+                        Drag::Into => {
+                            // When inserting into, we insert after the last element in the group.
+                            self.order.iter(target_id).last()
+                        }
                         Drag::Above => self
                             .order
-                            .iter()
+                            .iter(group)
                             .rev()
-                            .skip_while(|(_, id)| *id != target)
-                            .nth(1)
-                            .map(|(_, id)| *id),
-                        Drag::Below | Drag::Into => self
+                            .skip_while(|id| *id != target_id)
+                            .nth(1),
+                        Drag::Below => self
                             .order
-                            .iter()
-                            .skip_while(|(_, id)| *id != target)
-                            .nth(1)
-                            .map(|(_, id)| *id),
+                            .iter(group)
+                            .skip_while(|id| *id != target_id)
+                            .nth(1),
                     };
 
-                    let next = next.and_then(|id| Some(self.objects.get(&id)?.data.sort()));
+                    let next = next.and_then(|id| Some(self.objects.get(id)?.data.sort()));
 
-                    match (drag, next) {
-                        (Drag::Above, Some(next)) => sorting::midpoint(next, this),
-                        (Drag::Above, _) => sorting::before(this),
-                        (Drag::Below | Drag::Into, Some(next)) => sorting::midpoint(this, next),
-                        (Drag::Below | Drag::Into, _) => sorting::after(this),
-                    }
+                    let sort = match (drag, next) {
+                        (Drag::Above, Some(next)) => sorting::midpoint(next, target.data.sort()),
+                        (Drag::Above, _) => sorting::before(target.data.sort()),
+                        (Drag::Below, Some(next)) => sorting::midpoint(target.data.sort(), next),
+                        (Drag::Below, _) => sorting::after(target.data.sort()),
+                        (Drag::Into, Some(next)) => sorting::after(next),
+                        (Drag::Into, _) => target.data.id.as_bytes().to_vec(),
+                    };
+
+                    let group = match drag {
+                        Drag::Into => target_id,
+                        _ => group,
+                    };
+
+                    (sort, group)
                 };
 
-                let Some(sort) = self.objects.get_mut(&id).and_then(|o| o.data.sort_mut()) else {
+                let Some((o_group, o_sort)) = self
+                    .objects
+                    .get_mut(object_id)
+                    .and_then(|o| o.data.sort_mut())
+                else {
                     return Ok(true);
                 };
 
-                let Some(sort) = sort.replace(new.clone()) else {
-                    return Ok(true);
-                };
+                let old_group = **o_group;
+                let old_sort = o_sort.to_vec();
 
-                self._set_sort = self::update(ctx, id, Key::SORT, Value::from(new.clone()));
-                self.order.remove(&(sort, id));
-                self.order.insert((new, id));
+                let group_changed = o_group.update(new_group);
+                let sort_changed = o_sort.update(new_sort.clone());
+
+                if group_changed {
+                    self._set_group =
+                        self::update(ctx, object_id, Key::GROUP, Value::from(new_group));
+                }
+
+                if sort_changed {
+                    self._set_sort =
+                        self::update(ctx, object_id, Key::SORT, Value::from(new_sort.clone()));
+                }
+
+                if sort_changed || group_changed {
+                    self.order.remove(old_group, old_sort, object_id);
+                    self.order.insert(new_group, new_sort, object_id);
+                }
+
                 Ok(true)
             }
             // Removed misplaced enum variants
@@ -1241,7 +1431,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleLocked(id) => {
-                let Some(object) = self.objects.get_mut(&id) else {
+                let Some(object) = self.objects.get_mut(id) else {
                     return Ok(false);
                 };
 
@@ -1266,7 +1456,7 @@ impl Map {
             Msg::ToggleHidden(id) => {
                 self.context_menu = None;
 
-                let Some(object) = self.objects.get_mut(&id) else {
+                let Some(object) = self.objects.get_mut(id) else {
                     return Ok(false);
                 };
 
@@ -1316,11 +1506,7 @@ impl Map {
                     .map(|o| (o.data.id, (o)))
                     .collect();
 
-                self.order.extend(
-                    self.objects
-                        .values()
-                        .map(|o| (o.data.sort().to_vec(), o.data.id)),
-                );
+                self.order.extend(self.objects.values());
 
                 self.peers = body
                     .remote_objects
@@ -1361,15 +1547,15 @@ impl Map {
                 let update = match body {
                     LocalUpdateBody::ObjectCreated { object } => {
                         let o = LocalObject::from_remote(&object);
-                        self.order.insert((o.data.sort().to_vec(), o.data.id));
+                        self.order
+                            .insert(*o.data.group, o.data.sort().to_vec(), o.data.id);
                         self.objects.insert(o.data.id, o);
                         true
                     }
                     LocalUpdateBody::ObjectRemoved { object_id } => {
-                        if let Some(removed) = self.objects.remove(&object_id)
-                            && let Some(id) = removed.data.image()
-                        {
-                            self.images.remove(id);
+                        if let Some(o) = self.objects.remove(object_id) {
+                            self.order
+                                .remove(*o.data.group, o.data.sort().to_vec(), o.data.id);
                         }
 
                         if self.selected == Some(object_id) {
@@ -1384,7 +1570,7 @@ impl Map {
                         value,
                     } => {
                         'done: {
-                            let Some(o) = self.objects.get_mut(&object_id) else {
+                            let Some(o) = self.objects.get_mut(object_id) else {
                                 break 'done false;
                             };
 
@@ -1396,9 +1582,22 @@ impl Map {
                                     break 'done false;
                                 }
                                 Key::SORT => {
-                                    let sort = value.as_bytes().unwrap_or_default().to_vec();
-                                    self.order.retain(|&(_, id)| id != o.data.id);
-                                    self.order.insert((sort, o.data.id));
+                                    let Some((_, sort)) = o.data.sort_mut() else {
+                                        break 'done false;
+                                    };
+
+                                    let new = value.as_bytes().unwrap_or_default().to_vec();
+
+                                    let Some(old) = sort.replace(new) else {
+                                        break 'done false;
+                                    };
+
+                                    self.order.remove(*o.data.group, old, o.data.id);
+                                    self.order.insert(
+                                        *o.data.group,
+                                        o.data.sort().to_vec(),
+                                        o.data.id,
+                                    );
                                     true
                                 }
                                 _ => false,
@@ -1542,34 +1741,39 @@ impl Map {
                     self.delete = None;
                 }
 
-                if *self.config.mumble_follow_selection && *self.config.mumble_object != id {
-                    *self.config.mumble_object = id;
+                'out: {
+                    if *self.config.mumble_follow && *self.config.mumble_object != id {
+                        if let Some(id) = id
+                            && !self.objects.is_interactive(id)
+                        {
+                            break 'out;
+                        }
 
-                    self._toggle_mumble_request = ctx
-                        .props()
-                        .ws
-                        .request()
-                        .body(api::UpdateConfigRequest {
-                            values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
-                        })
-                        .on_packet(ctx.link().callback(Msg::ConfigResult))
-                        .send();
-                }
+                        *self.config.mumble_object = id;
+
+                        self._toggle_mumble_request = ctx
+                            .props()
+                            .ws
+                            .request()
+                            .body(api::UpdateConfigRequest {
+                                values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
+                            })
+                            .on_packet(ctx.link().callback(Msg::ConfigResult))
+                            .send();
+                    }
+                };
 
                 Ok(true)
             }
             Msg::ToggleFollowMumbleSelection => {
-                *self.config.mumble_follow_selection = !*self.config.mumble_follow_selection;
+                *self.config.mumble_follow = !*self.config.mumble_follow;
 
-                self._set_mumble_follow_selection = ctx
+                self._set_mumble_follow = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::UpdateConfigRequest {
-                        values: vec![(
-                            Key::MUMBLE_FOLLOW_SELECTION,
-                            Value::from(*self.config.mumble_follow_selection),
-                        )],
+                        values: vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
                     })
                     .on_packet(ctx.link().callback(Msg::ConfigResult))
                     .send();
@@ -1681,7 +1885,7 @@ impl Map {
             return Ok(());
         };
 
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
             return Ok(());
         };
 
@@ -1708,7 +1912,7 @@ impl Map {
             return Ok(());
         };
 
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
             return Ok(());
         };
 
@@ -1793,7 +1997,7 @@ impl Map {
         }
 
         for id in self.update_transform_ids.drain() {
-            let Some(o) = self.objects.get(&id) else {
+            let Some(o) = self.objects.get(id) else {
                 continue;
             };
 
@@ -1813,7 +2017,7 @@ impl Map {
         }
 
         for id in self.update_look_at_ids.drain() {
-            let Some(o) = self.objects.get(&id) else {
+            let Some(o) = self.objects.get(id) else {
                 continue;
             };
 
@@ -1876,7 +2080,7 @@ impl Map {
         let object_id = menu.object_id;
         let style = format!("left: {}px; top: {}px;", menu.x, menu.y);
 
-        let Some(o) = self.objects.get(&object_id) else {
+        let Some(o) = self.objects.get(object_id) else {
             return html! {};
         };
 
@@ -1962,8 +2166,7 @@ impl Map {
                         hit_something = hit.is_some();
                     }
 
-                    let Some(object) = self.selected.and_then(|id| self.objects.get_mut(&id))
-                    else {
+                    let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
                         break 'out hit_something;
                     };
 
@@ -2045,7 +2248,7 @@ impl Map {
                 break 'done;
             };
 
-            let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+            let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
                 break 'done;
             };
 
@@ -2090,7 +2293,7 @@ impl Map {
     }
 
     fn look_at(&mut self, p: VecXZ, m: VecXZ) {
-        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(&id)) else {
+        let Some(o) = self.selected.and_then(|id| self.objects.get_mut(id)) else {
             return;
         };
 
@@ -2109,7 +2312,7 @@ impl Map {
                 LEFT_MOUSE_BUTTON => {
                     self.start_press = None;
 
-                    if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(&id)) {
+                    if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) {
                         object.arrow_target = None;
                     }
 
@@ -2133,7 +2336,7 @@ impl Map {
     fn on_pointer_leave(&mut self) -> Result<(), Error> {
         let selected_arrow = self
             .selected
-            .and_then(|id| self.objects.get(&id))
+            .and_then(|id| self.objects.get(id))
             .and_then(|o| o.arrow_target);
 
         let needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
@@ -2142,7 +2345,7 @@ impl Map {
         self.start_press = None;
         self.mouse_world_pos = None;
 
-        if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(&id)) {
+        if let Some(object) = self.selected.and_then(|id| self.objects.get_mut(id)) {
             object.arrow_target = None;
         }
 
@@ -2268,7 +2471,7 @@ impl Map {
                 .flat_map(|peer| RenderToken::from_data(&peer.data))
                 .filter(|render| !render.hidden);
 
-            let locals = self.order.iter().flat_map(move |(_, id)| {
+            let locals = self.order.iter(Id::ZERO).flat_map(move |id| {
                 let data = &self.objects.get(id)?.data;
                 let mut token = RenderToken::from_data(data)?;
                 token.player = true;
@@ -2281,7 +2484,7 @@ impl Map {
 
         let selected_arrow = self
             .selected
-            .and_then(|id| self.objects.get(&id))
+            .and_then(|id| self.objects.get(id))
             .and_then(|o| o.arrow_target);
 
         for token in renders() {

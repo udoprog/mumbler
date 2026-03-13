@@ -451,9 +451,11 @@ canvas#map {
     font-style: italic;
 }
 
-.object-list {
-    display: flex;
-    flex-direction: column;
+.object {
+    &-list {
+        display: flex;
+        flex-direction: column;
+    }
 
     &-drop {
         display: block;
@@ -477,6 +479,20 @@ canvas#map {
         }
     }
 
+    &-children {
+        padding-left: 1em;
+    }
+
+    &-action {
+        flex-shrink: 0;
+        opacity: 0;
+        transition: opacity 0.1s;
+
+        &.active {
+            opacity: 1;
+        }
+    }
+
     &-item {
         font-size: 0.8em;
         display: flex;
@@ -484,50 +500,40 @@ canvas#map {
         gap: 0.25em;
         border-radius: $border-radius;
         background-color: var(--background-color);
+    }
 
-        &:hover {
-            background-color: var(--input-color);
-        }
+    &-button {
+        display: flex;
+        align-items: center;
+        gap: 0.25em;
+        padding: 0.25em;
+        cursor: pointer;
+        user-select: none;
 
         &.selected {
             background-color: var(--info-background-color);
             color: var(--link-color);
         }
 
-        &:hover &-action {
+        &:hover {
+            background-color: var(--input-color);
+        }
+
+        &:hover .object-action {
             opacity: 1;
         }
 
-        & > section {
-            display: flex;
-            align-items: center;
-            gap: 0.25em;
-            padding: 0.25em;
-            cursor: pointer;
-            user-select: none;
-
-            .icon {
-                font-size: 1.2em;
-            }
+        .icon {
+            font-size: 1.2em;
         }
+    }
 
-        &-label {
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            min-width: 0;
-        }
-
-        &-action {
-            flex-shrink: 0;
-            opacity: 0;
-            transition: opacity 0.1s;
-
-            &.active {
-                opacity: 1;
-            }
-        }
+    &-label {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
     }
 }
 

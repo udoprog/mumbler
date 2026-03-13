@@ -48,7 +48,7 @@ crate::macros::keys! {
         HIDDEN: Boolean = 15;
         /// Whether selecting an object automatically sets it as the MumbleLink
         /// source.
-        MUMBLE_FOLLOW_SELECTION: Boolean = 16;
+        MUMBLE_FOLLOW: Boolean = 16;
         /// Per-object token radius.
         TOKEN_RADIUS: Float = 17;
         /// Per-object movement speed.
