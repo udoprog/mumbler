@@ -400,6 +400,7 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        let ws = &ctx.props().ws;
         let objects = self.objects.borrow();
 
         let pos;
@@ -644,13 +645,13 @@ impl Component for Map {
                                 <div class="modal-body">
                                     {match objects.get(id).map(|o| &o.data.kind).unwrap_or(&ObjectKind::Unknown) {
                                         ObjectKind::Static(..) => {
-                                            html! { <StaticSettings ws={ctx.props().ws.clone()} {id} /> }
+                                            html! { <StaticSettings {ws} {id} /> }
                                         }
                                         ObjectKind::Group(..) => {
-                                            html! { <GroupSettings ws={ctx.props().ws.clone()} {id} /> }
+                                            html! { <GroupSettings {ws} {id} /> }
                                         }
                                         ObjectKind::Token(..) => {
-                                            html! { <TokenSettings ws={ctx.props().ws.clone()} {id} /> }
+                                            html! { <TokenSettings {ws} {id} /> }
                                         }
                                         _ => html! { <p class="hint">{"Unknown object type"}</p> },
                                     }}
@@ -1122,7 +1123,7 @@ impl Map {
                 Ok(false)
             }
             Msg::KeyDown(ev) => {
-                self.on_key_down(ev)?;
+                self.on_key_down(ctx, ev)?;
                 Ok(false)
             }
             Msg::KeyUp(ev) => {
@@ -1304,35 +1305,64 @@ impl Map {
         Ok(())
     }
 
-    fn on_key_down(&mut self, ev: KeyboardEvent) -> Result<(), Error> {
-        if ev.key() != "Shift" || self.start_press.is_some() {
-            return Ok(());
+    fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<(), Error> {
+        let key = ev.key();
+
+        match key.as_str() {
+            "Delete" => {
+                if let Some(id) = self.updates.selected {
+                    if self.delete != Some(id) {
+                        ev.prevent_default();
+                        ctx.link().send_message(Msg::ConfirmDelete(id));
+                    }
+                }
+            }
+            "Enter" => {
+                if let Some(id) = self.delete {
+                    ev.prevent_default();
+                    ctx.link().send_message(Msg::DeleteObject(id));
+                }
+            }
+            "Escape" => {
+                ev.prevent_default();
+
+                if self.delete.is_some() {
+                    ctx.link().send_message(Msg::CancelDelete);
+                }
+
+                if self.open_settings.is_some() {
+                    ctx.link().send_message(Msg::CloseSettings);
+                }
+            }
+            "Shift" if self.start_press.is_some() => {
+                let Some(m) = self.mouse_world_pos else {
+                    return Ok(());
+                };
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                    return Ok(());
+                };
+
+                let object_id = o.id;
+
+                if let Some(look_at) = o.as_look_at_mut() {
+                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+                    self.updates.look_at.insert(object_id);
+                }
+
+                if let Some(transform) = o.as_transform() {
+                    let p = transform.position.xz();
+                    self.start_press = Some((p, true));
+                    self.updates.look_at(&mut objects, p, m);
+                }
+
+                self.needs_redraw = true;
+            }
+            _ => {}
         }
 
-        let Some(m) = self.mouse_world_pos else {
-            return Ok(());
-        };
-
-        let mut objects = self.objects.borrow_mut();
-
-        let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
-            return Ok(());
-        };
-
-        let object_id = o.id;
-
-        if let Some(look_at) = o.as_look_at_mut() {
-            **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-            self.updates.look_at.insert(object_id);
-        }
-
-        if let Some(transform) = o.as_transform() {
-            let p = transform.position.xz();
-            self.start_press = Some((p, true));
-            self.updates.look_at(&mut objects, p, m);
-        }
-
-        self.needs_redraw = true;
         Ok(())
     }
 
