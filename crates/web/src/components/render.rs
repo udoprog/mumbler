@@ -9,6 +9,31 @@ use crate::objects::{ObjectData, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
+#[cfg(test)]
+#[test]
+fn test_hidden() {
+    assert!(Hidden::Visible < Hidden::Hidden);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Hidden {
+    Visible,
+    Hidden,
+    LocalHidden,
+}
+
+impl Hidden {
+    #[inline]
+    pub(crate) fn is_hidden(&self) -> bool {
+        matches!(self, Self::Hidden | Self::LocalHidden)
+    }
+
+    #[inline]
+    pub(crate) fn is_local_hidden(&self) -> bool {
+        matches!(self, Self::LocalHidden)
+    }
+}
+
 pub(crate) struct RenderToken<'a> {
     pub(crate) transform: api::Transform,
     pub(crate) look_at: Option<Vec3>,
@@ -17,14 +42,14 @@ pub(crate) struct RenderToken<'a> {
     pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
     pub(crate) selected: bool,
-    pub(crate) hidden: bool,
+    pub(crate) hidden: Hidden,
     pub(crate) token_radius: f32,
 }
 
 impl<'a> RenderToken<'a> {
     pub(crate) fn from_data(
         data: &'a ObjectData,
-        is_hidden: impl FnOnce(Id) -> bool,
+        as_hidden: impl FnOnce(Id) -> Hidden,
     ) -> Option<Self> {
         let token = match &data.kind {
             ObjectKind::Token(token) => token,
@@ -36,10 +61,10 @@ impl<'a> RenderToken<'a> {
             look_at: *token.look_at,
             image: *token.image,
             color: token.color.unwrap_or_else(api::Color::neutral),
-            name: token.name.as_deref(),
+            name: data.name.as_deref(),
             player: false,
             selected: false,
-            hidden: *token.hidden || is_hidden(*data.group),
+            hidden: data.as_hidden().max(as_hidden(*data.group)),
             token_radius: *token.token_radius,
         })
     }
@@ -372,7 +397,7 @@ pub(crate) fn draw_token_token(
         cx.set_shadow_blur(0.0);
     }
 
-    if token.hidden {
+    if token.hidden.is_hidden() {
         draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 

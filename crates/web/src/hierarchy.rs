@@ -87,15 +87,15 @@ impl HierarchyRef {
     }
 
     /// Get all objects in the hierarchy.
-    pub(crate) fn iter_all(&self) -> impl DoubleEndedIterator<Item = Id> {
+    pub(crate) fn walk(&self) -> impl DoubleEndedIterator<Item = Id> {
+        self.walk_from(Id::ZERO)
+    }
+
+    /// Get all objects in the hierarchy.
+    pub(crate) fn walk_from(&self, id: Id) -> impl DoubleEndedIterator<Item = Id> {
         Walk {
             mutable: self,
-            stack: self
-                .values
-                .get(&Id::ZERO)
-                .map(|s| s.iter())
-                .into_iter()
-                .collect(),
+            stack: self.values.get(&id).map(|s| s.iter()).into_iter().collect(),
         }
     }
 

@@ -543,7 +543,7 @@ impl TokenSettings {
             name: self.name.as_deref(),
             player: true,
             selected: false,
-            hidden: false,
+            hidden: render::Hidden::Visible,
             token_radius: 1.0,
         };
 

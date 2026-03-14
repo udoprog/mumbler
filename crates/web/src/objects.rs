@@ -8,6 +8,7 @@ use api::{
     Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3, VecXZ,
 };
 
+use crate::components::render::Hidden;
 use crate::state::State;
 
 const DEFAULT_SPEED: f32 = 5.0;
@@ -169,7 +170,8 @@ impl ObjectsRef {
 
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
-    pub(crate) fn is_group_hidden(&self, group: Id) -> bool {
+    pub(crate) fn as_hidden(&self, group: Id) -> Hidden {
+        let mut hidden = Hidden::Visible;
         let mut current = group;
 
         while current != Id::ZERO {
@@ -177,7 +179,24 @@ impl ObjectsRef {
                 break;
             };
 
-            if object.data.is_hidden() {
+            hidden = hidden.max(object.data.as_hidden());
+            current = *object.data.group;
+        }
+
+        hidden
+    }
+
+    /// Test if the given group or any of its ancestors is locked.
+    #[inline]
+    pub(crate) fn is_locked(&self, group: Id) -> bool {
+        let mut current = group;
+
+        while current != Id::ZERO {
+            let Some(object) = self.values.get(&current) else {
+                break;
+            };
+
+            if object.data.is_locked() {
                 return true;
             }
 
@@ -216,8 +235,6 @@ pub(crate) struct TokenObject {
     pub(crate) look_at: State<Option<Vec3>>,
     pub(crate) image: State<Option<Id>>,
     pub(crate) color: State<Option<Color>>,
-    pub(crate) name: State<Option<String>>,
-    pub(crate) hidden: State<bool>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
     pub(crate) sort: State<Vec<u8>>,
@@ -236,8 +253,6 @@ impl TokenObject {
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             token_radius: State::new(
                 o.props
                     .get(Key::TOKEN_RADIUS)
@@ -264,8 +279,6 @@ impl TokenObject {
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             Key::TOKEN_RADIUS => self
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
@@ -352,8 +365,6 @@ impl StaticObject {
 
 pub(crate) struct GroupObject {
     pub(crate) locked: State<bool>,
-    pub(crate) name: State<Option<String>>,
-    pub(crate) hidden: State<bool>,
     pub(crate) sort: State<Vec<u8>>,
     pub(crate) expanded: State<bool>,
 }
@@ -362,8 +373,6 @@ impl GroupObject {
     pub(crate) fn from_remote(o: &RemoteObject) -> Self {
         Self {
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             sort: State::new(
                 o.props
                     .get(Key::SORT)
@@ -378,8 +387,6 @@ impl GroupObject {
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             Key::SORT => self
                 .sort
                 .update(value.as_bytes().unwrap_or_default().to_vec()),
@@ -403,8 +410,11 @@ pub(crate) enum ObjectKind {
 
 pub(crate) struct ObjectData {
     pub(crate) id: Id,
-    pub(crate) group: State<Id>,
     pub(crate) kind: ObjectKind,
+    pub(crate) group: State<Id>,
+    pub(crate) name: State<Option<String>>,
+    pub(crate) hidden: State<bool>,
+    pub(crate) local_hidden: State<bool>,
 }
 
 impl ObjectData {
@@ -417,23 +427,27 @@ impl ObjectData {
             _ => ObjectKind::Unknown,
         };
 
-        let group = o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO);
-        let group = State::new(group);
-
         Self {
             id: o.id,
-            group,
             kind,
+            group: State::new(o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO)),
+            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
+            local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),
         }
     }
 
     #[inline]
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
-        match &mut self.kind {
-            ObjectKind::Token(this) => this.update(key, value),
-            ObjectKind::Static(this) => this.update(key, value),
-            ObjectKind::Group(this) => this.update(key, value),
-            ObjectKind::Unknown => false,
+        match key {
+            Key::NAME => self.name.update(value.into_string()),
+            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            _ => match &mut self.kind {
+                ObjectKind::Token(this) => this.update(key, value),
+                ObjectKind::Static(this) => this.update(key, value),
+                ObjectKind::Group(this) => this.update(key, value),
+                ObjectKind::Unknown => false,
+            },
         }
     }
 
@@ -537,16 +551,6 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn as_hidden_mut(&mut self) -> Option<&mut State<bool>> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.hidden),
-            ObjectKind::Static(this) => Some(&mut this.hidden),
-            ObjectKind::Group(this) => Some(&mut this.hidden),
-            ObjectKind::Unknown => None,
-        }
-    }
-
-    #[inline]
     pub(crate) fn as_expanded_mut(&mut self) -> Option<&mut State<bool>> {
         match &mut self.kind {
             ObjectKind::Group(this) => Some(&mut this.expanded),
@@ -555,23 +559,31 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn is_hidden(&self) -> bool {
-        match &self.kind {
-            ObjectKind::Token(this) => *this.hidden,
-            ObjectKind::Static(this) => *this.hidden,
-            ObjectKind::Group(this) => *this.hidden,
-            ObjectKind::Unknown => false,
+    pub(crate) fn as_hidden(&self) -> Hidden {
+        if *self.local_hidden {
+            return Hidden::LocalHidden;
         }
+
+        if *self.hidden {
+            return Hidden::Hidden;
+        }
+
+        Hidden::Visible
+    }
+
+    #[inline]
+    pub(crate) fn is_hidden(&self) -> bool {
+        *self.hidden
+    }
+
+    #[inline]
+    pub(crate) fn is_local_hidden(&self) -> bool {
+        *self.local_hidden
     }
 
     #[inline]
     pub(crate) fn name(&self) -> Option<&str> {
-        match &self.kind {
-            ObjectKind::Token(this) => this.name.as_deref(),
-            ObjectKind::Static(this) => this.name.as_deref(),
-            ObjectKind::Group(this) => this.name.as_deref(),
-            ObjectKind::Unknown => None,
-        }
+        self.name.as_deref()
     }
 
     #[inline]

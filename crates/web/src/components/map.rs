@@ -165,6 +165,7 @@ pub(crate) struct Map {
     object_ondragover: Callback<(Drag, Id, Id)>,
     object_ondragend: Callback<Id>,
     object_onhiddentoggle: Callback<Id>,
+    object_onlocalhiddentoggle: Callback<Id>,
     object_onexpandtoggle: Callback<Id>,
     object_onlockedtoggle: Callback<Id>,
     object_onmumbletoggle: Callback<Id>,
@@ -205,6 +206,7 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     ToggleFollowMumbleSelection,
     ToggleHidden(Id),
+    ToggleLocalHidden(Id),
     ToggleExpanded(Id),
     ToggleLocked(Id),
     ToggleMumbleObject(Id),
@@ -321,6 +323,7 @@ impl Component for Map {
                 .callback(|(drag, group, id)| Msg::DragOver(drag, group, id)),
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_onhiddentoggle: ctx.link().callback(Msg::ToggleHidden),
+            object_onlocalhiddentoggle: ctx.link().callback(Msg::ToggleLocalHidden),
             object_onexpandtoggle: ctx.link().callback(Msg::ToggleExpanded),
             object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
@@ -593,6 +596,7 @@ impl Component for Map {
                                 ondragover={self.object_ondragover.clone()}
                                 ondragend={self.object_ondragend.clone()}
                                 onhiddentoggle={self.object_onhiddentoggle.clone()}
+                                onlocalhiddentoggle={self.object_onlocalhiddentoggle.clone()}
                                 onexpandtoggle={self.object_onexpandtoggle.clone()}
                                 onlockedtoggle={self.object_onlockedtoggle.clone()}
                                 onmumbletoggle={self.object_onmumbletoggle.clone()}
@@ -808,6 +812,7 @@ impl Map {
             }
             Msg::ToggleLocked(id) => {
                 let mut objects = self.objects.borrow_mut();
+                let order = self.order.borrow();
 
                 let Some(object) = objects.get_mut(id) else {
                     return Ok(false);
@@ -817,12 +822,20 @@ impl Map {
                     return Ok(false);
                 };
 
-                if self.updates.selected == Some(id) {
-                    self.updates.selected = None;
-                }
-
                 let new = !**locked;
                 **locked = new;
+
+                if new {
+                    if self.updates.selected == Some(id) {
+                        self.updates.selected = None;
+                    }
+
+                    for id in order.walk_from(id) {
+                        if self.updates.selected == Some(id) {
+                            self.updates.selected = None;
+                        }
+                    }
+                }
 
                 self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
                 Ok(true)
@@ -840,14 +853,26 @@ impl Map {
                     return Ok(false);
                 };
 
-                let Some(hidden) = object.as_hidden_mut() else {
+                let new_hidden = !*object.hidden;
+                *object.hidden = new_hidden;
+
+                let req = update(ctx, id, Key::HIDDEN, new_hidden);
+                self.object_requests.insert(id, req);
+                Ok(true)
+            }
+            Msg::ToggleLocalHidden(id) => {
+                self.context_menu = None;
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(object) = objects.get_mut(id) else {
                     return Ok(false);
                 };
 
-                let new_hidden = !**hidden;
-                **hidden = new_hidden;
+                let new_local_hidden = !*object.local_hidden;
+                *object.local_hidden = new_local_hidden;
 
-                let req = update(ctx, id, Key::HIDDEN, new_hidden);
+                let req = update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
                 self.object_requests.insert(id, req);
                 Ok(true)
             }
@@ -1443,7 +1468,7 @@ impl Map {
                     return false;
                 };
 
-                transform.position.xz().dist(w) < click_radius && !o.is_locked()
+                transform.position.xz().dist(w) < click_radius && !objects.is_locked(o.id)
             })
             .map(|o| o.id);
 
@@ -1537,7 +1562,8 @@ impl Map {
                                     return false;
                                 };
 
-                                transform.position.xz().dist(e) < click_radius && !o.is_locked()
+                                transform.position.xz().dist(e) < click_radius
+                                    && !objects.is_locked(o.id)
                             })
                             .map(|o| o.id);
 
@@ -1834,13 +1860,19 @@ impl Map {
                 .peers
                 .iter()
                 .flat_map(|peer| {
-                    RenderToken::from_data(peer, |id| self.peers.is_hidden(peer.peer_id, id))
+                    RenderToken::from_data(peer, |id| self.peers.as_hidden(peer.peer_id, id))
                 })
-                .filter(|render| !render.hidden);
+                .filter(|render| !render.hidden.is_hidden());
 
-            let locals = order.iter_all().rev().flat_map(|id| {
+            let locals = order.walk().rev().flat_map(|id| {
                 let data = objects.get(id)?;
-                let mut token = RenderToken::from_data(data, |id| objects.is_group_hidden(id))?;
+                let mut token = RenderToken::from_data(data, |id| objects.as_hidden(id))?;
+
+                // Locally hidden items should not be rendered locally.
+                if token.hidden.is_local_hidden() {
+                    return None;
+                }
+
                 token.player = true;
                 token.selected = selected == Some(data.id);
                 Some(token)

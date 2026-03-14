@@ -26,6 +26,7 @@ pub(crate) struct Props {
     pub(crate) ondragend: Callback<Id>,
     pub(crate) ondragover: Callback<(Drag, Id, Id)>,
     pub(crate) onhiddentoggle: Callback<Id>,
+    pub(crate) onlocalhiddentoggle: Callback<Id>,
     pub(crate) onexpandtoggle: Callback<Id>,
     pub(crate) onlockedtoggle: Callback<Id>,
     pub(crate) onmumbletoggle: Callback<Id>,
@@ -146,37 +147,9 @@ impl Component for ObjectList {
                 });
             }
 
-            let is_hidden = o.is_hidden();
-            let is_locked = o.is_locked();
-            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
-            let hidden_title = if is_hidden {
-                "Hidden from others"
-            } else {
-                "Visible to others"
-            };
-
-            let hidden_onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
-                ev.stop_propagation();
-                id
-            });
-
-            let locked_icon = if is_locked {
-                "lock-closed"
-            } else {
-                "lock-open"
-            };
-
-            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
-
-            let locked_onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
-                ev.stop_propagation();
-                id
-            });
-
-            let is_mumble = ctx.props().mumble_object == Some(id);
-            let is_expanded = o.is_expanded();
-
             let mumble_button = mumble_button.then(|| {
+                let is_mumble = ctx.props().mumble_object == Some(id);
+
                 let class = classes! {
                     "btn", "sm", "square", "object-action",
                     is_mumble.then_some("success"),
@@ -190,12 +163,14 @@ impl Component for ObjectList {
 
                 html! {
                     <button {class} title="Toggle as MumbleLink Source" {onclick}>
-                        <Icon name="mumble" />
+                    <Icon name="mumble" />
                     </button>
                 }
             });
 
             let expand_button = is_group.then(|| {
+                let is_expanded = o.is_expanded();
+
                 let class = classes! {
                     "btn", "sm", "square", "object-action",
                     is_expanded.then_some("success"),
@@ -214,24 +189,102 @@ impl Component for ObjectList {
                 }
             });
 
-            let hidden_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_hidden.then_some("danger"),
-                is_hidden.then_some("active"),
+            let hidden_button = {
+                let is_hidden = o.is_hidden();
+
+                let class = classes! {
+                    "btn", "sm", "square", "object-action",
+                    is_hidden.then_some("danger"),
+                    is_hidden.then_some("active"),
+                };
+
+                let title = if is_hidden {
+                    "Hidden from others"
+                } else {
+                    "Visible to others"
+                };
+
+                let onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
+                    ev.stop_propagation();
+                    id
+                });
+
+                let name = if is_hidden { "link-slash" } else { "link" };
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon {name} />
+                    </button>
+                }
             };
 
-            let locked_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_locked.then_some("danger"),
-                is_locked.then_some("active"),
+            let local_hidden_button = {
+                let is_local_hidden = o.is_local_hidden();
+
+                let class = classes! {
+                    "btn", "sm", "square", "object-action",
+                    is_local_hidden.then_some("danger"),
+                    is_local_hidden.then_some("active"),
+                };
+
+                let title = if is_local_hidden {
+                    "Hidden locally"
+                } else {
+                    "Visible locally"
+                };
+
+                let onclick = ctx
+                    .props()
+                    .onlocalhiddentoggle
+                    .reform(move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        id
+                    });
+
+                let name = if is_local_hidden { "eye-slash" } else { "eye" };
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon {name} />
+                    </button>
+                }
+            };
+
+            let locked_button = {
+                let is_locked = o.is_locked();
+
+                let class = classes! {
+                    "btn", "sm", "square", "object-action",
+                    is_locked.then_some("danger"),
+                    is_locked.then_some("active"),
+                };
+
+                let title = if is_locked { "Locked" } else { "Unlocked" };
+
+                let onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
+                    ev.stop_propagation();
+                    id
+                });
+
+                let name = if is_locked {
+                    "lock-closed"
+                } else {
+                    "lock-open"
+                };
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon {name} />
+                    </button>
+                }
             };
 
             let drop_into_last =
                 (ctx.props().drag_over == Some((Drag::Into, group, o.id))).then_some(group);
 
             let children = match &o.kind {
-                ObjectKind::Group(g) => ((drop_into_last.is_some() || !order.is_empty(id))
-                    && g.is_expanded())
+                ObjectKind::Group(g) => (g.is_expanded()
+                    && (drop_into_last.is_some() || !order.is_empty(id)))
                 .then(|| {
                     html! {
                         <section key={format!("{id}-children")} class="object-children">
@@ -246,6 +299,7 @@ impl Component for ObjectList {
                                 ondragover={ctx.props().ondragover.clone()}
                                 ondragend={ctx.props().ondragend.clone()}
                                 onhiddentoggle={ctx.props().onhiddentoggle.clone()}
+                                onlocalhiddentoggle={ctx.props().onlocalhiddentoggle.clone()}
                                 onexpandtoggle={ctx.props().onexpandtoggle.clone()}
                                 onlockedtoggle={ctx.props().onlockedtoggle.clone()}
                                 onmumbletoggle={ctx.props().onmumbletoggle.clone()}
@@ -282,17 +336,11 @@ impl Component for ObjectList {
 
                             {expand_button}
 
-                            <button class={hidden_classes}
-                                title={hidden_title}
-                                onclick={hidden_onclick}>
-                                <Icon name={hidden_icon} />
-                            </button>
+                            {hidden_button}
 
-                            <button class={locked_classes}
-                                title={locked_title}
-                                onclick={locked_onclick}>
-                                <Icon name={locked_icon} />
-                            </button>
+                            {local_hidden_button}
+
+                            {locked_button}
                         </section>
                     </section>
 

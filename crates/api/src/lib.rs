@@ -46,6 +46,8 @@ crate::macros::keys! {
         MUMBLE_OBJECT: Id = 14;
         /// Whether the object is hidden from remote peers.
         HIDDEN: Boolean = 15;
+        /// Whether the object is hidden locally.
+        LOCAL_HIDDEN: Boolean = 27;
         /// Whether selecting an object automatically sets it as the MumbleLink
         /// source.
         MUMBLE_FOLLOW: Boolean = 16;
