@@ -35,7 +35,6 @@ const ANIMATION_FPS: u32 = 60;
 
 #[derive(Default)]
 struct Updates {
-    updates: HashSet<Id>,
     look_at: HashSet<Id>,
     transforms: HashSet<Id>,
     selected: Option<Id>,
@@ -53,9 +52,10 @@ impl Updates {
 
         o.arrow_target = Some(m);
         transform.front = p.direction_to(m).xyz(0.0);
-        self.updates.insert(o.id);
+        self.transforms.insert(o.id);
     }
 }
+
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
@@ -1430,11 +1430,7 @@ impl Map {
                 continue;
             };
 
-            let Some(look_at) = o.look_at() else {
-                continue;
-            };
-
-            let req = update(ctx, id, Key::LOOK_AT, *look_at);
+            let req = update(ctx, id, Key::LOOK_AT, o.look_at().copied());
             self.look_at_requests.insert(id, req);
         }
     }
@@ -1860,13 +1856,13 @@ impl Map {
                 .peers
                 .iter()
                 .flat_map(|peer| {
-                    RenderToken::from_data(peer, |id| self.peers.as_hidden(peer.peer_id, id))
+                    RenderToken::from_data(peer, |id| self.peers.visibility(peer.peer_id, id))
                 })
                 .filter(|render| !render.hidden.is_hidden());
 
             let locals = order.walk().rev().flat_map(|id| {
                 let data = objects.get(id)?;
-                let mut token = RenderToken::from_data(data, |id| objects.as_hidden(id))?;
+                let mut token = RenderToken::from_data(data, |id| objects.visibility(id))?;
 
                 // Locally hidden items should not be rendered locally.
                 if token.hidden.is_local_hidden() {

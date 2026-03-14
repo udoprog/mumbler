@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use api::{Id, PeerId};
 
-use crate::components::render::Hidden;
+use crate::components::render::Visibility;
 use crate::objects::PeerObject;
 
 #[derive(Default)]
@@ -43,8 +43,8 @@ impl Peers {
 
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
-    pub(crate) fn as_hidden(&self, peer_id: PeerId, group: Id) -> Hidden {
-        let mut hidden = Hidden::Visible;
+    pub(crate) fn visibility(&self, peer_id: PeerId, group: Id) -> Visibility {
+        let mut hidden = Visibility::Remote;
 
         let mut current = group;
 
@@ -53,7 +53,7 @@ impl Peers {
                 break;
             };
 
-            hidden = hidden.max(peer.as_hidden());
+            hidden = hidden.max(peer.visibility());
             current = *peer.group;
         }
 

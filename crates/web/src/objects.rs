@@ -8,7 +8,7 @@ use api::{
     Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3, VecXZ,
 };
 
-use crate::components::render::Hidden;
+use crate::components::render::Visibility;
 use crate::state::State;
 
 const DEFAULT_SPEED: f32 = 5.0;
@@ -170,8 +170,8 @@ impl ObjectsRef {
 
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
-    pub(crate) fn as_hidden(&self, group: Id) -> Hidden {
-        let mut hidden = Hidden::Visible;
+    pub(crate) fn visibility(&self, group: Id) -> Visibility {
+        let mut hidden = Visibility::Remote;
         let mut current = group;
 
         while current != Id::ZERO {
@@ -179,7 +179,7 @@ impl ObjectsRef {
                 break;
             };
 
-            hidden = hidden.max(object.data.as_hidden());
+            hidden = hidden.max(object.data.visibility());
             current = *object.data.group;
         }
 
@@ -559,16 +559,16 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn as_hidden(&self) -> Hidden {
+    pub(crate) fn visibility(&self) -> Visibility {
         if *self.local_hidden {
-            return Hidden::LocalHidden;
+            return Visibility::None;
         }
 
         if *self.hidden {
-            return Hidden::Hidden;
+            return Visibility::Local;
         }
 
-        Hidden::Visible
+        Visibility::Remote
     }
 
     #[inline]

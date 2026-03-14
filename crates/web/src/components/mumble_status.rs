@@ -101,7 +101,7 @@ impl Component for MumbleStatus {
             <section class="mumble control-group">
                 <Icon name="mumble" title="Status of Mumble Link Connection" />
                 <button
-                    class="btn square sm"
+                    class="btn square"
                     onclick={on_restart}
                     disabled={!*self.enabled}
                     title="Restart Mumble Link"
@@ -109,7 +109,7 @@ impl Component for MumbleStatus {
                     <Icon name="restart" />
                 </button>
                 <button
-                    class="btn square sm"
+                    class="btn square"
                     onclick={on_toggle}
                     title={toggle_title}
                 >

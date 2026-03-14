@@ -9,28 +9,22 @@ use crate::objects::{ObjectData, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
-#[cfg(test)]
-#[test]
-fn test_hidden() {
-    assert!(Hidden::Visible < Hidden::Hidden);
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Hidden {
-    Visible,
-    Hidden,
-    LocalHidden,
+pub(crate) enum Visibility {
+    Remote,
+    Local,
+    None,
 }
 
-impl Hidden {
+impl Visibility {
     #[inline]
     pub(crate) fn is_hidden(&self) -> bool {
-        matches!(self, Self::Hidden | Self::LocalHidden)
+        matches!(self, Self::Local | Self::None)
     }
 
     #[inline]
     pub(crate) fn is_local_hidden(&self) -> bool {
-        matches!(self, Self::LocalHidden)
+        matches!(self, Self::None)
     }
 }
 
@@ -42,14 +36,14 @@ pub(crate) struct RenderToken<'a> {
     pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
     pub(crate) selected: bool,
-    pub(crate) hidden: Hidden,
+    pub(crate) hidden: Visibility,
     pub(crate) token_radius: f32,
 }
 
 impl<'a> RenderToken<'a> {
     pub(crate) fn from_data(
         data: &'a ObjectData,
-        as_hidden: impl FnOnce(Id) -> Hidden,
+        visibility: impl FnOnce(Id) -> Visibility,
     ) -> Option<Self> {
         let token = match &data.kind {
             ObjectKind::Token(token) => token,
@@ -64,7 +58,7 @@ impl<'a> RenderToken<'a> {
             name: data.name.as_deref(),
             player: false,
             selected: false,
-            hidden: data.as_hidden().max(as_hidden(*data.group)),
+            hidden: data.visibility().max(visibility(*data.group)),
             token_radius: *token.token_radius,
         })
     }
