@@ -2,14 +2,15 @@ use std::collections::{HashMap, HashSet};
 
 use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3, VecXZ};
 use gloo::events::EventListener;
+use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, KeyboardEvent, MouseEvent,
-    ResizeObserver, WheelEvent,
+    CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlElement, HtmlImageElement,
+    KeyboardEvent, MouseEvent, ResizeObserver, Url, WheelEvent,
 };
 use yew::prelude::*;
 
@@ -109,6 +110,49 @@ impl Default for Config {
     }
 }
 
+struct DropImage {
+    _onerror: Closure<dyn FnMut()>,
+    _onload: Closure<dyn FnMut()>,
+    _img: HtmlImageElement,
+    bytes: Option<Vec<u8>>,
+    content_type: String,
+    file_reader: Option<FileReader>,
+    pixel_size: Option<(u32, u32)>,
+    url: String,
+    world_pos: VecXZ,
+    world_size: Option<(f32, f32)>,
+}
+
+impl DropImage {
+    #[inline]
+    fn is_ready_for_upload(&self) -> bool {
+        self.world_size.is_some() && self.pixel_size.is_some() && self.bytes.is_some()
+    }
+
+    #[inline]
+    fn compute_world_image_size(width: u32, height: u32) -> (f32, f32) {
+        if width == 0 || height == 0 {
+            return (2.0, 2.0);
+        }
+
+        let width = width as f32;
+        let height = height as f32;
+
+        if width >= height {
+            (2.0, 2.0 * (height / width))
+        } else {
+            (2.0 * (width / height), 2.0)
+        }
+    }
+}
+
+impl Drop for DropImage {
+    #[inline]
+    fn drop(&mut self) {
+        let _ = Url::revoke_object_url(&self.url);
+    }
+}
+
 /// State for the right-click context menu.
 struct ContextMenu {
     /// Object the menu was opened for.
@@ -125,6 +169,9 @@ pub(crate) struct Map {
     _create_group: ws::Request,
     _delete_object: ws::Request,
     _initialize: ws::Request,
+    _upload_image: ws::Request,
+    _create_dropped_object: ws::Request,
+    drop_image: Option<DropImage>,
     _keydown_listener: EventListener,
     _keyup_listener: EventListener,
     _local_update_listener: ws::Listener,
@@ -187,6 +234,11 @@ pub(crate) enum Msg {
     DeleteObject(Id),
     DragEnd(Id),
     DragOver(Drag, Id, Id),
+    CanvasDragOver(DragEvent),
+    DropImage(DragEvent),
+    DropImageLoaded(u32, u32),
+    DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
+    DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ImageMessage(ImageMessage),
     InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
@@ -281,6 +333,9 @@ impl Component for Map {
             _create_group: ws::Request::new(),
             _delete_object: ws::Request::new(),
             _initialize: ws::Request::new(),
+            _upload_image: ws::Request::new(),
+            _create_dropped_object: ws::Request::new(),
+            drop_image: None,
             _keydown_listener,
             _keyup_listener,
             _local_update_listener,
@@ -574,6 +629,8 @@ impl Component for Map {
                                     onpointerleave={ctx.link().callback(|_| Msg::PointerLeave)}
                                     onwheel={ctx.link().callback(Msg::Wheel)}
                                     oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
+                                    ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
+                                    ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
                                 ></canvas>
 
                                 if let Some(menu) = &self.context_menu {
@@ -676,6 +733,131 @@ impl Map {
                 .on_packet(ctx.link().callback(Msg::InitializeMap))
                 .send();
         }
+    }
+
+    fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
+        ev.prevent_default();
+
+        // Already processing a drop.
+        if self.drop_image.is_some() {
+            return Ok(false);
+        }
+
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(false);
+        };
+
+        let t = ViewTransform::new(&canvas, &self.config);
+        let world_pos = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+
+        let Some(dt) = ev.data_transfer() else {
+            return Ok(false);
+        };
+
+        let Some(files) = dt.files() else {
+            return Ok(false);
+        };
+
+        let Some(file) = files.get(0) else {
+            return Ok(false);
+        };
+
+        let content_type = file.type_();
+
+        if !content_type.starts_with("image/") {
+            return Ok(false);
+        }
+
+        let Ok(url) = Url::create_object_url_with_blob(&file) else {
+            return Ok(false);
+        };
+
+        let img = HtmlImageElement::new()?;
+        let link = ctx.link().clone();
+        let img_clone = img.clone();
+
+        let onload = Closure::<dyn FnMut()>::new(move || {
+            let w = img_clone.natural_width();
+            let h = img_clone.natural_height();
+            link.send_message(Msg::DropImageLoaded(w, h));
+        });
+
+        let error_link = ctx.link().clone();
+
+        let onerror = Closure::<dyn FnMut()>::new(move || {
+            tracing::warn!("failed to load dropped image");
+            error_link.send_message(Msg::DropImageLoaded(0, 0));
+        });
+
+        img.set_onload(Some(onload.as_ref().unchecked_ref()));
+        img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        img.set_src(&url);
+
+        let gloo_file = gloo::file::File::from(file);
+
+        let link = ctx.link().clone();
+
+        let file_reader = read_as_bytes(&gloo_file, move |res| {
+            link.send_message(Msg::DropImageData(res));
+        });
+
+        self.drop_image = Some(DropImage {
+            _onerror: onerror,
+            _onload: onload,
+            _img: img,
+            bytes: None,
+            content_type,
+            file_reader: Some(file_reader),
+            pixel_size: None,
+            url,
+            world_pos,
+            world_size: None,
+        });
+
+        Ok(false)
+    }
+
+    fn try_create_dropped_object(&mut self, ctx: &Context<Self>) -> Result<bool, Error> {
+        if !self
+            .drop_image
+            .as_ref()
+            .is_some_and(|image| image.is_ready_for_upload())
+        {
+            return Ok(false);
+        }
+
+        let Some(drop_image) = &mut self.drop_image else {
+            return Ok(false);
+        };
+
+        let Some((image_width, image_height)) = drop_image.pixel_size else {
+            return Ok(false);
+        };
+
+        let Some(data) = drop_image.bytes.take() else {
+            return Ok(false);
+        };
+
+        self._upload_image = ctx
+            .props()
+            .ws
+            .request()
+            .body(api::UploadImageRequest {
+                content_type: drop_image.content_type.clone(),
+                data,
+                crop: api::CropRegion {
+                    x1: 0,
+                    y1: 0,
+                    x2: image_width,
+                    y2: image_height,
+                },
+                sizing: api::ImageSizing::Crop,
+                size: 512,
+            })
+            .on_packet(ctx.link().callback(Msg::DropImageUploaded))
+            .send();
+
+        Ok(false)
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
@@ -813,7 +995,6 @@ impl Map {
             }
             Msg::ToggleLocked(id) => {
                 let mut objects = self.objects.borrow_mut();
-                let order = self.order.borrow();
 
                 let Some(object) = objects.get_mut(id) else {
                     return Ok(false);
@@ -825,19 +1006,6 @@ impl Map {
 
                 let new = !**locked;
                 **locked = new;
-
-                if new {
-                    if self.updates.selected == Some(id) {
-                        self.updates.selected = None;
-                    }
-
-                    for id in order.walk_from(id) {
-                        if self.updates.selected == Some(id) {
-                            self.updates.selected = None;
-                        }
-                    }
-                }
-
                 self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
                 Ok(true)
             }
@@ -1097,6 +1265,71 @@ impl Map {
                 self.needs_redraw = true;
                 Ok(false)
             }
+            Msg::CanvasDragOver(ev) => {
+                ev.prevent_default();
+                Ok(false)
+            }
+            Msg::DropImage(ev) => self.on_drop_image(ctx, ev),
+            Msg::DropImageLoaded(width, height) => {
+                let Some(drop_image) = &mut self.drop_image else {
+                    return Ok(false);
+                };
+
+                drop_image.world_size = Some(DropImage::compute_world_image_size(width, height));
+                drop_image.pixel_size = Some((width, height));
+                self.try_create_dropped_object(ctx)
+            }
+            Msg::DropImageData(result) => match result {
+                Ok(data) => {
+                    let Some(drop_image) = &mut self.drop_image else {
+                        return Ok(false);
+                    };
+
+                    drop_image.bytes = Some(data);
+                    drop_image.file_reader = None;
+                    self.try_create_dropped_object(ctx)
+                }
+                Err(err) => {
+                    self.log.error(
+                        "drop image",
+                        Error::from(anyhow::anyhow!("file read error: {err}")),
+                    );
+                    Ok(false)
+                }
+            },
+            Msg::DropImageUploaded(result) => {
+                let body = result?;
+                let body = body.decode()?;
+
+                let Some(drop_image) = self.drop_image.take() else {
+                    return Ok(false);
+                };
+
+                let world_pos = drop_image.world_pos;
+                let (width, height) = drop_image.world_size.unwrap_or((2.0, 2.0));
+
+                let transform = api::Transform::new(world_pos.xyz(0.0), api::Vec3::FORWARD);
+
+                self._create_dropped_object = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::CreateObjectRequest {
+                        ty: api::Type::STATIC,
+                        props: api::Properties::from([
+                            (Key::NAME, Value::from("Image")),
+                            (Key::HIDDEN, Value::from(true)),
+                            (Key::IMAGE_ID, Value::from(body.id)),
+                            (Key::TRANSFORM, Value::from(transform)),
+                            (Key::STATIC_WIDTH, Value::from(width)),
+                            (Key::STATIC_HEIGHT, Value::from(height)),
+                        ]),
+                    })
+                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
+                    .send();
+
+                Ok(false)
+            }
             Msg::PointerDown(ev) => {
                 self.on_pointer_down(ctx, ev)?;
                 Ok(true)
@@ -1334,14 +1567,22 @@ impl Map {
                     ctx.link().send_message(Msg::CloseSettings);
                 }
             }
-            "Shift" if self.start_press.is_some() => {
+            "Shift" => {
                 let Some(m) = self.mouse_world_pos else {
                     return Ok(());
                 };
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                let Some(id) = self.updates.selected else {
+                    return Ok(());
+                };
+
+                if objects.is_locked(id) {
+                    return Ok(());
+                }
+
+                let Some(o) = objects.get_mut(id) else {
                     return Ok(());
                 };
 
@@ -1494,7 +1735,7 @@ impl Map {
                     return false;
                 };
 
-                transform.position.xz().dist(w) < click_radius && !objects.is_locked(o.id)
+                transform.position.xz().dist(w) < click_radius
             })
             .map(|o| o.id);
 
@@ -1589,7 +1830,6 @@ impl Map {
                                 };
 
                                 transform.position.xz().dist(e) < click_radius
-                                    && !objects.is_locked(o.id)
                             })
                             .map(|o| o.id);
 
@@ -1604,8 +1844,15 @@ impl Map {
                         hit_something = hit.is_some();
                     }
 
-                    let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id))
-                    else {
+                    let Some(id) = self.updates.selected else {
+                        break 'out hit_something;
+                    };
+
+                    if objects.is_locked(id) {
+                        break 'out hit_something;
+                    }
+
+                    let Some(object) = objects.get_mut(id) else {
                         break 'out hit_something;
                     };
 

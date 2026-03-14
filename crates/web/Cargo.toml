@@ -33,5 +33,7 @@ features = [
     "ResizeObserver",
     "ResizeObserverEntry",
     "HtmlImageElement",
+    "DragEvent",
+    "DataTransfer",
     "DomRect"
 ]
