@@ -68,6 +68,15 @@ pub(crate) struct HierarchyRef {
 }
 
 impl HierarchyRef {
+    /// Test if the given group is empty.
+    #[inline]
+    pub(crate) fn is_empty(&self, group: Id) -> bool {
+        self.values
+            .get(&group)
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+    }
+
     /// Get the children of the given group, sorted by their sort key.
     pub(crate) fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
         self.values

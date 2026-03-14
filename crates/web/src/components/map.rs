@@ -145,7 +145,7 @@ pub(crate) struct Map {
     context_menu: Option<ContextMenu>,
     delete: Option<Id>,
     drag_over: Option<(Drag, Id, Id)>,
-    hide_requests: HashMap<Id, ws::Request>,
+    object_requests: HashMap<Id, ws::Request>,
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
@@ -165,6 +165,7 @@ pub(crate) struct Map {
     object_ondragover: Callback<(Drag, Id, Id)>,
     object_ondragend: Callback<Id>,
     object_onhiddentoggle: Callback<Id>,
+    object_onexpandtoggle: Callback<Id>,
     object_onlockedtoggle: Callback<Id>,
     object_onmumbletoggle: Callback<Id>,
     updates: Updates,
@@ -204,7 +205,7 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     ToggleFollowMumbleSelection,
     ToggleHidden(Id),
-    ToggleHiddenResult(Id, Result<Packet<api::Update>, ws::Error>),
+    ToggleExpanded(Id),
     ToggleLocked(Id),
     ToggleMumbleObject(Id),
     UpdateResult(Result<Packet<api::Update>, ws::Error>),
@@ -298,7 +299,7 @@ impl Component for Map {
             context_menu: None,
             delete: None,
             drag_over: None,
-            hide_requests: HashMap::new(),
+            object_requests: HashMap::new(),
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
@@ -320,6 +321,7 @@ impl Component for Map {
                 .callback(|(drag, group, id)| Msg::DragOver(drag, group, id)),
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_onhiddentoggle: ctx.link().callback(Msg::ToggleHidden),
+            object_onexpandtoggle: ctx.link().callback(Msg::ToggleExpanded),
             object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
             updates: Updates::default(),
@@ -591,6 +593,7 @@ impl Component for Map {
                                 ondragover={self.object_ondragover.clone()}
                                 ondragend={self.object_ondragend.clone()}
                                 onhiddentoggle={self.object_onhiddentoggle.clone()}
+                                onexpandtoggle={self.object_onexpandtoggle.clone()}
                                 onlockedtoggle={self.object_onlockedtoggle.clone()}
                                 onmumbletoggle={self.object_onmumbletoggle.clone()}
                                 />
@@ -844,25 +847,29 @@ impl Map {
                 let new_hidden = !**hidden;
                 **hidden = new_hidden;
 
-                let req = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateRequest {
-                        object_id: id,
-                        key: Key::HIDDEN,
-                        value: Value::from(new_hidden),
-                    })
-                    .on_packet(ctx.link().callback(move |r| Msg::ToggleHiddenResult(id, r)))
-                    .send();
-
-                self.hide_requests.insert(id, req);
+                let req = update(ctx, id, Key::HIDDEN, new_hidden);
+                self.object_requests.insert(id, req);
                 Ok(true)
             }
-            Msg::ToggleHiddenResult(id, result) => {
-                self.hide_requests.remove(&id);
-                result?;
-                Ok(false)
+            Msg::ToggleExpanded(id) => {
+                self.context_menu = None;
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(object) = objects.get_mut(id) else {
+                    return Ok(false);
+                };
+
+                let Some(expanded) = object.as_expanded_mut() else {
+                    return Ok(false);
+                };
+
+                let new_expanded = !**expanded;
+                **expanded = new_expanded;
+
+                let req = update(ctx, id, Key::EXPANDED, new_expanded);
+                self.object_requests.insert(id, req);
+                Ok(true)
             }
             Msg::SetLog(log) => {
                 self.log = log;
@@ -1192,6 +1199,7 @@ impl Map {
                         props: api::Properties::from([
                             (Key::NAME, Value::from("Group")),
                             (Key::HIDDEN, Value::from(false)),
+                            (Key::EXPANDED, Value::from(true)),
                         ]),
                     })
                     .on_packet(ctx.link().callback(Msg::ObjectCreated))

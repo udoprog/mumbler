@@ -66,6 +66,8 @@ crate::macros::keys! {
         SORT: Bytes = 24;
         /// The group this object belongs to.
         GROUP: Id = 25;
+        /// Whether a group is expanded in the UI.
+        EXPANDED: Boolean = 26;
     }
 }
 

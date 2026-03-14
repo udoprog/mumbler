@@ -355,6 +355,7 @@ pub(crate) struct GroupObject {
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
     pub(crate) sort: State<Vec<u8>>,
+    pub(crate) expanded: State<bool>,
 }
 
 impl GroupObject {
@@ -370,6 +371,7 @@ impl GroupObject {
                     .unwrap_or_default()
                     .to_vec(),
             ),
+            expanded: State::new(o.props.get(Key::EXPANDED).as_bool().unwrap_or_default()),
         }
     }
 
@@ -381,8 +383,14 @@ impl GroupObject {
             Key::SORT => self
                 .sort
                 .update(value.as_bytes().unwrap_or_default().to_vec()),
+            Key::EXPANDED => self.expanded.update(value.as_bool().unwrap_or_default()),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub(crate) fn is_expanded(&self) -> bool {
+        *self.expanded
     }
 }
 
@@ -426,6 +434,14 @@ impl ObjectData {
             ObjectKind::Static(this) => this.update(key, value),
             ObjectKind::Group(this) => this.update(key, value),
             ObjectKind::Unknown => false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_expanded(&self) -> bool {
+        match &self.kind {
+            ObjectKind::Group(o) => o.is_expanded(),
+            _ => false,
         }
     }
 
@@ -527,6 +543,14 @@ impl ObjectData {
             ObjectKind::Static(this) => Some(&mut this.hidden),
             ObjectKind::Group(this) => Some(&mut this.hidden),
             ObjectKind::Unknown => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_expanded_mut(&mut self) -> Option<&mut State<bool>> {
+        match &mut self.kind {
+            ObjectKind::Group(this) => Some(&mut this.expanded),
+            _ => None,
         }
     }
 

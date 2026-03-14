@@ -19,11 +19,14 @@ pub(crate) struct Props {
     pub(crate) group: Id,
     pub(crate) drag_over: Option<(Drag, Id, Id)>,
     pub(crate) mumble_object: Option<Id>,
+    #[prop_or_default]
+    pub(crate) drop_into_last: Option<Id>,
     pub(crate) selected: Option<Id>,
     pub(crate) onselect: Callback<Id>,
     pub(crate) ondragend: Callback<Id>,
     pub(crate) ondragover: Callback<(Drag, Id, Id)>,
     pub(crate) onhiddentoggle: Callback<Id>,
+    pub(crate) onexpandtoggle: Callback<Id>,
     pub(crate) onlockedtoggle: Callback<Id>,
     pub(crate) onmumbletoggle: Callback<Id>,
 }
@@ -84,7 +87,15 @@ impl Component for ObjectList {
 
         let group = ctx.props().group;
 
-        for (n, o) in order.iter(group).flat_map(|id| objects.get(id)).enumerate() {
+        let mut it = order.iter(group).flat_map(|id| objects.get(id));
+        let last = it.next_back().map(|o| (true, o));
+        let remaining = it.map(|o| (false, o));
+
+        let mut is_empty = true;
+
+        for (n, (is_last, o)) in remaining.chain(last).enumerate() {
+            is_empty = false;
+
             let (icon_name, mumble_button, is_group) = match o.kind {
                 ObjectKind::Token(..) => ("user", true, false),
                 ObjectKind::Static(..) => ("squares-2x2", true, false),
@@ -154,6 +165,7 @@ impl Component for ObjectList {
             } else {
                 "lock-open"
             };
+
             let locked_title = if is_locked { "Locked" } else { "Unlocked" };
 
             let locked_onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
@@ -162,19 +174,44 @@ impl Component for ObjectList {
             });
 
             let is_mumble = ctx.props().mumble_object == Some(id);
+            let is_expanded = o.is_expanded();
 
-            let mumble_classes = classes! {
-                "btn", "sm", "square", "object-action",
-                is_mumble.then_some("success"),
-                is_mumble.then_some("active"),
-                (!mumble_button).then_some("disabled"),
-            };
+            let mumble_button = mumble_button.then(|| {
+                let class = classes! {
+                    "btn", "sm", "square", "object-action",
+                    is_mumble.then_some("success"),
+                    is_mumble.then_some("active"),
+                };
 
-            let mumble_onclick = mumble_button.then(|| {
-                ctx.props().onmumbletoggle.reform(move |ev: MouseEvent| {
+                let onclick = ctx.props().onmumbletoggle.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
                     id
-                })
+                });
+
+                html! {
+                    <button {class} title="Toggle as MumbleLink Source" {onclick}>
+                        <Icon name="mumble" />
+                    </button>
+                }
+            });
+
+            let expand_button = is_group.then(|| {
+                let class = classes! {
+                    "btn", "sm", "square", "object-action",
+                    is_expanded.then_some("success"),
+                    is_expanded.then_some("active"),
+                };
+
+                let onclick = ctx.props().onexpandtoggle.reform(move |ev: MouseEvent| {
+                    ev.stop_propagation();
+                    id
+                });
+
+                html! {
+                    <button {class} title="Expand or collapse group" {onclick}>
+                        <Icon name="folder-open" />
+                    </button>
+                }
             });
 
             let hidden_classes = classes! {
@@ -189,30 +226,33 @@ impl Component for ObjectList {
                 is_locked.then_some("active"),
             };
 
-            let drop_into = (ctx.props().drag_over == Some((Drag::Into, group, o.id))).then(|| {
-                html! {
-                    <div key={format!("drop-into")} class="object-drop active" />
-                }
-            });
+            let drop_into_last =
+                (ctx.props().drag_over == Some((Drag::Into, group, o.id))).then_some(group);
 
-            let children = match o.kind {
-                ObjectKind::Group(..) => Some(html! {
-                    <section key={format!("{id}-children")} class="object-children">
-                        <ObjectList
-                            key={format!("{}", o.id)}
-                            group={o.id}
-                            drag_over={ctx.props().drag_over}
-                            mumble_object={ctx.props().mumble_object}
-                            selected={ctx.props().selected}
-                            onselect={ctx.props().onselect.clone()}
-                            ondragover={ctx.props().ondragover.clone()}
-                            ondragend={ctx.props().ondragend.clone()}
-                            onhiddentoggle={ctx.props().onhiddentoggle.clone()}
-                            onlockedtoggle={ctx.props().onlockedtoggle.clone()}
-                            onmumbletoggle={ctx.props().onmumbletoggle.clone()}
-                            />
-                        {drop_into}
-                    </section>
+            let children = match &o.kind {
+                ObjectKind::Group(g) => ((drop_into_last.is_some() || !order.is_empty(id))
+                    && g.is_expanded())
+                .then(|| {
+                    html! {
+                        <section key={format!("{id}-children")} class="object-children">
+                            <ObjectList
+                                key={format!("{}", o.id)}
+                                group={o.id}
+                                drag_over={ctx.props().drag_over}
+                                mumble_object={ctx.props().mumble_object}
+                                {drop_into_last}
+                                selected={ctx.props().selected}
+                                onselect={ctx.props().onselect.clone()}
+                                ondragover={ctx.props().ondragover.clone()}
+                                ondragend={ctx.props().ondragend.clone()}
+                                onhiddentoggle={ctx.props().onhiddentoggle.clone()}
+                                onexpandtoggle={ctx.props().onexpandtoggle.clone()}
+                                onlockedtoggle={ctx.props().onlockedtoggle.clone()}
+                                onmumbletoggle={ctx.props().onmumbletoggle.clone()}
+                                />
+
+                        </section>
+                    }
                 }),
                 _ => None,
             };
@@ -221,8 +261,6 @@ impl Component for ObjectList {
                 "object-button",
                 selected.then_some("selected"),
             };
-
-            let sort = format!("{:?}", o.sort());
 
             let node = html! {
                 <div key={format!("object-{id}")} class="object-item">
@@ -235,16 +273,14 @@ impl Component for ObjectList {
                         {ondragend}
                         {ondragover}
                     >
-                        <section {class} title={sort}>
+                        <section {class}>
                             <Icon name={icon_name} invert={true} small={true} />
 
                             <span class="object-label">{label}</span>
 
-                            <button class={mumble_classes}
-                                title="Toggle as MumbleLink Source"
-                                onclick={mumble_onclick}>
-                                <Icon name="mumble" />
-                            </button>
+                            {mumble_button}
+
+                            {expand_button}
 
                             <button class={hidden_classes}
                                 title={hidden_title}
@@ -268,7 +304,7 @@ impl Component for ObjectList {
 
             let class = classes! {
                 "object-drop",
-                (ctx.props().drag_over == Some((Drag::Below, group, id))).then_some("active"),
+                (is_last && ctx.props().drop_into_last.is_some() || ctx.props().drag_over == Some((Drag::Below, group, id))).then_some("active"),
             };
 
             let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
@@ -278,6 +314,17 @@ impl Component for ObjectList {
 
             list.push(html! {
                 <div key={format!("drag-below-{id}")} {class} {ondragover} />
+            });
+        }
+
+        if is_empty && let Some(id) = ctx.props().drop_into_last {
+            let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
+                ev.stop_propagation();
+                (Drag::Into, id, group)
+            });
+
+            list.push(html! {
+                <div key={format!("drag-last")} class="object-drop active" {ondragover} />
             });
         }
 
