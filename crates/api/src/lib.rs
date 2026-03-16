@@ -9,7 +9,7 @@ pub use peer_id::PeerId;
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
-use core::{f32, fmt};
+use core::fmt;
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
@@ -397,6 +397,7 @@ impl<const N: usize> From<[(Key, Value); N]> for Properties {
 
 #[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
+#[repr(C)]
 pub struct Vec3 {
     /// The x coordinate in meters from the origin (left / right).
     pub x: f32,
@@ -407,12 +408,23 @@ pub struct Vec3 {
 }
 
 impl Vec3 {
-    /// Convert the vector to an array of three floats.
+    /// Coerce into an array of floats.
     #[inline]
-    pub fn as_array(&self) -> [f32; 3] {
-        [self.x, self.y, self.z]
+    pub fn as_array(&self) -> &[f32; 3] {
+        // SAFETY: This struct is repr(C), which guarantees the layout.
+        unsafe { &*(self as *const Self as *const [f32; 3]) }
     }
 
+    /// Calculate the distance from `self` to `other`.
+    ///
+    /// ```
+    /// use api::Vec3;
+    ///
+    /// let a = Vec3::new(1.0, 2.0, 3.0);
+    /// let b = Vec3::new(4.0, 6.0, 8.0);
+    ///
+    /// assert!((a.dist(b) - 7.0710678118654755).abs() < 1e-6);
+    /// ```
     #[inline]
     pub fn dist(&self, other: Self) -> f32 {
         let dx = other.x - self.x;
