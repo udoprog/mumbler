@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3, VecXZ};
+use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
@@ -42,7 +42,7 @@ struct Updates {
 }
 
 impl Updates {
-    fn look_at(&mut self, objects: &mut ObjectsRef, p: VecXZ, m: VecXZ) {
+    fn look_at(&mut self, objects: &mut ObjectsRef, p: Vec3, m: Vec3) {
         let Some(o) = self.selected.and_then(|id| objects.get_mut(id)) else {
             return;
         };
@@ -52,7 +52,7 @@ impl Updates {
         };
 
         o.arrow_target = Some(m);
-        transform.front = p.direction_to(m).xyz(0.0);
+        transform.front = p.direction_to(m);
         self.transforms.insert(o.id);
     }
 }
@@ -119,7 +119,7 @@ struct DropImage {
     file_reader: Option<FileReader>,
     pixel_size: Option<(u32, u32)>,
     url: String,
-    world_pos: VecXZ,
+    world_pos: Vec3,
     world_size: Option<(f32, f32)>,
 }
 
@@ -196,14 +196,14 @@ pub(crate) struct Map {
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
-    mouse_world_pos: Option<VecXZ>,
+    mouse_world_pos: Option<Vec3>,
     objects: Objects,
     open_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
     selected: Option<Id>,
-    start_press: Option<(VecXZ, bool)>,
+    start_press: Option<(Vec3, bool)>,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
@@ -1308,7 +1308,7 @@ impl Map {
                 let world_pos = drop_image.world_pos;
                 let (width, height) = drop_image.world_size.unwrap_or((2.0, 2.0));
 
-                let transform = api::Transform::new(world_pos.xyz(0.0), api::Vec3::FORWARD);
+                let transform = api::Transform::new(world_pos, api::Vec3::FORWARD);
 
                 self._create_dropped_object = ctx
                     .props()
@@ -1594,7 +1594,7 @@ impl Map {
                 }
 
                 if let Some(transform) = o.as_transform() {
-                    let p = transform.position.xz();
+                    let p = transform.position;
                     self.start_press = Some((p, true));
                     self.updates.look_at(&mut objects, p, m);
                 }
@@ -1617,7 +1617,7 @@ impl Map {
                 continue;
             };
 
-            let p = transform.position.xz();
+            let p = transform.position;
 
             'move_done: {
                 let (Some(target), Some(speed)) = (o.move_target, speed) else {
@@ -1625,11 +1625,12 @@ impl Map {
                 };
 
                 let dx = target.x - p.x;
+                let dy = target.y - p.y;
                 let dz = target.z - p.z;
-                let distance = (dx * dx + dz * dz).sqrt();
+                let distance = (dx * dx + dy * dy + dz * dz).sqrt();
 
                 if distance < 0.01 {
-                    transform.position = target.xyz(0.0);
+                    transform.position = target;
                     o.move_target = None;
                     self.updates.transforms.insert(id);
                     break 'move_done;
@@ -1640,11 +1641,12 @@ impl Map {
                 let ratio = move_distance / distance;
 
                 transform.position.x += dx * ratio;
+                transform.position.y += dy * ratio;
                 transform.position.z += dz * ratio;
 
                 // Face the movement direction unless a look_at target is active.
                 if look_at.is_none() {
-                    transform.front = p.direction_to(target).xyz(0.0);
+                    transform.front = p.direction_to(target);
                 }
 
                 self.updates.transforms.insert(id);
@@ -1655,8 +1657,8 @@ impl Map {
                     break 'look_done;
                 };
 
-                o.arrow_target = Some(t.xz());
-                transform.front = p.direction_to(t.xz()).xyz(0.0);
+                o.arrow_target = Some(*t);
+                transform.front = p.direction_to(*t);
                 self.updates.transforms.insert(id);
             };
         }
@@ -1735,7 +1737,7 @@ impl Map {
                     return false;
                 };
 
-                transform.position.xz().dist(w) < click_radius
+                transform.position.dist(w) < click_radius
             })
             .map(|o| o.id);
 
@@ -1829,7 +1831,7 @@ impl Map {
                                     return false;
                                 };
 
-                                transform.position.xz().dist(e) < click_radius
+                                transform.position.dist(e) < click_radius
                             })
                             .map(|o| o.id);
 
@@ -1866,7 +1868,7 @@ impl Map {
                     };
 
                     if ev.shift_key() {
-                        let p = transform.position.xz();
+                        let p = transform.position;
 
                         self.start_press = Some((p, true));
 
@@ -1874,13 +1876,13 @@ impl Map {
                             // Shift-drag on a static object rotates it.
                             self.updates.look_at(&mut objects, p, e);
                         } else if let Some(look_at) = object.as_look_at_mut() {
-                            **look_at = Some(e.xyz(0.0));
+                            **look_at = Some(e);
                             self.updates.look_at(&mut objects, p, e);
                             self.updates.look_at.insert(object_id);
                         }
                     } else if is_static {
                         // Static objects snap immediately to where they are dropped.
-                        transform.position = e.xyz(0.0);
+                        transform.position = e;
                         self.start_press = Some((e, false));
                         self.updates.transforms.insert(object_id);
                     } else {
@@ -1957,7 +1959,7 @@ impl Map {
                 && let Some(transform) = o.as_transform_mut()
             {
                 // Static objects snap immediately while dragging.
-                transform.position = m.xyz(0.0);
+                transform.position = m;
                 self.updates.transforms.insert(o.id);
                 self.needs_redraw = true;
                 break 'done;

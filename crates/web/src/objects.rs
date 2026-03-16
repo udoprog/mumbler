@@ -4,9 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{
-    Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3, VecXZ,
-};
+use api::{Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -49,8 +47,8 @@ impl DerefMut for PeerObject {
 
 pub(crate) struct LocalObject {
     pub(crate) data: ObjectData,
-    pub(crate) move_target: Option<VecXZ>,
-    pub(crate) arrow_target: Option<VecXZ>,
+    pub(crate) move_target: Option<Vec3>,
+    pub(crate) arrow_target: Option<Vec3>,
 }
 
 impl LocalObject {

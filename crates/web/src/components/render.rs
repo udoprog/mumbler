@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Extent, Id, Vec3, VecXZ};
+use api::{Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
@@ -146,10 +146,10 @@ impl ViewTransform {
         Canvas2::new(x, y)
     }
 
-    pub(crate) fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> VecXZ {
+    pub(crate) fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> Vec3 {
         let world_x = ((canvas_x - self.center_x) / self.scale) as f32;
         let world_z = ((self.center_y - canvas_y) / self.scale) as f32;
-        VecXZ::new(world_x, world_z)
+        Vec3::new(world_x, 0.0, world_z)
     }
 }
 
@@ -297,7 +297,7 @@ pub(crate) fn draw_token_token(
     cx: &CanvasRenderingContext2d,
     t: &ViewTransform,
     token: &RenderToken,
-    arrow_target: Option<&VecXZ>,
+    arrow_target: Option<&Vec3>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
     let pos = t.world_to_canvas(token.transform.position.x, token.transform.position.z);
@@ -357,13 +357,13 @@ pub(crate) fn draw_token_token(
     let front = if token.player
         && let Some(m) = arrow_target
     {
-        token.transform.position.xz().direction_to(*m).xyz(0.0)
+        token.transform.position.direction_to(*m)
     } else {
         token.transform.front
     };
 
     if front.x.hypot(front.z) > 0.01 {
-        let angle = front.xz().angle() as f64;
+        let angle = front.angle_xz() as f64;
         let arc_radius = token_radius * 1.5;
         let color = token.color.to_transparent_rgba(0.5);
         cx.set_stroke_style_str(&color);
@@ -375,7 +375,7 @@ pub(crate) fn draw_token_token(
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
 
-        let facing_up = front.x.hypot(front.z) > 0.01 && { front.xz().angle().sin() < 0.0 };
+        let facing_up = front.x.hypot(front.z) > 0.01 && { front.angle_xz().sin() < 0.0 };
 
         let (name_y, baseline) = if facing_up {
             (pos.y + token_radius + 4.0, "top")
@@ -408,7 +408,7 @@ pub(crate) fn draw_static_token(
     let hw = s.width as f64 / 2.0 * t.scale;
     let hh = s.height as f64 / 2.0 * t.scale;
 
-    let angle = s.transform.front.xz().angle() as f64;
+    let angle = s.transform.front.angle_xz() as f64;
     let rotation = angle - FRAC_PI_2;
 
     let color = s.color.to_css_string();

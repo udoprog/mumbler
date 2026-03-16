@@ -9,7 +9,7 @@ pub use peer_id::PeerId;
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
-use core::fmt;
+use core::{f32, fmt};
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
@@ -395,48 +395,6 @@ impl<const N: usize> From<[(Key, Value); N]> for Properties {
     }
 }
 
-/// Two point coordinates in world space.
-#[derive(Debug, Clone, Copy)]
-pub struct VecXZ {
-    pub x: f32,
-    pub z: f32,
-}
-
-impl VecXZ {
-    /// Construct a new `VecXZ` with the given coordinates.
-    #[inline]
-    pub fn new(x: f32, z: f32) -> Self {
-        Self { x, z }
-    }
-
-    /// Calculate the direction from `self` to `other` as a unit vector.
-    pub fn direction_to(&self, other: Self) -> Self {
-        let angle_rad = (other.z - self.z).atan2(other.x - self.x);
-        let dir_x = angle_rad.cos();
-        let dir_z = angle_rad.sin();
-        Self::new(dir_x, dir_z)
-    }
-
-    /// Calculate the distance between this and another point in the xz plane.
-    #[inline]
-    pub fn dist(&self, other: Self) -> f32 {
-        (other.x - self.x).hypot(other.z - self.z)
-    }
-
-    /// Calculate the angle at which the XZ vector is facing in the xz plane
-    /// where 0 degrees means facing in the positive x direction.
-    #[inline]
-    pub fn angle(&self) -> f32 {
-        (-self.z).atan2(self.x)
-    }
-
-    /// Swizzle into a three component vector.
-    #[inline]
-    pub fn xyz(&self, y: f32) -> Vec3 {
-        Vec3::new(self.x, y, self.z)
-    }
-}
-
 #[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct Vec3 {
@@ -455,20 +413,29 @@ impl Vec3 {
         [self.x, self.y, self.z]
     }
 
-    /// Invert the z coordinate.
     #[inline]
-    pub fn invert_z(&self) -> Self {
-        Self {
-            x: self.x,
-            y: self.y,
-            z: -self.z,
-        }
+    pub fn dist(&self, other: Self) -> f32 {
+        let dx = other.x - self.x;
+        let dy = other.y - self.y;
+        let dz = other.z - self.z;
+        (dx * dx + dy * dy + dz * dz).sqrt()
     }
 
-    /// Extract the x and z coordinates.
+    /// Calculate the direction from `self` to `other` as a unit vector.
     #[inline]
-    pub fn xz(&self) -> VecXZ {
-        VecXZ::new(self.x, self.z)
+    pub fn direction_to(&self, other: Self) -> Self {
+        let dx = other.x - self.x;
+        let dy = other.y - self.y;
+        let dz = other.z - self.z;
+        let len = (dx * dx + dy * dy + dz * dz).sqrt();
+        Self::new(dx / len, dy / len, dz / len)
+    }
+
+    /// Calculate the angle at which the XZ vector is facing in the xz plane
+    /// where 0 degrees means facing in the positive x direction.
+    #[inline]
+    pub fn angle_xz(&self) -> f32 {
+        (-self.z).atan2(self.x)
     }
 }
 
