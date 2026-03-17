@@ -45,8 +45,8 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
     link.set_description("Test link from mumbler");
 
     if let Some(transform) = transform {
-        pos.position = transform.position.as_array();
-        pos.front = transform.front.as_array();
+        pos.position = *transform.position.as_array();
+        pos.front = *transform.front.as_array();
         link.set_avatar(pos);
         link.set_camera(pos);
     } else {
@@ -68,8 +68,8 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
                 let state = b.mumblelink_state().await;
 
                 if let Some(transform) = state.transform {
-                    pos.position = transform.position.as_array();
-                    pos.front = transform.front.as_array();
+                    pos.position = *transform.position.as_array();
+                    pos.front = *transform.front.as_array();
                     link.set_avatar(pos);
                     link.set_camera(pos);
                     link.enable();

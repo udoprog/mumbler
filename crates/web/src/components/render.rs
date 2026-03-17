@@ -36,7 +36,7 @@ pub(crate) struct RenderToken<'a> {
     pub(crate) name: Option<&'a str>,
     pub(crate) player: bool,
     pub(crate) selected: bool,
-    pub(crate) hidden: Visibility,
+    pub(crate) visibility: Visibility,
     pub(crate) token_radius: f32,
 }
 
@@ -58,7 +58,7 @@ impl<'a> RenderToken<'a> {
             name: data.name.as_deref(),
             player: false,
             selected: false,
-            hidden: data.visibility().max(visibility(*data.group)),
+            visibility: data.visibility().max(visibility(*data.group)),
             token_radius: *token.token_radius,
         })
     }
@@ -123,15 +123,18 @@ impl ViewTransform {
     }
 
     pub(crate) fn new(canvas: &HtmlCanvasElement, w: &Config) -> Self {
-        let canvas_min = canvas.width().min(canvas.height()) as f64;
+        let width = canvas.width();
+        let height = canvas.height();
+
+        let canvas_min = width.min(height) as f64;
         let world_w = (w.extent.x.end - w.extent.x.start) as f64;
         let world_h = (w.extent.y.end - w.extent.y.start) as f64;
         let scale = (canvas_min / world_w.max(world_h)) * *w.zoom as f64;
 
         let world_mid_x = ((w.extent.x.start + w.extent.x.end) / 2.0) as f64;
         let world_mid_y = ((w.extent.y.start + w.extent.y.end) / 2.0) as f64;
-        let center_x = canvas.width() as f64 / 2.0 + w.pan.x - world_mid_x * scale;
-        let center_y = canvas.height() as f64 / 2.0 + w.pan.y - world_mid_y * scale;
+        let center_x = width as f64 / 2.0 + w.pan.x - world_mid_x * scale;
+        let center_y = height as f64 / 2.0 + w.pan.y - world_mid_y * scale;
 
         Self {
             scale,
@@ -140,15 +143,15 @@ impl ViewTransform {
         }
     }
 
-    pub(crate) fn world_to_canvas(&self, world_x: f32, world_z: f32) -> Canvas2 {
-        let x = self.center_x + world_x as f64 * self.scale;
-        let y = self.center_y - world_z as f64 * self.scale;
+    pub(crate) fn to_canvas(&self, w: Vec3) -> Canvas2 {
+        let x = self.center_x + w.x as f64 * self.scale;
+        let y = self.center_y - w.z as f64 * self.scale;
         Canvas2::new(x, y)
     }
 
-    pub(crate) fn canvas_to_world(&self, canvas_x: f64, canvas_y: f64) -> Vec3 {
-        let world_x = ((canvas_x - self.center_x) / self.scale) as f32;
-        let world_z = ((self.center_y - canvas_y) / self.scale) as f32;
+    pub(crate) fn to_world(&self, p: Canvas2) -> Vec3 {
+        let world_x = ((p.x - self.center_x) / self.scale) as f32;
+        let world_z = ((self.center_y - p.y) / self.scale) as f32;
         Vec3::new(world_x, 0.0, world_z)
     }
 }
@@ -184,8 +187,8 @@ pub(crate) fn draw_grid(
 
     while x <= extent.x.end + EPS {
         if x.abs() >= EPS {
-            let c1 = t.world_to_canvas(x, extent.y.start);
-            let c2 = t.world_to_canvas(x, extent.y.end);
+            let c1 = t.to_canvas(Vec3::new(x, 0.0, extent.y.start));
+            let c2 = t.to_canvas(Vec3::new(x, 0.0, extent.y.end));
 
             cx.begin_path();
             cx.move_to(c1.x, c1.y);
@@ -200,8 +203,8 @@ pub(crate) fn draw_grid(
 
     while z <= extent.y.end + EPS {
         if z.abs() >= EPS {
-            let c1 = t.world_to_canvas(extent.x.start, z);
-            let c2 = t.world_to_canvas(extent.x.end, z);
+            let c1 = t.to_canvas(Vec3::new(extent.x.start, 0.0, z));
+            let c2 = t.to_canvas(Vec3::new(extent.x.end, 0.0, z));
 
             cx.begin_path();
             cx.move_to(c1.x, c1.y);
@@ -216,8 +219,9 @@ pub(crate) fn draw_grid(
     cx.set_line_width(zoom as f64 * 1.5);
 
     if extent.x.contains(0.0) {
-        let c1 = t.world_to_canvas(0.0, extent.y.start);
-        let c2 = t.world_to_canvas(0.0, extent.y.end);
+        let c1 = t.to_canvas(Vec3::new(0.0, 0.0, extent.y.start));
+        let c2 = t.to_canvas(Vec3::new(0.0, 0.0, extent.y.end));
+
         cx.begin_path();
         cx.move_to(c1.x, c1.y);
         cx.line_to(c1.x, c2.y);
@@ -225,8 +229,9 @@ pub(crate) fn draw_grid(
     }
 
     if extent.y.contains(0.0) {
-        let c1 = t.world_to_canvas(extent.x.start, 0.0);
-        let c2 = t.world_to_canvas(extent.x.end, 0.0);
+        let c1 = t.to_canvas(Vec3::new(extent.x.start, 0.0, 0.0));
+        let c2 = t.to_canvas(Vec3::new(extent.x.end, 0.0, 0.0));
+
         cx.begin_path();
         cx.move_to(c1.x, c1.y);
         cx.line_to(c2.x, c1.y);
@@ -282,7 +287,7 @@ pub(crate) fn draw_look_at(
 
     let color = color.to_transparent_rgba(0.5);
 
-    let e = t.world_to_canvas(target.x, target.z);
+    let e = t.to_canvas(target);
 
     cx.set_fill_style_str(&color);
     cx.begin_path();
@@ -300,7 +305,7 @@ pub(crate) fn draw_token_token(
     arrow_target: Option<&Vec3>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let pos = t.world_to_canvas(token.transform.position.x, token.transform.position.z);
+    let pos = t.to_canvas(token.transform.position);
 
     let token_radius = token.token_radius as f64 * t.scale;
 
@@ -387,11 +392,11 @@ pub(crate) fn draw_token_token(
         cx.set_shadow_color("rgba(0,0,0,0.8)");
         cx.set_shadow_blur(3.0);
         cx.set_fill_style_str("#ffffff");
-        let _ = cx.fill_text(name, pos.x, name_y);
+        cx.fill_text(name, pos.x, name_y)?;
         cx.set_shadow_blur(0.0);
     }
 
-    if token.hidden.is_hidden() {
+    if token.visibility.is_hidden() {
         draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 
@@ -403,7 +408,7 @@ pub(crate) fn draw_static_token(
     s: &RenderStatic,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let pos = t.world_to_canvas(s.transform.position.x, s.transform.position.z);
+    let pos = t.to_canvas(s.transform.position);
 
     let hw = s.width as f64 / 2.0 * t.scale;
     let hh = s.height as f64 / 2.0 * t.scale;

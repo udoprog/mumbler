@@ -16,6 +16,7 @@ use yew::prelude::*;
 
 use crate::components::Icon;
 use crate::components::object_list::Drag;
+use crate::components::render::Canvas2;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
@@ -748,7 +749,8 @@ impl Map {
         };
 
         let t = ViewTransform::new(&canvas, &self.config);
-        let world_pos = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+        let world_pos = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let world_pos = t.to_world(world_pos);
 
         let Some(dt) = ev.data_transfer() else {
             return Ok(false);
@@ -1726,7 +1728,9 @@ impl Map {
         };
 
         let t = ViewTransform::new(&canvas, &self.config);
-        let w = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+
+        let w = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let w = t.to_world(w);
 
         let objects = self.objects.borrow();
 
@@ -1819,7 +1823,8 @@ impl Map {
                     };
 
                     let t = ViewTransform::new(&canvas, &self.config);
-                    let e = t.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+                    let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+                    let e = t.to_world(e);
 
                     let mut hit_something = false;
 
@@ -1881,7 +1886,7 @@ impl Map {
                             self.updates.look_at.insert(object_id);
                         }
                     } else if is_static {
-                        // Static objects snap immediately to where they are dropped.
+                        // Static objects snap immediately to where you click.
                         transform.position = e;
                         self.start_press = Some((e, false));
                         self.updates.transforms.insert(object_id);
@@ -1924,7 +1929,8 @@ impl Map {
             self.needs_redraw = true;
         }
 
-        let m = v.canvas_to_world(ev.offset_x() as f64, ev.offset_y() as f64);
+        let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let m = v.to_world(m);
         self.mouse_world_pos = Some(m);
 
         'done: {
@@ -2031,18 +2037,18 @@ impl Map {
             return Ok(());
         };
 
-        let mx = ev.offset_x() as f64;
-        let my = ev.offset_y() as f64;
+        let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
 
         let t_before = ViewTransform::new(&canvas, &self.config);
-        let w = t_before.canvas_to_world(mx, my);
+        let w = t_before.to_world(m);
 
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
 
         let t_after = ViewTransform::new(&canvas, &self.config);
-        let c2 = t_after.world_to_canvas(w.x, w.z);
-        self.config.pan.x += mx - c2.x;
-        self.config.pan.y += my - c2.y;
+        let c2 = t_after.to_canvas(w);
+
+        self.config.pan.x += m.x - c2.x;
+        self.config.pan.y += m.y - c2.y;
 
         self.update_world = true;
         self.needs_redraw = true;
@@ -2137,14 +2143,14 @@ impl Map {
                 .flat_map(|peer| {
                     RenderToken::from_data(peer, |id| self.peers.visibility(peer.peer_id, id))
                 })
-                .filter(|render| !render.hidden.is_hidden());
+                .filter(|render| !render.visibility.is_hidden());
 
             let locals = order.walk().rev().flat_map(|id| {
                 let data = objects.get(id)?;
                 let mut token = RenderToken::from_data(data, |id| objects.visibility(id))?;
 
                 // Locally hidden items should not be rendered locally.
-                if token.hidden.is_local_hidden() {
+                if token.visibility.is_local_hidden() {
                     return None;
                 }
 

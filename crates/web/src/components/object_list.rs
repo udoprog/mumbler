@@ -97,13 +97,6 @@ impl Component for ObjectList {
         for (n, (is_last, o)) in remaining.chain(last).enumerate() {
             is_empty = false;
 
-            let (icon_name, mumble_button, is_group) = match o.kind {
-                ObjectKind::Token(..) => ("user", true, false),
-                ObjectKind::Static(..) => ("squares-2x2", true, false),
-                ObjectKind::Group(..) => ("folder", false, true),
-                _ => ("question-mark-circle", false, false),
-            };
-
             let id = o.id;
             let selected = ctx.props().selected == Some(id);
 
@@ -124,11 +117,15 @@ impl Component for ObjectList {
                 (Drag::Below, group, id)
             });
 
-            let drag_into = if is_group { Drag::Into } else { Drag::Below };
+            let drag = if o.is_group() {
+                Drag::Into
+            } else {
+                Drag::Below
+            };
 
             let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                (drag_into, group, id)
+                (drag, group, id)
             });
 
             if n == 0 {
@@ -147,7 +144,7 @@ impl Component for ObjectList {
                 });
             }
 
-            let mumble_button = mumble_button.then(|| {
+            let mumble_button = o.is_interactive().then(|| {
                 let is_mumble = ctx.props().mumble_object == Some(id);
 
                 let class = classes! {
@@ -168,7 +165,7 @@ impl Component for ObjectList {
                 }
             });
 
-            let expand_button = is_group.then(|| {
+            let expand_button = o.is_group().then(|| {
                 let is_expanded = o.is_expanded();
 
                 let class = classes! {
@@ -328,7 +325,7 @@ impl Component for ObjectList {
                         {ondragover}
                     >
                         <section {class}>
-                            <Icon name={icon_name} invert={true} small={true} />
+                            <Icon name={o.icon()} invert={true} small={true} />
 
                             <span class="object-label">{label}</span>
 

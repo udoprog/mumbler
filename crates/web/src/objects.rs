@@ -457,9 +457,26 @@ impl ObjectData {
         }
     }
 
+    /// Test if object is a group.
+    #[inline]
+    pub(crate) fn is_group(&self) -> bool {
+        matches!(self.kind, ObjectKind::Group(_))
+    }
+
+    /// Test if object is interactive.
     #[inline]
     pub(crate) fn is_interactive(&self) -> bool {
-        matches!(self.kind, ObjectKind::Token(_) | ObjectKind::Static(_))
+        matches!(self.kind, ObjectKind::Token(_))
+    }
+
+    #[inline]
+    pub(crate) fn icon(&self) -> &'static str {
+        match &self.kind {
+            ObjectKind::Token(..) => "user",
+            ObjectKind::Static(..) => "squares-2x2",
+            ObjectKind::Group(..) => "folder",
+            _ => "question-mark-circle",
+        }
     }
 
     #[inline]
