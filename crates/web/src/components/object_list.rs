@@ -2,29 +2,23 @@ use api::Id;
 use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
+use crate::drag_over::DragOver;
 use crate::hierarchy::Hierarchy;
 use crate::objects::{ObjectKind, Objects};
 
 use super::Icon;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Drag {
-    Above,
-    Into,
-    Below,
-}
-
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) group: Id,
-    pub(crate) drag_over: Option<(Drag, Id, Id)>,
+    pub(crate) drag_over: Option<DragOver>,
     pub(crate) mumble_object: Option<Id>,
     #[prop_or_default]
     pub(crate) drop_into_last: Option<Id>,
     pub(crate) selected: Option<Id>,
     pub(crate) onselect: Callback<Id>,
     pub(crate) ondragend: Callback<Id>,
-    pub(crate) ondragover: Callback<(Drag, Id, Id)>,
+    pub(crate) ondragover: Callback<DragOver>,
     pub(crate) onhiddentoggle: Callback<Id>,
     pub(crate) onlocalhiddentoggle: Callback<Id>,
     pub(crate) onexpandtoggle: Callback<Id>,
@@ -97,55 +91,55 @@ impl Component for ObjectList {
         for (n, (is_last, o)) in remaining.chain(last).enumerate() {
             is_empty = false;
 
-            let id = o.id;
-            let selected = ctx.props().selected == Some(id);
+            let target = o.id;
+            let selected = ctx.props().selected == Some(target);
 
             let label = o.name().unwrap_or("");
 
             let onclick = ctx.props().onselect.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
-                id
+                target
             });
 
             let ondragend = ctx.props().ondragend.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                id
+                target
             });
 
             let ondragstart = ctx.props().ondragover.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                (Drag::Below, group, id)
+                DragOver::below(group, target)
             });
 
             let drag = if o.is_group() {
-                Drag::Into
+                DragOver::into
             } else {
-                Drag::Below
+                DragOver::below
             };
 
             let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                (drag, group, id)
+                drag(group, target)
             });
 
             if n == 0 {
                 let class = classes! {
                     "object-drop",
-                    (ctx.props().drag_over == Some((Drag::Above, group, id))).then_some("active"),
+                    (ctx.props().drag_over == Some(DragOver::above(group, target))).then_some("active"),
                 };
 
                 let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
                     ev.stop_propagation();
-                    (Drag::Above, group, id)
+                    DragOver::above(group, target)
                 });
 
                 list.push(html! {
-                    <div key={format!("drop-above-{id}")} {class} {ondragover} />
+                    <div key={format!("drop-above-{target}")} {class} {ondragover} />
                 });
             }
 
             let mumble_button = o.is_interactive().then(|| {
-                let is_mumble = ctx.props().mumble_object == Some(id);
+                let is_mumble = ctx.props().mumble_object == Some(target);
 
                 let class = classes! {
                     "btn", "sm", "square", "object-action",
@@ -155,7 +149,7 @@ impl Component for ObjectList {
 
                 let onclick = ctx.props().onmumbletoggle.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
-                    id
+                    target
                 });
 
                 html! {
@@ -176,7 +170,7 @@ impl Component for ObjectList {
 
                 let onclick = ctx.props().onexpandtoggle.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
-                    id
+                    target
                 });
 
                 html! {
@@ -203,7 +197,7 @@ impl Component for ObjectList {
 
                 let onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
-                    id
+                    target
                 });
 
                 let name = if is_hidden { "link-slash" } else { "link" };
@@ -235,7 +229,7 @@ impl Component for ObjectList {
                     .onlocalhiddentoggle
                     .reform(move |ev: MouseEvent| {
                         ev.stop_propagation();
-                        id
+                        target
                     });
 
                 let name = if is_local_hidden { "eye-slash" } else { "eye" };
@@ -260,7 +254,7 @@ impl Component for ObjectList {
 
                 let onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
-                    id
+                    target
                 });
 
                 let name = if is_locked {
@@ -277,14 +271,14 @@ impl Component for ObjectList {
             };
 
             let drop_into_last =
-                (ctx.props().drag_over == Some((Drag::Into, group, o.id))).then_some(group);
+                (ctx.props().drag_over == Some(DragOver::into(group, o.id))).then_some(group);
 
             let children = match &o.kind {
                 ObjectKind::Group(g) => (g.is_expanded()
-                    && (drop_into_last.is_some() || !order.is_empty(id)))
+                    && (drop_into_last.is_some() || !order.is_empty(target)))
                 .then(|| {
                     html! {
-                        <section key={format!("{id}-children")} class="object-children">
+                        <section key={format!("{target}-children")} class="object-children">
                             <ObjectList
                                 key={format!("{}", o.id)}
                                 group={o.id}
@@ -314,9 +308,9 @@ impl Component for ObjectList {
             };
 
             let node = html! {
-                <div key={format!("object-{id}")} class="object-item">
+                <div key={format!("object-{target}")} class="object-item">
                     <section
-                        key={format!("drag-{id}")}
+                        key={format!("drag-{target}")}
                         class="object-drag"
                         draggable={true}
                         {onclick}
@@ -349,23 +343,23 @@ impl Component for ObjectList {
 
             let class = classes! {
                 "object-drop",
-                (is_last && ctx.props().drop_into_last.is_some() || ctx.props().drag_over == Some((Drag::Below, group, id))).then_some("active"),
+                (is_last && ctx.props().drop_into_last.is_some() || ctx.props().drag_over == Some(DragOver::below(group, target))).then_some("active"),
             };
 
             let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                (Drag::Below, group, id)
+                DragOver::below(group, target)
             });
 
             list.push(html! {
-                <div key={format!("drag-below-{id}")} {class} {ondragover} />
+                <div key={format!("drag-below-{target}")} {class} {ondragover} />
             });
         }
 
-        if is_empty && let Some(id) = ctx.props().drop_into_last {
+        if is_empty && let Some(target) = ctx.props().drop_into_last {
             let ondragover = ctx.props().ondragover.reform(move |ev: DragEvent| {
                 ev.stop_propagation();
-                (Drag::Into, id, group)
+                DragOver::into(group, target)
             });
 
             list.push(html! {

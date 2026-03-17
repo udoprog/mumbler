@@ -3,6 +3,7 @@
 #![allow(clippy::vec_init_then_push)]
 
 mod components;
+mod drag_over;
 mod error;
 mod hierarchy;
 mod images;

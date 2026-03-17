@@ -17,8 +17,8 @@ use web_sys::{
 use yew::prelude::*;
 
 use crate::components::Icon;
-use crate::components::object_list::Drag;
 use crate::components::render::Canvas2;
+use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
@@ -88,15 +88,8 @@ impl Updates {
 
         *config.mumble_object = id;
 
-        self._toggle_mumble_request = ctx
-            .props()
-            .ws
-            .request()
-            .body(api::UpdateConfigRequest {
-                values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
-            })
-            .on_packet(ctx.link().callback(Msg::ConfigResult))
-            .send();
+        self._toggle_mumble_request =
+            update_config(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id))]);
     }
 }
 
@@ -214,58 +207,58 @@ struct ContextMenu {
 }
 
 pub(crate) struct Map {
+    _create_dropped_object: ws::Request,
+    _create_group: ws::Request,
     _create_object: ws::Request,
     _create_static: ws::Request,
-    _create_group: ws::Request,
     _delete_object: ws::Request,
     _initialize: ws::Request,
-    _upload_image: ws::Request,
-    _create_dropped_object: ws::Request,
-    drop_image: Option<DropImage>,
     _keydown_listener: EventListener,
     _keyup_listener: EventListener,
     _local_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _remote_update_listener: ws::Listener,
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
+    _set_group: ws::Request,
     _set_mumble_follow: ws::Request,
     _set_sort: ws::Request,
-    _set_group: ws::Request,
     _state_change: ws::StateListener,
-    _toggle_locked_request: ws::Request,
+    _toggle_locked: ws::Request,
     _update_world: ws::Request,
+    _upload_image: ws::Request,
     animation_interval: Option<Interval>,
     canvas_ref: NodeRef,
     canvas_sizer: NodeRef,
     config: Config,
-    drag_over: Option<(Drag, Id, Id)>,
-    object_requests: HashMap<Id, ws::Request>,
+    drag_over: Option<DragOver>,
+    drop_image: Option<DropImage>,
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
     mouse_world_pos: Option<Vec3>,
+    needs_redraw: bool,
+    object_ondragend: Callback<Id>,
+    object_ondragover: Callback<DragOver>,
+    object_onexpandtoggle: Callback<Id>,
+    object_onhiddentoggle: Callback<Id>,
+    object_onlocalhiddentoggle: Callback<Id>,
+    object_onlockedtoggle: Callback<Id>,
+    object_onmumbletoggle: Callback<Id>,
+    object_onselect: Callback<Id>,
+    object_requests: HashMap<Id, ws::Request>,
     objects: Objects,
+    open_help: bool,
+    open_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
+    scale_requests: HashMap<(Id, Key), ws::Request>,
+    scaling: Option<ScaleState>,
     selected: Option<Id>,
     start_press: Option<(Vec3, bool)>,
-    scaling: Option<ScaleState>,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
-    scale_requests: HashMap<(Id, Key), ws::Request>,
     update_world: bool,
-    needs_redraw: bool,
-    object_onselect: Callback<Id>,
-    object_ondragover: Callback<(Drag, Id, Id)>,
-    object_ondragend: Callback<Id>,
-    object_onhiddentoggle: Callback<Id>,
-    object_onlocalhiddentoggle: Callback<Id>,
-    object_onexpandtoggle: Callback<Id>,
-    object_onlockedtoggle: Callback<Id>,
-    object_onmumbletoggle: Callback<Id>,
-    open_settings: Option<Id>,
-    open_help: bool,
     updates: Updates,
 }
 
@@ -285,7 +278,7 @@ pub(crate) enum Msg {
     CreateGroup,
     DeleteObject(Id),
     DragEnd(Id),
-    DragOver(Drag, Id, Id),
+    DragOver(DragOver),
     CanvasDragOver(DragEvent),
     DropImage(DragEvent),
     DropImageLoaded(u32, u32),
@@ -380,60 +373,58 @@ impl Component for Map {
         });
 
         let mut this = Self {
+            _create_dropped_object: ws::Request::new(),
+            _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
-            _create_group: ws::Request::new(),
             _delete_object: ws::Request::new(),
             _initialize: ws::Request::new(),
-            _upload_image: ws::Request::new(),
-            _create_dropped_object: ws::Request::new(),
-            drop_image: None,
             _keydown_listener,
             _keyup_listener,
             _local_update_listener,
             _log_handle,
             _remote_update_listener,
             _resize_observer: None,
+            _set_group: ws::Request::new(),
             _set_mumble_follow: ws::Request::new(),
             _set_sort: ws::Request::new(),
-            _set_group: ws::Request::new(),
             _state_change,
-            _toggle_locked_request: ws::Request::new(),
+            _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
+            _upload_image: ws::Request::new(),
             animation_interval: None,
             canvas_ref: NodeRef::default(),
             canvas_sizer: NodeRef::default(),
             config: Config::default(),
             drag_over: None,
-            object_requests: HashMap::new(),
+            drop_image: None,
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
             mouse_world_pos: None,
+            needs_redraw: false,
+            object_ondragend: ctx.link().callback(Msg::DragEnd),
+            object_ondragover: ctx.link().callback(Msg::DragOver),
+            object_onexpandtoggle: ctx.link().callback(Msg::ToggleExpanded),
+            object_onhiddentoggle: ctx.link().callback(Msg::ToggleHidden),
+            object_onlocalhiddentoggle: ctx.link().callback(Msg::ToggleLocalHidden),
+            object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
+            object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
+            object_onselect: ctx.link().callback(|id| Msg::SelectObject(Some(id))),
+            object_requests: HashMap::new(),
             objects: Objects::default(),
-            open_settings: None,
             open_help: false,
+            open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
+            scale_requests: HashMap::new(),
+            scaling: None,
             selected: None,
             start_press: None,
-            scaling: None,
             state,
             transform_requests: HashMap::new(),
-            scale_requests: HashMap::new(),
             update_world: false,
-            needs_redraw: false,
-            object_onselect: ctx.link().callback(|id| Msg::SelectObject(Some(id))),
-            object_ondragover: ctx
-                .link()
-                .callback(|(drag, group, id)| Msg::DragOver(drag, group, id)),
-            object_ondragend: ctx.link().callback(Msg::DragEnd),
-            object_onhiddentoggle: ctx.link().callback(Msg::ToggleHidden),
-            object_onlocalhiddentoggle: ctx.link().callback(Msg::ToggleLocalHidden),
-            object_onexpandtoggle: ctx.link().callback(Msg::ToggleExpanded),
-            object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
-            object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
             updates: Updates::default(),
         };
 
@@ -479,7 +470,7 @@ impl Component for Map {
         }
 
         if self.update_world {
-            self.send_world_updates(ctx);
+            self._update_world = update_config(ctx, self.config.world_values());
             self.update_world = false;
         }
 
@@ -922,104 +913,11 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::DragOver(drag, group, id) => {
-                self.drag_over = Some((drag, group, id));
+            Msg::DragOver(drag_over) => {
+                self.drag_over = Some(drag_over);
                 Ok(true)
             }
-            Msg::DragEnd(object_id) => {
-                let Some((drag, group, target_id)) = self.drag_over.take() else {
-                    return Ok(false);
-                };
-
-                let mut objects = self.objects.borrow_mut();
-                let mut order = self.order.borrow_mut();
-
-                let new_group = match drag {
-                    Drag::Into => target_id,
-                    _ => group,
-                };
-
-                // We have to refuse to drag a group into itself.
-                if object_id == new_group {
-                    return Ok(true);
-                }
-
-                let new_sort = {
-                    let Some(target) = objects.get(target_id) else {
-                        return Ok(true);
-                    };
-
-                    match drag {
-                        Drag::Into => {
-                            // When inserting into, we insert after the last element in the group.
-                            let last = order
-                                .iter(target_id)
-                                .last()
-                                .and_then(|id| Some(objects.get(id)?.sort()));
-
-                            if let Some(last) = last {
-                                sorting::after(last)
-                            } else {
-                                target.id.as_bytes().to_vec()
-                            }
-                        }
-                        Drag::Above => {
-                            let prev = order
-                                .iter(group)
-                                .rev()
-                                .skip_while(|id| *id != target_id)
-                                .nth(1);
-
-                            let prev = prev.and_then(|id| Some(objects.get(id)?.sort()));
-
-                            if let Some(prev) = prev {
-                                sorting::midpoint(prev, target.sort())
-                            } else {
-                                sorting::before(target.sort())
-                            }
-                        }
-                        Drag::Below => {
-                            let next = order.iter(group).skip_while(|id| *id != target_id).nth(1);
-
-                            let next = next.and_then(|id| Some(objects.get(id)?.sort()));
-
-                            if let Some(next) = next {
-                                sorting::midpoint(target.sort(), next)
-                            } else {
-                                sorting::after(target.sort())
-                            }
-                        }
-                    }
-                };
-
-                let Some((o_group, o_sort)) = objects.get_mut(object_id).and_then(|o| o.sort_mut())
-                else {
-                    return Ok(true);
-                };
-
-                let old_group = **o_group;
-                let old_sort = o_sort.to_vec();
-
-                let group_changed = o_group.update(new_group);
-                let sort_changed = o_sort.update(new_sort.clone());
-
-                if group_changed {
-                    self._set_group =
-                        self::update(ctx, object_id, Key::GROUP, Value::from(new_group));
-                }
-
-                if sort_changed {
-                    self._set_sort =
-                        self::update(ctx, object_id, Key::SORT, Value::from(new_sort.clone()));
-                }
-
-                if sort_changed || group_changed {
-                    order.remove(old_group, old_sort, object_id);
-                    order.insert(new_group, new_sort, object_id);
-                }
-
-                Ok(true)
-            }
+            Msg::DragEnd(object_id) => self.drag_end(ctx, object_id),
             // Removed misplaced enum variants
             Msg::OpenObjectSettings(id) => {
                 self.updates.context_menu = None;
@@ -1049,34 +947,11 @@ impl Map {
 
                 *self.config.mumble_object = update;
 
-                self.updates._toggle_mumble_request = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateConfigRequest {
-                        values: vec![(Key::MUMBLE_OBJECT, Value::from(update))],
-                    })
-                    .on_packet(ctx.link().callback(Msg::ConfigResult))
-                    .send();
-
+                self.updates._toggle_mumble_request =
+                    update_config(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update))]);
                 Ok(true)
             }
-            Msg::ToggleLocked(id) => {
-                let mut objects = self.objects.borrow_mut();
-
-                let Some(object) = objects.get_mut(id) else {
-                    return Ok(false);
-                };
-
-                let Some(locked) = object.as_locked_mut() else {
-                    return Ok(false);
-                };
-
-                let new = !**locked;
-                **locked = new;
-                self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
-                Ok(true)
-            }
+            Msg::ToggleLocked(id) => self.toggle_locked(ctx, id),
             Msg::ConfigResult(result) => {
                 result?;
                 Ok(false)
@@ -1439,16 +1314,10 @@ impl Map {
             Msg::ToggleFollowMumbleSelection => {
                 *self.config.mumble_follow = !*self.config.mumble_follow;
 
-                self._set_mumble_follow = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UpdateConfigRequest {
-                        values: vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
-                    })
-                    .on_packet(ctx.link().callback(Msg::ConfigResult))
-                    .send();
-
+                self._set_mumble_follow = update_config(
+                    ctx,
+                    vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
+                );
                 Ok(true)
             }
             Msg::CreateToken => {
@@ -1721,22 +1590,7 @@ impl Map {
                 };
 
                 ev.prevent_default();
-
-                let mut objects = self.objects.borrow_mut();
-
-                let Some(object) = objects.get_mut(id) else {
-                    return Ok(false);
-                };
-
-                let Some(locked) = object.as_locked_mut() else {
-                    return Ok(false);
-                };
-
-                let new = !**locked;
-                **locked = new;
-                self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
-                self.needs_redraw = true;
-                Ok(true)
+                self.toggle_locked(ctx, id)
             }
             "Escape" => {
                 ev.prevent_default();
@@ -1891,18 +1745,6 @@ impl Map {
             let req = update(ctx, id, Key::LOOK_AT, o.look_at().copied());
             self.look_at_requests.insert(id, req);
         }
-    }
-
-    fn send_world_updates(&mut self, ctx: &Context<Self>) {
-        self._update_world = ctx
-            .props()
-            .ws
-            .request()
-            .body(api::UpdateConfigRequest {
-                values: self.config.world_values(),
-            })
-            .on_packet(ctx.link().callback(Msg::ConfigResult))
-            .send();
     }
 
     fn on_context_menu(&mut self, _ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
@@ -2315,6 +2157,69 @@ impl Map {
         Ok(())
     }
 
+    fn drag_end(&mut self, ctx: &Context<Self>, object_id: Id) -> Result<bool, Error> {
+        let Some(drag_over) = self.drag_over.take() else {
+            return Ok(false);
+        };
+
+        let mut objects = self.objects.borrow_mut();
+        let mut order = self.order.borrow_mut();
+
+        let new_group = drag_over.target_group();
+
+        // We have to refuse to drag a group into itself.
+        if object_id == new_group {
+            return Ok(true);
+        }
+
+        let Some(new_sort) = drag_over.new_sort(&*objects, &*order) else {
+            return Ok(true);
+        };
+
+        let Some((o_group, o_sort)) = objects.get_mut(object_id).and_then(|o| o.sort_mut()) else {
+            return Ok(true);
+        };
+
+        let old_group = **o_group;
+        let old_sort = o_sort.to_vec();
+
+        let group_changed = o_group.update(new_group);
+        let sort_changed = o_sort.update(new_sort.clone());
+
+        if group_changed {
+            self._set_group = self::update(ctx, object_id, Key::GROUP, Value::from(new_group));
+        }
+
+        if sort_changed {
+            self._set_sort = self::update(ctx, object_id, Key::SORT, Value::from(new_sort.clone()));
+        }
+
+        if sort_changed || group_changed {
+            order.remove(old_group, old_sort, object_id);
+            order.insert(new_group, new_sort, object_id);
+        }
+
+        Ok(true)
+    }
+
+    fn toggle_locked(&mut self, ctx: &Context<Self>, id: Id) -> Result<bool, Error> {
+        let mut objects = self.objects.borrow_mut();
+
+        let Some(object) = objects.get_mut(id) else {
+            return Ok(false);
+        };
+
+        let Some(locked) = object.as_locked_mut() else {
+            return Ok(false);
+        };
+
+        let new = !**locked;
+        **locked = new;
+        self._toggle_locked = update(ctx, id, Key::LOCKED, Value::from(new));
+        self.needs_redraw = true;
+        Ok(true)
+    }
+
     fn redraw(&self) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
@@ -2425,5 +2330,14 @@ fn update(ctx: &Context<Map>, object_id: Id, key: Key, value: impl Into<Value>) 
             value: value.into(),
         })
         .on_packet(ctx.link().callback(Msg::UpdateResult))
+        .send()
+}
+
+fn update_config(ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
+    ctx.props()
+        .ws
+        .request()
+        .body(api::UpdateConfigRequest { values })
+        .on_packet(ctx.link().callback(Msg::ConfigResult))
         .send()
 }
