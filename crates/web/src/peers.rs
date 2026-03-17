@@ -70,7 +70,7 @@ impl FromIterator<PeerObject> for Peers {
         Self {
             values: iter
                 .into_iter()
-                .map(|peer| ((peer.peer_id, peer.data.id), peer))
+                .map(|peer| ((peer.peer_id, peer.id), peer))
                 .collect(),
         }
     }

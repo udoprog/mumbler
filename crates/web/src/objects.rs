@@ -46,9 +46,9 @@ impl DerefMut for PeerObject {
 }
 
 pub(crate) struct LocalObject {
-    pub(crate) data: ObjectData,
     pub(crate) move_target: Option<Vec3>,
     pub(crate) arrow_target: Option<Vec3>,
+    pub(crate) data: ObjectData,
 }
 
 impl LocalObject {

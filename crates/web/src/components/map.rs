@@ -40,6 +40,9 @@ struct Updates {
     look_at: HashSet<Id>,
     transforms: HashSet<Id>,
     selected: Option<Id>,
+    context_menu: Option<ContextMenu>,
+    delete: Option<Id>,
+    _toggle_mumble_request: ws::Request,
 }
 
 impl Updates {
@@ -55,6 +58,43 @@ impl Updates {
         o.arrow_target = Some(m);
         transform.front = p.direction_to(m);
         self.transforms.insert(o.id);
+    }
+
+    fn select_object(
+        &mut self,
+        ctx: &Context<Map>,
+        id: Option<Id>,
+        config: &mut Config,
+        objects: &ObjectsRef,
+    ) {
+        self.selected = id;
+        self.context_menu = None;
+
+        if id == self.delete {
+            self.delete = None;
+        }
+
+        if !*config.mumble_follow || *config.mumble_object == id {
+            return;
+        }
+
+        if let Some(id) = id
+            && !objects.is_interactive(id)
+        {
+            return;
+        }
+
+        *config.mumble_object = id;
+
+        self._toggle_mumble_request = ctx
+            .props()
+            .ws
+            .request()
+            .body(api::UpdateConfigRequest {
+                values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
+            })
+            .on_packet(ctx.link().callback(Msg::ConfigResult))
+            .send();
     }
 }
 
@@ -184,14 +224,11 @@ pub(crate) struct Map {
     _set_group: ws::Request,
     _state_change: ws::StateListener,
     _toggle_locked_request: ws::Request,
-    _toggle_mumble_request: ws::Request,
     _update_world: ws::Request,
     animation_interval: Option<Interval>,
     canvas_ref: NodeRef,
     canvas_sizer: NodeRef,
     config: Config,
-    context_menu: Option<ContextMenu>,
-    delete: Option<Id>,
     drag_over: Option<(Drag, Id, Id)>,
     object_requests: HashMap<Id, ws::Request>,
     images: Images<Self>,
@@ -348,14 +385,11 @@ impl Component for Map {
             _set_group: ws::Request::new(),
             _state_change,
             _toggle_locked_request: ws::Request::new(),
-            _toggle_mumble_request: ws::Request::new(),
             _update_world: ws::Request::new(),
             animation_interval: None,
             canvas_ref: NodeRef::default(),
             canvas_sizer: NodeRef::default(),
             config: Config::default(),
-            context_menu: None,
-            delete: None,
             drag_over: None,
             object_requests: HashMap::new(),
             images: Images::new(),
@@ -634,7 +668,7 @@ impl Component for Map {
                                     ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
                                 ></canvas>
 
-                                if let Some(menu) = &self.context_menu {
+                                if let Some(menu) = &self.updates.context_menu {
                                     {self.render_context_menu(ctx, menu)}
                                 }
                             </div>
@@ -663,7 +697,7 @@ impl Component for Map {
                         </div>
                     </div>
 
-                    if let Some(id) = self.delete {
+                    if let Some(id) = self.updates.delete {
                         <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
                             <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                                 <div class="modal-header">
@@ -701,7 +735,7 @@ impl Component for Map {
                                     </button>
                                 </div>
                                 <div class="modal-body">
-                                    {match objects.get(id).map(|o| &o.data.kind).unwrap_or(&ObjectKind::Unknown) {
+                                    {match objects.get(id).map(|o| &o.kind).unwrap_or(&ObjectKind::Unknown) {
                                         ObjectKind::Static(..) => {
                                             html! { <StaticSettings {ws} {id} /> }
                                         }
@@ -964,7 +998,7 @@ impl Map {
             }
             // Removed misplaced enum variants
             Msg::OpenObjectSettings(id) => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
                 self.open_settings = Some(id);
                 Ok(true)
             }
@@ -973,7 +1007,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
 
                 let update = if *self.config.mumble_object == Some(id) {
                     None
@@ -983,7 +1017,7 @@ impl Map {
 
                 *self.config.mumble_object = update;
 
-                self._toggle_mumble_request = ctx
+                self.updates._toggle_mumble_request = ctx
                     .props()
                     .ws
                     .request()
@@ -1016,7 +1050,7 @@ impl Map {
                 Ok(false)
             }
             Msg::ToggleHidden(id) => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1032,7 +1066,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleLocalHidden(id) => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1048,7 +1082,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleExpanded(id) => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1114,72 +1148,75 @@ impl Map {
                 let body = body?;
                 let body = body.decode()?;
 
-                let mut objects = self.objects.borrow_mut();
-                let mut order = self.order.borrow_mut();
+                let update = {
+                    let mut objects = self.objects.borrow_mut();
+                    let mut order = self.order.borrow_mut();
 
-                let update = match body {
-                    LocalUpdateBody::ObjectCreated { object } => {
-                        let o = LocalObject::from_remote(&object);
-                        order.insert(*o.group, o.sort().to_vec(), o.id);
-                        objects.insert(o.id, o);
-                        true
-                    }
-                    LocalUpdateBody::ObjectRemoved { object_id } => {
-                        if let Some(o) = objects.remove(object_id) {
-                            order.remove(*o.group, o.sort().to_vec(), o.id);
+                    match body {
+                        LocalUpdateBody::ObjectCreated { object } => {
+                            let o = LocalObject::from_remote(&object);
+                            order.insert(*o.group, o.sort().to_vec(), o.id);
+                            objects.insert(o.id, o);
+                            true
                         }
+                        LocalUpdateBody::ObjectRemoved { object_id } => {
+                            if let Some(o) = objects.remove(object_id) {
+                                order.remove(*o.group, o.sort().to_vec(), o.id);
+                            }
 
-                        if self.updates.selected == Some(object_id) {
-                            ctx.link().send_message(Msg::SelectObject(None));
+                            if self.updates.selected == Some(object_id) {
+                                self.updates
+                                    .select_object(ctx, None, &mut self.config, &*objects);
+                            }
+
+                            true
                         }
-
-                        true
-                    }
-                    LocalUpdateBody::Update {
-                        object_id,
-                        key,
-                        value,
-                    } => {
-                        'done: {
-                            let Some(o) = objects.get_mut(object_id) else {
-                                break 'done false;
-                            };
-
-                            let update = match key {
-                                // Don't support local updates of transform and
-                                // look at because they cause feedback loops
-                                // which are laggy.
-                                Key::TRANSFORM | Key::LOOK_AT => {
+                        LocalUpdateBody::Update {
+                            object_id,
+                            key,
+                            value,
+                        } => {
+                            'done: {
+                                let Some(o) = objects.get_mut(object_id) else {
                                     break 'done false;
-                                }
-                                Key::SORT => {
-                                    let Some((_, sort)) = o.sort_mut() else {
+                                };
+
+                                let update = match key {
+                                    // Don't support local updates of transform and
+                                    // look at because they cause feedback loops
+                                    // which are laggy.
+                                    Key::TRANSFORM | Key::LOOK_AT => {
                                         break 'done false;
-                                    };
+                                    }
+                                    Key::SORT => {
+                                        let Some((_, sort)) = o.sort_mut() else {
+                                            break 'done false;
+                                        };
 
-                                    let new = value.as_bytes().unwrap_or_default().to_vec();
+                                        let new = value.as_bytes().unwrap_or_default().to_vec();
 
-                                    let Some(old) = sort.replace(new) else {
-                                        break 'done false;
-                                    };
+                                        let Some(old) = sort.replace(new) else {
+                                            break 'done false;
+                                        };
 
-                                    order.remove(*o.group, old, o.id);
-                                    order.insert(*o.group, o.sort().to_vec(), o.id);
-                                    true
-                                }
-                                _ => false,
-                            };
+                                        order.remove(*o.group, old, o.id);
+                                        order.insert(*o.group, o.sort().to_vec(), o.id);
+                                        true
+                                    }
+                                    _ => false,
+                                };
 
-                            o.update(key, value) || update
+                                o.update(key, value) || update
+                            }
                         }
-                    }
-                    LocalUpdateBody::ImageAdded { image_id, .. } => {
-                        self.images.load(ctx, image_id);
-                        false
-                    }
-                    LocalUpdateBody::ImageRemoved { image_id, .. } => {
-                        self.images.remove(image_id);
-                        false
+                        LocalUpdateBody::ImageAdded { image_id, .. } => {
+                            self.images.load(ctx, image_id);
+                            false
+                        }
+                        LocalUpdateBody::ImageRemoved { image_id, .. } => {
+                            self.images.remove(image_id);
+                            false
+                        }
                     }
                 };
 
@@ -1366,37 +1403,9 @@ impl Map {
                 Ok(false)
             }
             Msg::SelectObject(id) => {
-                self.updates.selected = id;
-                self.context_menu = None;
-
-                if id == self.delete {
-                    self.delete = None;
-                }
-
-                'out: {
-                    if *self.config.mumble_follow && *self.config.mumble_object != id {
-                        let objects = self.objects.borrow();
-
-                        if let Some(id) = id
-                            && !objects.is_interactive(id)
-                        {
-                            break 'out;
-                        }
-
-                        *self.config.mumble_object = id;
-
-                        self._toggle_mumble_request = ctx
-                            .props()
-                            .ws
-                            .request()
-                            .body(api::UpdateConfigRequest {
-                                values: vec![(Key::MUMBLE_OBJECT, Value::from(id))],
-                            })
-                            .on_packet(ctx.link().callback(Msg::ConfigResult))
-                            .send();
-                    }
-                };
-
+                let objects = self.objects.borrow();
+                self.updates
+                    .select_object(ctx, id, &mut self.config, &objects);
                 Ok(true)
             }
             Msg::ToggleFollowMumbleSelection => {
@@ -1474,12 +1483,12 @@ impl Map {
                 Ok(true)
             }
             Msg::ConfirmDelete(id) => {
-                self.context_menu = None;
-                self.delete = Some(id);
+                self.updates.context_menu = None;
+                self.updates.delete = Some(id);
                 Ok(true)
             }
             Msg::CancelDelete => {
-                self.delete = None;
+                self.updates.delete = None;
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -1491,7 +1500,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
-                self.delete = None;
+                self.updates.delete = None;
                 Ok(false)
             }
             Msg::ObjectDeleted(result) => {
@@ -1505,7 +1514,7 @@ impl Map {
                 Ok(true)
             }
             Msg::CloseContextMenu => {
-                self.context_menu = None;
+                self.updates.context_menu = None;
                 Ok(true)
             }
         }
@@ -1546,14 +1555,14 @@ impl Map {
         match key.as_str() {
             "Delete" => {
                 if let Some(id) = self.updates.selected {
-                    if self.delete != Some(id) {
+                    if self.updates.delete != Some(id) {
                         ev.prevent_default();
                         ctx.link().send_message(Msg::ConfirmDelete(id));
                     }
                 }
             }
             "Enter" => {
-                if let Some(id) = self.delete {
+                if let Some(id) = self.updates.delete {
                     ev.prevent_default();
                     ctx.link().send_message(Msg::DeleteObject(id));
                 }
@@ -1561,7 +1570,7 @@ impl Map {
             "Escape" => {
                 ev.prevent_default();
 
-                if self.delete.is_some() {
+                if self.updates.delete.is_some() {
                     ctx.link().send_message(Msg::CancelDelete);
                 }
 
@@ -1622,7 +1631,7 @@ impl Map {
             let p = transform.position;
 
             'move_done: {
-                let (Some(target), Some(speed)) = (o.move_target, speed) else {
+                let (Some(target), Some(speed)) = (&o.move_target, speed) else {
                     break 'move_done;
                 };
 
@@ -1632,7 +1641,7 @@ impl Map {
                 let distance = (dx * dx + dy * dy + dz * dz).sqrt();
 
                 if distance < 0.01 {
-                    transform.position = target;
+                    transform.position = *target;
                     o.move_target = None;
                     self.updates.transforms.insert(id);
                     break 'move_done;
@@ -1648,7 +1657,7 @@ impl Map {
 
                 // Face the movement direction unless a look_at target is active.
                 if look_at.is_none() {
-                    transform.front = p.direction_to(target);
+                    transform.front = p.direction_to(*target);
                 }
 
                 self.updates.transforms.insert(id);
@@ -1747,13 +1756,13 @@ impl Map {
 
         if let Some(object_id) = hit {
             self.updates.selected = Some(object_id);
-            self.context_menu = Some(ContextMenu {
+            self.updates.context_menu = Some(ContextMenu {
                 object_id,
                 x: ev.offset_x() as f64,
                 y: ev.offset_y() as f64,
             });
         } else {
-            self.context_menu = None;
+            self.updates.context_menu = None;
         }
 
         Ok(())
@@ -1813,42 +1822,66 @@ impl Map {
 
         let mut objects = self.objects.borrow_mut();
 
-        self.context_menu = None;
+        self.updates.context_menu = None;
 
         match ev.button() {
+            LEFT_MOUSE_BUTTON if ev.shift_key() => {
+                let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+                    return Ok(());
+                };
+
+                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                    return Ok(());
+                };
+
+                let Some(t) = o.as_transform() else {
+                    return Ok(());
+                };
+
+                let view = ViewTransform::new(&canvas, &self.config);
+                let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+                let e = view.to_world(e);
+                let p = t.position;
+                let id = o.id;
+
+                self.start_press = Some((p, true));
+
+                if let Some(look_at) = o.as_look_at_mut() {
+                    **look_at = Some(e);
+                    self.updates.look_at(&mut objects, p, e);
+                    self.updates.look_at.insert(id);
+                } else {
+                    self.updates.look_at(&mut objects, p, e);
+                }
+            }
             LEFT_MOUSE_BUTTON => {
                 let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
                     return Ok(());
                 };
 
-                let t = ViewTransform::new(&canvas, &self.config);
+                let view = ViewTransform::new(&canvas, &self.config);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
-                let e = t.to_world(e);
+                let e = view.to_world(e);
 
-                let mut hit = None;
+                let hit = objects
+                    .values()
+                    .find(|o| {
+                        let Some((transform, click_radius)) = o.as_click_geometry() else {
+                            return false;
+                        };
 
-                if !ev.shift_key() {
-                    hit = objects
-                        .values()
-                        .find(|o| {
-                            let Some((transform, click_radius)) = o.as_click_geometry() else {
-                                return false;
-                            };
+                        transform.position.dist(e) < click_radius
+                    })
+                    .map(|o| o.id);
 
-                            transform.position.dist(e) < click_radius
-                        })
-                        .map(|o| o.id);
-
-                    if let Some(hit) = hit
-                        && self.updates.selected != Some(hit)
-                    {
-                        ctx.link().send_message(Msg::SelectObject(Some(hit)));
-                        self.delete = None;
-                        return Ok(());
-                    }
-
-                    self.needs_redraw = hit.is_some();
+                if let Some(hit) = hit
+                    && self.updates.selected != Some(hit)
+                {
+                    self.updates
+                        .select_object(ctx, Some(hit), &mut self.config, &*objects);
                 }
+
+                self.needs_redraw = hit.is_some();
 
                 let Some(id) = self.updates.selected else {
                     return Ok(());
@@ -1864,40 +1897,27 @@ impl Map {
 
                 object.arrow_target = None;
 
-                let object_id = object.id;
+                let id = object.id;
                 let is_static = object.is_static();
 
                 let Some(transform) = object.as_transform_mut() else {
                     return Ok(());
                 };
 
-                if ev.shift_key() {
-                    let p = transform.position;
-
-                    self.start_press = Some((p, true));
-
-                    if is_static {
-                        // Shift-drag on a static object rotates it.
-                        self.updates.look_at(&mut objects, p, e);
-                    } else if let Some(look_at) = object.as_look_at_mut() {
-                        **look_at = Some(e);
-                        self.updates.look_at(&mut objects, p, e);
-                        self.updates.look_at.insert(object_id);
-                    }
-                } else if is_static {
+                if is_static {
                     // Check that we hit the thing we are currently dragging.
                     if let Some(selected) = self.updates.selected
                         && hit != Some(selected)
                     {
-                        ctx.link().send_message(Msg::SelectObject(None));
-                        self.delete = None;
+                        self.updates
+                            .select_object(ctx, None, &mut self.config, &*objects);
                         return Ok(());
                     }
 
                     // Static objects snap immediately to where you click.
                     transform.position = e;
                     self.start_press = Some((e, false));
-                    self.updates.transforms.insert(object_id);
+                    self.updates.transforms.insert(id);
                 } else {
                     self.start_press = Some((e, false));
                     object.move_target = Some(e);
