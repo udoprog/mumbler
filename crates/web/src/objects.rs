@@ -543,7 +543,13 @@ impl ObjectData {
         }
     }
 
-    /// Returns `true` if this is a static object (rectangle, snap movement).
+    /// Returns `true` if this is a token.
+    #[inline]
+    pub(crate) fn is_token(&self) -> bool {
+        matches!(&self.kind, ObjectKind::Token(_))
+    }
+
+    /// Returns `true` if this is a static.
     #[inline]
     pub(crate) fn is_static(&self) -> bool {
         matches!(&self.kind, ObjectKind::Static(_))

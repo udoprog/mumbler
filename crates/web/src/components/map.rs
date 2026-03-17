@@ -1408,7 +1408,7 @@ impl Map {
                 Ok(true)
             }
             Msg::PointerUp(ev) => {
-                self.on_pointer_up(ctx, ev)?;
+                self.on_pointer_up(ev)?;
                 Ok(true)
             }
             Msg::PointerLeave => {
@@ -1596,15 +1596,15 @@ impl Map {
         true
     }
 
-    fn finalize_scaling(&mut self, ctx: &Context<Self>) {
+    fn finalize_scaling(&mut self, ctx: &Context<Self>) -> bool {
         let Some(scale) = self.scaling.take() else {
-            return;
+            return false;
         };
 
         let mut objects = self.objects.borrow_mut();
 
         let Some(o) = objects.get_mut(scale.id) else {
-            return;
+            return false;
         };
 
         match &o.kind {
@@ -1638,6 +1638,8 @@ impl Map {
             }
             _ => {}
         }
+
+        true
     }
 
     fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<(), Error> {
@@ -1719,6 +1721,7 @@ impl Map {
                 }
 
                 self.cancel_scaling();
+                self.updates.selected = None;
             }
             "Shift" => {
                 let Some(m) = self.mouse_world_pos else {
@@ -1962,8 +1965,6 @@ impl Map {
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
         ev.prevent_default();
 
-        let mut objects = self.objects.borrow_mut();
-
         self.updates.context_menu = None;
 
         match ev.button() {
@@ -1971,6 +1972,8 @@ impl Map {
                 let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
                     return Ok(());
                 };
+
+                let mut objects = self.objects.borrow_mut();
 
                 let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
                     return Ok(());
@@ -1997,35 +2000,58 @@ impl Map {
                 }
             }
             LEFT_MOUSE_BUTTON => {
+                if self.finalize_scaling(ctx) {
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+
                 let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
                     return Ok(());
                 };
+
+                let order = self.order.borrow();
+                let mut objects = self.objects.borrow_mut();
 
                 let view = ViewTransform::new(&canvas, &self.config);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
-                let hit = objects
-                    .values()
-                    .find(|o| {
-                        let Some((transform, click_radius)) = o.as_click_geometry() else {
-                            return false;
-                        };
+                let hit = order.walk().rev().flat_map(|id| objects.get(id)).find(|o| {
+                    let Some((transform, click_radius)) = o.as_click_geometry() else {
+                        return false;
+                    };
 
-                        transform.position.dist(e) < click_radius
-                    })
-                    .map(|o| o.id);
+                    transform.position.dist(e) < click_radius
+                });
 
-                if let Some(hit) = hit
-                    && self.updates.selected != Some(hit)
-                {
-                    self.updates
-                        .select_object(ctx, Some(hit), &mut self.config, &*objects);
-                }
+                let hit = hit.map(|o| o.id);
 
                 self.needs_redraw = hit.is_some();
 
-                let Some(id) = self.updates.selected else {
+                let id = match (self.updates.selected, hit) {
+                    (Some(id), _) => id,
+                    (None, Some(hit)) if self.updates.selected != Some(hit) => {
+                        self.updates
+                            .select_object(ctx, Some(hit), &mut self.config, &*objects);
+
+                        if objects.get(hit).is_some_and(|o| o.is_token()) {
+                            return Ok(());
+                        }
+
+                        hit
+                    }
+                    _ => {
+                        return Ok(());
+                    }
+                };
+
+                if let Some(hit) = hit
+                    && hit != id
+                    && objects.get(hit).is_some_and(|o| o.is_token())
+                {
+                    // Forcibly update selection if the other click is a token.
+                    self.updates
+                        .select_object(ctx, Some(hit), &mut self.config, &*objects);
                     return Ok(());
                 };
 
@@ -2042,10 +2068,6 @@ impl Map {
                 let id = object.id;
                 let is_static = object.is_static();
 
-                let Some(transform) = object.as_transform_mut() else {
-                    return Ok(());
-                };
-
                 if is_static {
                     // Check that we hit the thing we are currently dragging.
                     if let Some(selected) = self.updates.selected
@@ -2056,8 +2078,6 @@ impl Map {
                         return Ok(());
                     }
 
-                    // Static objects snap immediately to where you click.
-                    transform.position = e;
                     self.start_press = Some((e, false));
                     self.updates.transforms.insert(id);
                 } else {
@@ -2149,14 +2169,14 @@ impl Map {
         Ok(())
     }
 
-    fn on_pointer_up(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
+    fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
         self.needs_redraw = {
             match ev.button() {
                 LEFT_MOUSE_BUTTON => {
-                    self.finalize_scaling(ctx);
                     self.start_press = None;
 
                     let mut objects = self.objects.borrow_mut();
+
                     if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
                         object.arrow_target = None;
                     }
