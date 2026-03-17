@@ -62,6 +62,10 @@ impl<'a> RenderToken<'a> {
             token_radius: *token.token_radius,
         })
     }
+
+    pub(crate) fn apply_scale(&mut self, scale: f32) {
+        self.token_radius *= scale;
+    }
 }
 
 pub(crate) struct RenderStatic {
@@ -90,6 +94,11 @@ impl RenderStatic {
             width: *s.width,
             height: *s.height,
         })
+    }
+
+    pub(crate) fn apply_scale(&mut self, scale: f32) {
+        self.width *= scale;
+        self.height *= scale;
     }
 }
 

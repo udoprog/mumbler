@@ -98,6 +98,13 @@ impl Updates {
     }
 }
 
+struct ScaleState {
+    id: Id,
+    scale: f32,
+    position: Vec3,
+    initial_distance: f32,
+}
+
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
@@ -241,8 +248,10 @@ pub(crate) struct Map {
     peers: Peers,
     selected: Option<Id>,
     start_press: Option<(Vec3, bool)>,
+    scaling: Option<ScaleState>,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
+    scale_requests: HashMap<(Id, Key), ws::Request>,
     update_world: bool,
     needs_redraw: bool,
     object_onselect: Callback<Id>,
@@ -407,8 +416,10 @@ impl Component for Map {
             peers: Peers::default(),
             selected: None,
             start_press: None,
+            scaling: None,
             state,
             transform_requests: HashMap::new(),
+            scale_requests: HashMap::new(),
             update_world: false,
             needs_redraw: false,
             object_onselect: ctx.link().callback(|id| Msg::SelectObject(Some(id))),
@@ -1397,7 +1408,7 @@ impl Map {
                 Ok(true)
             }
             Msg::PointerUp(ev) => {
-                self.on_pointer_up(ev)?;
+                self.on_pointer_up(ctx, ev)?;
                 Ok(true)
             }
             Msg::PointerLeave => {
@@ -1422,6 +1433,8 @@ impl Map {
                 Ok(false)
             }
             Msg::SelectObject(id) => {
+                self.cancel_scaling();
+
                 let objects = self.objects.borrow();
                 self.updates
                     .select_object(ctx, id, &mut self.config, &objects);
@@ -1568,6 +1581,65 @@ impl Map {
         Ok(())
     }
 
+    fn cancel_scaling(&mut self) {
+        self.scaling = None;
+        self.needs_redraw = true;
+    }
+
+    fn update_scaling(&mut self, mouse: Vec3) -> bool {
+        let Some(scale) = &mut self.scaling else {
+            return false;
+        };
+
+        let distance = scale.position.dist(mouse).max(0.01);
+        scale.scale = distance / scale.initial_distance;
+        true
+    }
+
+    fn finalize_scaling(&mut self, ctx: &Context<Self>) {
+        let Some(scale) = self.scaling.take() else {
+            return;
+        };
+
+        let mut objects = self.objects.borrow_mut();
+
+        let Some(o) = objects.get_mut(scale.id) else {
+            return;
+        };
+
+        match &o.kind {
+            ObjectKind::Static(s) => {
+                let width = *s.width * scale.scale;
+                let height = *s.height * scale.scale;
+
+                if (width - *s.width).abs() > f32::EPSILON {
+                    self.scale_requests.insert(
+                        (scale.id, Key::STATIC_WIDTH),
+                        update(ctx, scale.id, Key::STATIC_WIDTH, width),
+                    );
+                }
+
+                if (height - *s.height).abs() > f32::EPSILON {
+                    self.scale_requests.insert(
+                        (scale.id, Key::STATIC_HEIGHT),
+                        update(ctx, scale.id, Key::STATIC_HEIGHT, height),
+                    );
+                }
+            }
+            ObjectKind::Token(t) => {
+                let radius = *t.token_radius * scale.scale;
+
+                if (radius - *t.token_radius).abs() > f32::EPSILON {
+                    self.scale_requests.insert(
+                        (scale.id, Key::TOKEN_RADIUS),
+                        update(ctx, scale.id, Key::TOKEN_RADIUS, radius),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<(), Error> {
         let key = ev.key();
 
@@ -1595,6 +1667,42 @@ impl Map {
                     ctx.link().send_message(Msg::OpenHelp);
                 }
             }
+            "s" | "S" => {
+                ev.prevent_default();
+
+                let Some(m) = self.mouse_world_pos else {
+                    return Ok(());
+                };
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(id) = self.updates.selected else {
+                    return Ok(());
+                };
+
+                if objects.is_locked(id) {
+                    return Ok(());
+                };
+
+                let Some(o) = objects.get_mut(id) else {
+                    return Ok(());
+                };
+
+                let Some(position) = o.as_transform().map(|t| t.position) else {
+                    return Ok(());
+                };
+
+                let distance = position.dist(m).max(0.01);
+
+                o.move_target = None;
+
+                self.scaling = Some(ScaleState {
+                    id,
+                    scale: 1.0,
+                    position,
+                    initial_distance: distance,
+                });
+            }
             "Escape" => {
                 ev.prevent_default();
 
@@ -1609,6 +1717,8 @@ impl Map {
                 if self.open_help {
                     ctx.link().send_message(Msg::CloseHelp);
                 }
+
+                self.cancel_scaling();
             }
             "Shift" => {
                 let Some(m) = self.mouse_world_pos else {
@@ -1966,8 +2076,6 @@ impl Map {
     }
 
     fn on_pointer_move(&mut self, ev: PointerEvent) -> Result<(), Error> {
-        let mut objects = self.objects.borrow_mut();
-
         ev.prevent_default();
 
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
@@ -1987,7 +2095,14 @@ impl Map {
 
         let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let m = v.to_world(m);
+
         self.mouse_world_pos = Some(m);
+
+        if self.update_scaling(m) {
+            return Ok(());
+        }
+
+        let mut objects = self.objects.borrow_mut();
 
         'done: {
             let Some((p, shift_key)) = self.start_press else {
@@ -2034,14 +2149,14 @@ impl Map {
         Ok(())
     }
 
-    fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
-        let mut objects = self.objects.borrow_mut();
-
+    fn on_pointer_up(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
         self.needs_redraw = {
             match ev.button() {
                 LEFT_MOUSE_BUTTON => {
+                    self.finalize_scaling(ctx);
                     self.start_press = None;
 
+                    let mut objects = self.objects.borrow_mut();
                     if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
                         object.arrow_target = None;
                     }
@@ -2177,9 +2292,16 @@ impl Map {
 
         // Draw static objects first (behind tokens).
         for o in objects.values() {
-            if let Some(mut s) = RenderStatic::from_data(o) {
-                s.selected = selected == Some(o.id);
-                render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
+            if let Some(mut render) = RenderStatic::from_data(o) {
+                render.selected = selected == Some(o.id);
+
+                if let Some(s) = &self.scaling
+                    && s.id == o.id
+                {
+                    render.apply_scale(s.scale);
+                }
+
+                render::draw_static_token(&cx, &t, &render, |id| self.images.get(id).cloned())?;
             }
         }
 
@@ -2203,16 +2325,22 @@ impl Map {
 
             let locals = order.walk().rev().flat_map(|id| {
                 let data = objects.get(id)?;
-                let mut token = RenderToken::from_data(data, |id| objects.visibility(id))?;
+                let mut render = RenderToken::from_data(data, |id| objects.visibility(id))?;
 
                 // Locally hidden items should not be rendered locally.
-                if token.visibility.is_local_hidden() {
+                if render.visibility.is_local_hidden() {
                     return None;
                 }
 
-                token.player = true;
-                token.selected = selected == Some(data.id);
-                Some(token)
+                if let Some(s) = &self.scaling
+                    && s.id == data.id
+                {
+                    render.apply_scale(s.scale);
+                }
+
+                render.player = true;
+                render.selected = selected == Some(data.id);
+                Some(render)
             });
 
             remotes.chain(locals)

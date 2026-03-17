@@ -39,6 +39,9 @@ pub(crate) fn help_modal(props: &Props) -> Html {
                         <dt><kbd>{"Shift"}</kbd>{" + "}<kbd>{"LMB"}</kbd></dt>
                         <dd>{"Set look at while object is selected"}</dd>
 
+                        <dt><kbd>{"S"}</kbd>{" + "}<kbd>{"Drag"}</kbd></dt>
+                        <dd>{"Scale selected object"}</dd>
+
                         <dt><kbd>{"MMB"}</kbd>{" + "}<kbd>{"Drag"}</kbd></dt>
                         <dd>{"Pan map"}</dd>
 
