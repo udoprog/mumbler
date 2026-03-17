@@ -659,3 +659,23 @@ canvas#map {
         flex: 1;
     }
 }
+
+.shortcuts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: $margin $margin * 1.5;
+    align-items: baseline;
+}
+
+.shortcuts dt {
+    font-weight: 600;
+}
+
+.shortcuts kbd {
+    display: inline-block;
+    padding: 0.15rem 0.35rem;
+    border-radius: $border-radius;
+    border: 1px solid var(--border-color);
+    background: var(--surface-color);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}

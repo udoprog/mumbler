@@ -42,6 +42,9 @@ pub(crate) use self::navigation::{Navigation, Route};
 mod object_list;
 use self::object_list::ObjectList;
 
+mod help_modal;
+use self::help_modal::HelpModal;
+
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]

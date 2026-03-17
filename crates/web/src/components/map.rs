@@ -26,7 +26,7 @@ use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, RenderStatic, RenderToken, ViewTransform};
-use super::{GroupSettings, ObjectList, StaticSettings, TokenSettings};
+use super::{GroupSettings, HelpModal, ObjectList, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -236,7 +236,6 @@ pub(crate) struct Map {
     look_at_requests: HashMap<Id, ws::Request>,
     mouse_world_pos: Option<Vec3>,
     objects: Objects,
-    open_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
@@ -254,6 +253,8 @@ pub(crate) struct Map {
     object_onexpandtoggle: Callback<Id>,
     object_onlockedtoggle: Callback<Id>,
     object_onmumbletoggle: Callback<Id>,
+    open_settings: Option<Id>,
+    open_help: bool,
     updates: Updates,
 }
 
@@ -262,6 +263,8 @@ pub(crate) enum Msg {
     CancelDelete,
     CloseContextMenu,
     CloseSettings,
+    OpenHelp,
+    CloseHelp,
     ConfigResult(Result<Packet<api::UpdateConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
     ConfirmDelete(Id),
@@ -398,6 +401,7 @@ impl Component for Map {
             mouse_world_pos: None,
             objects: Objects::default(),
             open_settings: None,
+            open_help: false,
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
@@ -645,6 +649,9 @@ impl Component for Map {
                     <button class={follow_classes} title={follow_title} onclick={follow_click}>
                         <Icon name="cursor-arrow-rays" />
                     </button>
+                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenHelp)}>
+                        <Icon name="question-mark-circle" />
+                    </button>
                 </div>
             }
         };
@@ -750,6 +757,10 @@ impl Component for Map {
                                 </div>
                             </div>
                         </div>
+                    }
+
+                    if self.open_help {
+                        <HelpModal onclose={ctx.link().callback(|_| Msg::CloseHelp)} />
                     }
                 </ContextProvider<Hierarchy>>
             </ContextProvider<Objects>>
@@ -1004,6 +1015,14 @@ impl Map {
             }
             Msg::CloseSettings => {
                 self.open_settings = None;
+                Ok(true)
+            }
+            Msg::OpenHelp => {
+                self.open_help = true;
+                Ok(true)
+            }
+            Msg::CloseHelp => {
+                self.open_help = false;
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
@@ -1567,6 +1586,15 @@ impl Map {
                     ctx.link().send_message(Msg::DeleteObject(id));
                 }
             }
+            "F1" | "?" => {
+                ev.prevent_default();
+
+                if self.open_help {
+                    ctx.link().send_message(Msg::CloseHelp);
+                } else {
+                    ctx.link().send_message(Msg::OpenHelp);
+                }
+            }
             "Escape" => {
                 ev.prevent_default();
 
@@ -1576,6 +1604,10 @@ impl Map {
 
                 if self.open_settings.is_some() {
                     ctx.link().send_message(Msg::CloseSettings);
+                }
+
+                if self.open_help {
+                    ctx.link().send_message(Msg::CloseHelp);
                 }
             }
             "Shift" => {
