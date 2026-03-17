@@ -1721,7 +1721,9 @@ impl Map {
                 }
 
                 self.cancel_scaling();
+
                 self.updates.selected = None;
+                self.updates.context_menu = None;
             }
             "Shift" => {
                 let Some(m) = self.mouse_world_pos else {
@@ -2016,7 +2018,7 @@ impl Map {
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
-                let hit = order.walk().rev().flat_map(|id| objects.get(id)).find(|o| {
+                let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
                     let Some((transform, click_radius)) = o.as_click_geometry() else {
                         return false;
                     };

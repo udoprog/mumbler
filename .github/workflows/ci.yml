@@ -18,6 +18,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@1.93
+    - uses: udoprog/trunk-action@v1
+      with:
+        args: build
     - run: cargo build --workspace --all-targets
 
   test:
@@ -25,6 +28,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
+    - uses: udoprog/trunk-action@v1
+      with:
+        args: build
     - run: cargo test --workspace --all-targets
     - run: cargo test --workspace --doc
 
@@ -36,6 +42,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
+    - uses: udoprog/trunk-action@v1
+      with:
+        args: build
     - run: cargo build --workspace --all-targets
 
   clippy:
@@ -45,6 +54,9 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
+    - uses: udoprog/trunk-action@v1
+      with:
+        args: build
     - run: cargo clippy --workspace --all-targets -- -D warnings
 
   rustfmt:
