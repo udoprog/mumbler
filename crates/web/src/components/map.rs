@@ -1815,96 +1815,100 @@ impl Map {
 
         self.context_menu = None;
 
-        self.needs_redraw = 'out: {
-            match ev.button() {
-                LEFT_MOUSE_BUTTON => {
-                    let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-                        break 'out false;
-                    };
+        match ev.button() {
+            LEFT_MOUSE_BUTTON => {
+                let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+                    return Ok(());
+                };
 
-                    let t = ViewTransform::new(&canvas, &self.config);
-                    let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
-                    let e = t.to_world(e);
+                let t = ViewTransform::new(&canvas, &self.config);
+                let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+                let e = t.to_world(e);
 
-                    let mut hit_something = false;
+                let mut hit = None;
 
-                    if !ev.shift_key() {
-                        let hit = objects
-                            .values()
-                            .find(|o| {
-                                let Some((transform, click_radius)) = o.as_click_geometry() else {
-                                    return false;
-                                };
+                if !ev.shift_key() {
+                    hit = objects
+                        .values()
+                        .find(|o| {
+                            let Some((transform, click_radius)) = o.as_click_geometry() else {
+                                return false;
+                            };
 
-                                transform.position.dist(e) < click_radius
-                            })
-                            .map(|o| o.id);
+                            transform.position.dist(e) < click_radius
+                        })
+                        .map(|o| o.id);
 
-                        if let Some(hit_id) = hit
-                            && self.updates.selected != Some(hit_id)
-                        {
-                            ctx.link().send_message(Msg::SelectObject(Some(hit_id)));
-                            self.delete = None;
-                            break 'out true;
-                        }
-
-                        hit_something = hit.is_some();
+                    if let Some(hit) = hit
+                        && self.updates.selected != Some(hit)
+                    {
+                        ctx.link().send_message(Msg::SelectObject(Some(hit)));
+                        self.delete = None;
+                        return Ok(());
                     }
 
-                    let Some(id) = self.updates.selected else {
-                        break 'out hit_something;
-                    };
-
-                    if objects.is_locked(id) {
-                        break 'out hit_something;
-                    }
-
-                    let Some(object) = objects.get_mut(id) else {
-                        break 'out hit_something;
-                    };
-
-                    object.arrow_target = None;
-
-                    let object_id = object.id;
-                    let is_static = object.is_static();
-
-                    let Some(transform) = object.as_transform_mut() else {
-                        break 'out hit_something;
-                    };
-
-                    if ev.shift_key() {
-                        let p = transform.position;
-
-                        self.start_press = Some((p, true));
-
-                        if is_static {
-                            // Shift-drag on a static object rotates it.
-                            self.updates.look_at(&mut objects, p, e);
-                        } else if let Some(look_at) = object.as_look_at_mut() {
-                            **look_at = Some(e);
-                            self.updates.look_at(&mut objects, p, e);
-                            self.updates.look_at.insert(object_id);
-                        }
-                    } else if is_static {
-                        // Static objects snap immediately to where you click.
-                        transform.position = e;
-                        self.start_press = Some((e, false));
-                        self.updates.transforms.insert(object_id);
-                    } else {
-                        self.start_press = Some((e, false));
-                        object.move_target = Some(e);
-                    }
-
-                    true
+                    self.needs_redraw = hit.is_some();
                 }
-                MIDDLE_MOUSE_BUTTON => {
-                    ev.prevent_default();
-                    self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
-                    true
+
+                let Some(id) = self.updates.selected else {
+                    return Ok(());
+                };
+
+                if objects.is_locked(id) {
+                    return Ok(());
                 }
-                _ => false,
+
+                let Some(object) = objects.get_mut(id) else {
+                    return Ok(());
+                };
+
+                object.arrow_target = None;
+
+                let object_id = object.id;
+                let is_static = object.is_static();
+
+                let Some(transform) = object.as_transform_mut() else {
+                    return Ok(());
+                };
+
+                if ev.shift_key() {
+                    let p = transform.position;
+
+                    self.start_press = Some((p, true));
+
+                    if is_static {
+                        // Shift-drag on a static object rotates it.
+                        self.updates.look_at(&mut objects, p, e);
+                    } else if let Some(look_at) = object.as_look_at_mut() {
+                        **look_at = Some(e);
+                        self.updates.look_at(&mut objects, p, e);
+                        self.updates.look_at.insert(object_id);
+                    }
+                } else if is_static {
+                    // Check that we hit the thing we are currently dragging.
+                    if let Some(selected) = self.updates.selected
+                        && hit != Some(selected)
+                    {
+                        ctx.link().send_message(Msg::SelectObject(None));
+                        self.delete = None;
+                        return Ok(());
+                    }
+
+                    // Static objects snap immediately to where you click.
+                    transform.position = e;
+                    self.start_press = Some((e, false));
+                    self.updates.transforms.insert(object_id);
+                } else {
+                    self.start_press = Some((e, false));
+                    object.move_target = Some(e);
+                }
             }
-        };
+            MIDDLE_MOUSE_BUTTON => {
+                ev.prevent_default();
+                self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
+            }
+            _ => {}
+        }
 
         Ok(())
     }
