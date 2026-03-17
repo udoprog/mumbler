@@ -1,3 +1,5 @@
+use core::mem;
+
 use std::collections::{HashMap, HashSet};
 
 use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
@@ -1424,14 +1426,8 @@ impl Map {
                 self.needs_redraw = true;
                 Ok(false)
             }
-            Msg::KeyDown(ev) => {
-                self.on_key_down(ctx, ev)?;
-                Ok(false)
-            }
-            Msg::KeyUp(ev) => {
-                self.on_key_up(ev)?;
-                Ok(false)
-            }
+            Msg::KeyDown(ev) => self.on_key_down(ctx, ev),
+            Msg::KeyUp(ev) => self.on_key_up(ctx, ev),
             Msg::SelectObject(id) => {
                 self.cancel_scaling();
 
@@ -1552,38 +1548,45 @@ impl Map {
         }
     }
 
-    fn on_key_up(&mut self, ev: KeyboardEvent) -> Result<(), Error> {
-        if ev.key() != "Shift" {
-            return Ok(());
+    fn on_key_up(&mut self, _ctx: &Context<Self>, ev: KeyboardEvent) -> Result<bool, Error> {
+        let key = ev.key();
+
+        match key.as_str() {
+            "Shift" => {
+                let Some((_, true)) = self.start_press else {
+                    return Ok(false);
+                };
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                    return Ok(false);
+                };
+
+                o.arrow_target = None;
+                self.start_press = None;
+
+                let object_id = o.id;
+
+                if let Some(look_at) = o.as_look_at_mut() {
+                    **look_at = None;
+                    self.updates.look_at.insert(object_id);
+                }
+
+                self.needs_redraw = true;
+                Ok(true)
+            }
+            _ => Ok(false),
         }
-
-        let Some((_, true)) = self.start_press else {
-            return Ok(());
-        };
-
-        let mut objects = self.objects.borrow_mut();
-
-        let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
-            return Ok(());
-        };
-
-        o.arrow_target = None;
-        self.start_press = None;
-
-        let object_id = o.id;
-
-        if let Some(look_at) = o.as_look_at_mut() {
-            **look_at = None;
-            self.updates.look_at.insert(object_id);
-        }
-
-        self.needs_redraw = true;
-        Ok(())
     }
 
-    fn cancel_scaling(&mut self) {
-        self.scaling = None;
-        self.needs_redraw = true;
+    fn cancel_scaling(&mut self) -> bool {
+        if mem::replace(&mut self.scaling, None).is_some() {
+            self.needs_redraw = true;
+            return true;
+        }
+
+        false
     }
 
     fn update_scaling(&mut self, mouse: Vec3) -> bool {
@@ -1642,56 +1645,61 @@ impl Map {
         true
     }
 
-    fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<(), Error> {
+    fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<bool, Error> {
         let key = ev.key();
 
         match key.as_str() {
             "Delete" => {
-                if let Some(id) = self.updates.selected {
-                    if self.updates.delete != Some(id) {
-                        ev.prevent_default();
-                        ctx.link().send_message(Msg::ConfirmDelete(id));
-                    }
+                let Some(id) = self.updates.selected else {
+                    return Ok(false);
+                };
+
+                if self.updates.delete == Some(id) {
+                    return Ok(false);
                 }
+
+                ev.prevent_default();
+                self.updates.context_menu = None;
+                self.updates.delete = Some(id);
+                Ok(true)
             }
             "Enter" => {
                 if let Some(id) = self.updates.delete {
                     ev.prevent_default();
                     ctx.link().send_message(Msg::DeleteObject(id));
                 }
+
+                Ok(false)
             }
             "F1" | "?" => {
                 ev.prevent_default();
 
-                if self.open_help {
-                    ctx.link().send_message(Msg::CloseHelp);
-                } else {
-                    ctx.link().send_message(Msg::OpenHelp);
-                }
+                self.open_help = !self.open_help;
+                Ok(true)
             }
             "s" | "S" => {
                 ev.prevent_default();
 
                 let Some(m) = self.mouse_world_pos else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let mut objects = self.objects.borrow_mut();
 
                 let Some(id) = self.updates.selected else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 if objects.is_locked(id) {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let Some(o) = objects.get_mut(id) else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let Some(position) = o.as_transform().map(|t| t.position) else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let distance = position.dist(m).max(0.01);
@@ -1704,44 +1712,64 @@ impl Map {
                     position,
                     initial_distance: distance,
                 });
+
+                Ok(false)
+            }
+            "t" | "T" => {
+                let Some(id) = self.updates.selected else {
+                    return Ok(false);
+                };
+
+                ev.prevent_default();
+
+                let mut objects = self.objects.borrow_mut();
+
+                let Some(object) = objects.get_mut(id) else {
+                    return Ok(false);
+                };
+
+                let Some(locked) = object.as_locked_mut() else {
+                    return Ok(false);
+                };
+
+                let new = !**locked;
+                **locked = new;
+                self._toggle_locked_request = update(ctx, id, Key::LOCKED, Value::from(new));
+                self.needs_redraw = true;
+                Ok(true)
             }
             "Escape" => {
                 ev.prevent_default();
 
-                if self.updates.delete.is_some() {
-                    ctx.link().send_message(Msg::CancelDelete);
+                if self.cancel_scaling() {
+                    return Ok(false);
                 }
 
-                if self.open_settings.is_some() {
-                    ctx.link().send_message(Msg::CloseSettings);
-                }
-
-                if self.open_help {
-                    ctx.link().send_message(Msg::CloseHelp);
-                }
-
-                self.cancel_scaling();
+                self.updates.delete = None;
+                self.open_settings = None;
+                self.open_help = false;
 
                 self.updates.selected = None;
                 self.updates.context_menu = None;
+                Ok(true)
             }
             "Shift" => {
                 let Some(m) = self.mouse_world_pos else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let mut objects = self.objects.borrow_mut();
 
                 let Some(id) = self.updates.selected else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 if objects.is_locked(id) {
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 let Some(o) = objects.get_mut(id) else {
-                    return Ok(());
+                    return Ok(false);
                 };
 
                 let object_id = o.id;
@@ -1758,11 +1786,10 @@ impl Map {
                 }
 
                 self.needs_redraw = true;
+                Ok(false)
             }
-            _ => {}
+            _ => Ok(false),
         }
-
-        Ok(())
     }
 
     fn interpolate_movement(&mut self) {
