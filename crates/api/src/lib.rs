@@ -10,7 +10,7 @@ mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
 use core::fmt;
-use core::ops::Sub;
+use core::ops::{Add, Sub};
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
@@ -481,6 +481,15 @@ impl Sub for Vec3 {
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
+    }
+}
+
+impl Add for Vec3 {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
     }
 }
 

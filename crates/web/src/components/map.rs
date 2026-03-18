@@ -263,6 +263,7 @@ pub(crate) struct Map {
     scaling: Option<ScaleState>,
     selected: Option<Id>,
     start_press: Option<(Vec3, bool)>,
+    rotation_offset: f32,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
@@ -429,6 +430,7 @@ impl Component for Map {
             scaling: None,
             selected: None,
             start_press: None,
+            rotation_offset: 0.0,
             state,
             transform_requests: HashMap::new(),
             update_world: false,
@@ -1703,6 +1705,14 @@ impl Map {
                 if let Some(transform) = o.as_transform() {
                     let p = transform.position;
                     self.start_press = Some((p, true));
+
+                    self.rotation_offset = if o.is_static() {
+                        let cursor = m - p;
+                        transform.front.angle_xz() - cursor.angle_xz()
+                    } else {
+                        0.0
+                    };
+
                     self.updates.look_at(&mut objects, p, m);
                 }
 
@@ -1940,6 +1950,13 @@ impl Map {
 
                 self.start_press = Some((p, true));
 
+                if o.is_static() {
+                    let cursor = e - p;
+                    self.rotation_offset = t.front.angle_xz() - cursor.angle_xz();
+                } else {
+                    self.rotation_offset = 0.0;
+                }
+
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(e);
                     self.updates.look_at(&mut objects, p, e);
@@ -2027,7 +2044,14 @@ impl Map {
                         return Ok(());
                     }
 
-                    self.start_press = Some((e, false));
+                    // Keep the cursor's offset relative to the object's origin while dragging.
+                    // The stored vector is applied to the world cursor position on move.
+                    let offset = object
+                        .as_transform()
+                        .map(|t| t.position - e)
+                        .unwrap_or(Vec3::ZERO);
+
+                    self.start_press = Some((offset, false));
                     self.updates.transforms.insert(id);
                 } else {
                     self.start_press = Some((e, false));
@@ -2090,7 +2114,15 @@ impl Map {
                 };
 
                 if o.is_static() {
-                    self.updates.look_at(&mut objects, p, m);
+                    // Use the original cursor offset to rotate relative to the initial grab.
+                    if let Some(transform) = o.as_transform_mut() {
+                        let cursor = m - p;
+                        let angle = cursor.angle_xz() + self.rotation_offset;
+                        transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
+                        self.updates.transforms.insert(o.id);
+                    }
+
+                    o.arrow_target = Some(m);
                 } else if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(Vec3::new(m.x, 0.0, m.z));
                     self.updates.look_at.insert(o.id);
@@ -2101,11 +2133,12 @@ impl Map {
                 break 'done;
             }
 
-            if o.is_static()
-                && let Some(transform) = o.as_transform_mut()
-            {
-                // Static objects snap immediately while dragging.
-                transform.position = m;
+            if o.is_static() {
+                let Some(transform) = o.as_transform_mut() else {
+                    break 'done;
+                };
+
+                transform.position = m + p;
                 self.updates.transforms.insert(o.id);
                 self.needs_redraw = true;
                 break 'done;
@@ -2123,6 +2156,7 @@ impl Map {
             match ev.button() {
                 LEFT_MOUSE_BUTTON => {
                     self.start_press = None;
+                    self.rotation_offset = 0.0;
 
                     let mut objects = self.objects.borrow_mut();
 
@@ -2155,6 +2189,7 @@ impl Map {
 
         self.pan_anchor = None;
         self.start_press = None;
+        self.rotation_offset = 0.0;
         self.mouse_world_pos = None;
 
         if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
