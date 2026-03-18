@@ -1,7 +1,7 @@
 use core::cell::{Cell, Ref, RefCell, RefMut};
 
 use std::collections::btree_set::Iter;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use api::Id;
@@ -64,14 +64,15 @@ pub(crate) struct Key {
 /// Reference to the mutable data of a hierarchy.
 #[derive(Default)]
 pub(crate) struct HierarchyRef {
-    values: HashMap<Id, BTreeSet<Key>>,
+    children: HashMap<Id, BTreeSet<Key>>,
+    len: usize,
 }
 
 impl HierarchyRef {
     /// Test if the given group is empty.
     #[inline]
     pub(crate) fn is_empty(&self, group: Id) -> bool {
-        self.values
+        self.children
             .get(&group)
             .map(|s| s.is_empty())
             .unwrap_or(true)
@@ -79,7 +80,7 @@ impl HierarchyRef {
 
     /// Get the children of the given group, sorted by their sort key.
     pub(crate) fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
-        self.values
+        self.children
             .get(&group)
             .into_iter()
             .flatten()
@@ -95,7 +96,13 @@ impl HierarchyRef {
     pub(crate) fn walk_from(&self, id: Id) -> impl DoubleEndedIterator<Item = Id> {
         Walk {
             mutable: self,
-            stack: self.values.get(&id).map(|s| s.iter()).into_iter().collect(),
+            visited: HashSet::with_capacity(self.len),
+            stack: self
+                .children
+                .get(&id)
+                .map(|s| s.iter())
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -103,15 +110,19 @@ impl HierarchyRef {
     pub(crate) fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
         let key = Key { id, sort };
 
-        if let Some(values) = self.values.get_mut(&group) {
+        if let Some(values) = self.children.get_mut(&group) {
             values.remove(&key);
+            self.len = self.len.saturating_sub(1);
         }
     }
 
     /// Insert a child into the given group with the given sort key.
     pub(crate) fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
         let key = Key { id, sort };
-        self.values.entry(group).or_default().insert(key);
+
+        if self.children.entry(group).or_default().insert(key) {
+            self.len = self.len.saturating_add(1);
+        }
     }
 
     /// Extend the hierarchy with the given objects.
@@ -122,13 +133,16 @@ impl HierarchyRef {
                 sort: object.sort().to_vec(),
             };
 
-            self.values.entry(*object.group).or_default().insert(key);
+            if self.children.entry(*object.group).or_default().insert(key) {
+                self.len = self.len.saturating_add(1);
+            }
         }
     }
 }
 
 pub(crate) struct Walk<'a> {
     mutable: &'a HierarchyRef,
+    visited: HashSet<Id>,
     stack: Vec<Iter<'a, Key>>,
 }
 
@@ -144,11 +158,13 @@ impl Iterator for Walk<'_> {
                 continue;
             };
 
-            if let Some(children) = self.mutable.values.get(&node.id) {
+            if let Some(children) = self.mutable.children.get(&node.id) {
                 self.stack.push(children.iter());
             }
 
-            return Some(node.id);
+            if self.visited.insert(node.id) {
+                return Some(node.id);
+            }
         }
     }
 }
@@ -163,11 +179,13 @@ impl DoubleEndedIterator for Walk<'_> {
                 continue;
             };
 
-            if let Some(children) = self.mutable.values.get(&node.id) {
+            if let Some(children) = self.mutable.children.get(&node.id) {
                 self.stack.push(children.iter());
             }
 
-            return Some(node.id);
+            if self.visited.insert(node.id) {
+                return Some(node.id);
+            }
         }
     }
 }
