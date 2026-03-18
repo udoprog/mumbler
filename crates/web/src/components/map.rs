@@ -1,5 +1,3 @@
-use core::mem;
-
 use std::collections::{HashMap, HashSet};
 
 use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
@@ -206,6 +204,16 @@ struct ContextMenu {
     y: f64,
 }
 
+#[derive(Default)]
+struct ObjectRequests {
+    _expanded: ws::Request,
+    _scale_height: ws::Request,
+    _scale_radius: ws::Request,
+    _scale_width: ws::Request,
+    _toggle_hidden: ws::Request,
+    _toggle_local_hidden: ws::Request,
+}
+
 pub(crate) struct Map {
     _create_dropped_object: ws::Request,
     _create_group: ws::Request,
@@ -245,14 +253,13 @@ pub(crate) struct Map {
     object_onlockedtoggle: Callback<Id>,
     object_onmumbletoggle: Callback<Id>,
     object_onselect: Callback<Id>,
-    object_requests: HashMap<Id, ws::Request>,
+    object_requests: HashMap<Id, ObjectRequests>,
     objects: Objects,
     open_help: bool,
     open_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
-    scale_requests: HashMap<(Id, Key), ws::Request>,
     scaling: Option<ScaleState>,
     selected: Option<Id>,
     start_press: Option<(Vec3, bool)>,
@@ -418,7 +425,6 @@ impl Component for Map {
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
-            scale_requests: HashMap::new(),
             scaling: None,
             selected: None,
             start_press: None,
@@ -968,8 +974,8 @@ impl Map {
                 let new_hidden = !*object.hidden;
                 *object.hidden = new_hidden;
 
-                let req = update(ctx, id, Key::HIDDEN, new_hidden);
-                self.object_requests.insert(id, req);
+                let requests = self.object_requests.entry(id).or_default();
+                requests._toggle_hidden = update(ctx, id, Key::HIDDEN, new_hidden);
                 Ok(true)
             }
             Msg::ToggleLocalHidden(id) => {
@@ -984,8 +990,9 @@ impl Map {
                 let new_local_hidden = !*object.local_hidden;
                 *object.local_hidden = new_local_hidden;
 
-                let req = update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
-                self.object_requests.insert(id, req);
+                let requests = self.object_requests.entry(id).or_default();
+                requests._toggle_local_hidden =
+                    update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
                 Ok(true)
             }
             Msg::ToggleExpanded(id) => {
@@ -1004,8 +1011,8 @@ impl Map {
                 let new_expanded = !**expanded;
                 **expanded = new_expanded;
 
-                let req = update(ctx, id, Key::EXPANDED, new_expanded);
-                self.object_requests.insert(id, req);
+                let requests = self.object_requests.entry(id).or_default();
+                requests._expanded = update(ctx, id, Key::EXPANDED, new_expanded);
                 Ok(true)
             }
             Msg::SetLog(log) => {
@@ -1073,9 +1080,10 @@ impl Map {
 
                             if self.updates.selected == Some(object_id) {
                                 self.updates
-                                    .select_object(ctx, None, &mut self.config, &*objects);
+                                    .select_object(ctx, None, &mut self.config, &objects);
                             }
 
+                            self.object_requests.remove(&object_id);
                             true
                         }
                         LocalUpdateBody::Update {
@@ -1450,7 +1458,7 @@ impl Map {
     }
 
     fn cancel_scaling(&mut self) -> bool {
-        if mem::replace(&mut self.scaling, None).is_some() {
+        if self.scaling.take().is_some() {
             self.needs_redraw = true;
             return true;
         }
@@ -1485,27 +1493,21 @@ impl Map {
                 let height = *s.height * scale.scale;
 
                 if (width - *s.width).abs() > f32::EPSILON {
-                    self.scale_requests.insert(
-                        (scale.id, Key::STATIC_WIDTH),
-                        update(ctx, scale.id, Key::STATIC_WIDTH, width),
-                    );
+                    let requests = self.object_requests.entry(scale.id).or_default();
+                    requests._scale_width = update(ctx, scale.id, Key::STATIC_WIDTH, width);
                 }
 
                 if (height - *s.height).abs() > f32::EPSILON {
-                    self.scale_requests.insert(
-                        (scale.id, Key::STATIC_HEIGHT),
-                        update(ctx, scale.id, Key::STATIC_HEIGHT, height),
-                    );
+                    let requests = self.object_requests.entry(scale.id).or_default();
+                    requests._scale_height = update(ctx, scale.id, Key::STATIC_HEIGHT, height);
                 }
             }
             ObjectKind::Token(t) => {
                 let radius = *t.token_radius * scale.scale;
 
                 if (radius - *t.token_radius).abs() > f32::EPSILON {
-                    self.scale_requests.insert(
-                        (scale.id, Key::TOKEN_RADIUS),
-                        update(ctx, scale.id, Key::TOKEN_RADIUS, radius),
-                    );
+                    let requests = self.object_requests.entry(scale.id).or_default();
+                    requests._scale_radius = update(ctx, scale.id, Key::TOKEN_RADIUS, radius);
                 }
             }
             _ => {}
@@ -1903,7 +1905,7 @@ impl Map {
                     (Some(id), _) => id,
                     (None, Some(hit)) if self.updates.selected != Some(hit) => {
                         self.updates
-                            .select_object(ctx, Some(hit), &mut self.config, &*objects);
+                            .select_object(ctx, Some(hit), &mut self.config, &objects);
 
                         if objects.get(hit).is_some_and(|o| o.is_token()) {
                             return Ok(());
@@ -1922,7 +1924,7 @@ impl Map {
                 {
                     // Forcibly update selection if the other click is a token.
                     self.updates
-                        .select_object(ctx, Some(hit), &mut self.config, &*objects);
+                        .select_object(ctx, Some(hit), &mut self.config, &objects);
                     return Ok(());
                 };
 
@@ -1945,7 +1947,7 @@ impl Map {
                         && hit != Some(selected)
                     {
                         self.updates
-                            .select_object(ctx, None, &mut self.config, &*objects);
+                            .select_object(ctx, None, &mut self.config, &objects);
                         return Ok(());
                     }
 
@@ -2172,7 +2174,7 @@ impl Map {
             return Ok(true);
         }
 
-        let Some(new_sort) = drag_over.new_sort(&*objects, &*order) else {
+        let Some(new_sort) = drag_over.new_sort(&objects, &order) else {
             return Ok(true);
         };
 

@@ -54,9 +54,7 @@ impl DragOver {
     }
 
     pub(crate) fn new_sort(self, objects: &ObjectsRef, order: &HierarchyRef) -> Option<Vec<u8>> {
-        let Some(target) = objects.get(self.target) else {
-            return None;
-        };
+        let target = objects.get(self.target)?;
 
         let new_sort = match self.drag {
             Drag::Into => {
