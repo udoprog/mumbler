@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use api::{Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
+use api::{Color, Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
@@ -15,7 +15,7 @@ use web_sys::{
 use yew::prelude::*;
 
 use crate::components::Icon;
-use crate::components::render::Canvas2;
+use crate::components::render::{Canvas2, RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
@@ -25,7 +25,7 @@ use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRef, P
 use crate::peers::Peers;
 use crate::state::State;
 
-use super::render::{self, RenderStatic, RenderToken, ViewTransform};
+use super::render::{self, ViewTransform};
 use super::{GroupSettings, HelpModal, ObjectList, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -267,6 +267,7 @@ pub(crate) struct Map {
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
     updates: Updates,
+    look_ats: Vec<(Vec3, Color)>,
 }
 
 pub(crate) enum Msg {
@@ -432,6 +433,7 @@ impl Component for Map {
             transform_requests: HashMap::new(),
             update_world: false,
             updates: Updates::default(),
+            look_ats: Vec::new(),
         };
 
         this.refresh(ctx);
@@ -2296,7 +2298,7 @@ impl Map {
         Ok(true)
     }
 
-    fn redraw(&self) -> Result<(), Error> {
+    fn redraw(&mut self) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
         };
@@ -2311,93 +2313,93 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let t = ViewTransform::new(&canvas, &self.config);
+        let view = ViewTransform::new(&canvas, &self.config);
 
-        render::draw_grid(&cx, &t, &self.config.extent, *self.config.zoom);
+        render::draw_grid(&cx, &view, &self.config.extent, *self.config.zoom);
 
         let selected = self.updates.selected;
 
         let order = self.order.borrow();
         let objects = self.objects.borrow();
 
-        // Draw static objects first (behind tokens).
-        for o in objects.values() {
-            let Some(mut render) = RenderStatic::from_data(o, |id| objects.visibility(id)) else {
-                continue;
-            };
-
-            render.selected = selected == Some(o.id);
-
-            if let Some(s) = &self.scaling
-                && s.id == o.id
-            {
-                render.apply_scale(s.scale);
-            }
-
-            if !render.visibility.is_local_hidden() {
-                render::draw_static_token(&cx, &t, &render, |id| self.images.get(id).cloned())?;
-            }
-        }
-
         // Draw remote static objects.
         for peer in self.peers.iter() {
             let Some(render) =
-                RenderStatic::from_data(peer, |id| self.peers.visibility(peer.peer_id, id))
+                RenderObject::from_data(peer, None, |id| self.peers.visibility(peer.peer_id, id))
             else {
                 continue;
             };
 
-            if !render.visibility.is_hidden() {
-                render::draw_static_token(&cx, &t, &render, |id| self.images.get(id).cloned())?;
+            if render.base.visibility.is_hidden() {
+                continue;
+            }
+
+            match &render.kind {
+                RenderObjectKind::Static(this) => {
+                    render::draw_static(&cx, &view, &render.base, this, |id| {
+                        self.images.get(id).cloned()
+                    })?;
+                }
+                RenderObjectKind::Token(this) => {
+                    render::draw_token(&cx, &view, &render.base, this, |id| {
+                        self.images.get(id).cloned()
+                    })?;
+
+                    if let Some(look_at) = this.look_at {
+                        self.look_ats.push((*look_at, this.color));
+                    }
+                }
             }
         }
 
-        let renders = || {
-            let remotes = self
-                .peers
-                .iter()
-                .flat_map(|peer| {
-                    RenderToken::from_data(peer, |id| self.peers.visibility(peer.peer_id, id))
-                })
-                .filter(|render| !render.visibility.is_hidden());
+        for id in order.walk().rev() {
+            let Some(data) = objects.get(id) else {
+                continue;
+            };
 
-            let locals = order.walk().rev().flat_map(|id| {
-                let data = objects.get(id)?;
-                let mut render = RenderToken::from_data(data, |id| objects.visibility(id))?;
+            let selected = selected == Some(data.id);
 
-                // Locally hidden items should not be rendered locally.
-                if render.visibility.is_local_hidden() {
-                    return None;
+            let arrow_target = selected.then_some(data.arrow_target.as_ref()).flatten();
+
+            let Some(mut render) =
+                RenderObject::from_data(data, arrow_target, |id| objects.visibility(id))
+            else {
+                continue;
+            };
+
+            if render.base.visibility.is_local_hidden() {
+                continue;
+            }
+
+            if let Some(s) = &self.scaling
+                && s.id == data.id
+            {
+                render.apply_scale(s.scale);
+            }
+
+            render.base.selected = selected;
+            render.base.player = true;
+
+            match &render.kind {
+                RenderObjectKind::Static(this) => {
+                    render::draw_static(&cx, &view, &render.base, this, |id| {
+                        self.images.get(id).cloned()
+                    })?;
                 }
+                RenderObjectKind::Token(this) => {
+                    render::draw_token(&cx, &view, &render.base, this, |id| {
+                        self.images.get(id).cloned()
+                    })?;
 
-                if let Some(s) = &self.scaling
-                    && s.id == data.id
-                {
-                    render.apply_scale(s.scale);
+                    if let Some(look_at) = this.look_at {
+                        self.look_ats.push((*look_at, this.color));
+                    }
                 }
-
-                render.player = true;
-                render.selected = selected == Some(data.id);
-                Some(render)
-            });
-
-            remotes.chain(locals)
-        };
-
-        let selected_arrow = self
-            .selected
-            .and_then(|id| objects.get(id))
-            .and_then(|o| o.arrow_target.as_ref());
-
-        for token in renders() {
-            let arrow = token.selected.then_some(selected_arrow).flatten();
-            render::draw_token_token(&cx, &t, &token, arrow, |id| self.images.get(id).cloned())?;
+            }
         }
 
-        for token in renders() {
-            if let Some(target) = token.look_at {
-                render::draw_look_at(&cx, &t, target, &token.color, *self.config.zoom as f64)?;
-            }
+        for (look_at, color) in self.look_ats.drain(..) {
+            render::draw_look_at(&cx, &view, look_at, color)?;
         }
 
         Ok(())

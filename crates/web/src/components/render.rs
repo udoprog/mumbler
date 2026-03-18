@@ -28,81 +28,87 @@ impl Visibility {
     }
 }
 
-pub(crate) struct RenderToken<'a> {
-    pub(crate) transform: api::Transform,
-    pub(crate) look_at: Option<Vec3>,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: api::Color,
+pub(crate) struct RenderBase<'a> {
     pub(crate) name: Option<&'a str>,
-    pub(crate) player: bool,
-    pub(crate) selected: bool,
     pub(crate) visibility: Visibility,
-    pub(crate) token_radius: f32,
+    pub(crate) selected: bool,
+    pub(crate) player: bool,
 }
 
-impl<'a> RenderToken<'a> {
+pub(crate) struct RenderObject<'a> {
+    pub(crate) base: RenderBase<'a>,
+    pub(crate) kind: RenderObjectKind<'a>,
+}
+
+pub(crate) enum RenderObjectKind<'a> {
+    Token(RenderToken<'a>),
+    Static(RenderStatic<'a>),
+}
+
+impl<'a> RenderObject<'a> {
     pub(crate) fn from_data(
         data: &'a ObjectData,
+        arrow_target: Option<&'a Vec3>,
         visibility: impl FnOnce(Id) -> Visibility,
     ) -> Option<Self> {
-        let token = match &data.kind {
-            ObjectKind::Token(token) => token,
+        let kind = match &data.kind {
+            ObjectKind::Token(this) => RenderObjectKind::Token(RenderToken {
+                transform: &this.transform,
+                look_at: this.look_at.as_ref(),
+                image: *this.image,
+                color: this.color.unwrap_or_else(api::Color::neutral),
+                token_radius: *this.token_radius,
+                arrow_target,
+            }),
+            ObjectKind::Static(this) => RenderObjectKind::Static(RenderStatic {
+                transform: &this.transform,
+                image: *this.image,
+                color: this.color.unwrap_or_else(api::Color::neutral),
+                width: *this.width,
+                height: *this.height,
+            }),
             _ => return None,
         };
 
         Some(Self {
-            transform: *token.transform,
-            look_at: *token.look_at,
-            image: *token.image,
-            color: token.color.unwrap_or_else(api::Color::neutral),
-            name: data.name.as_deref(),
-            player: false,
-            selected: false,
-            visibility: data.visibility().max(visibility(*data.group)),
-            token_radius: *token.token_radius,
+            base: RenderBase {
+                name: data.name.as_deref(),
+                visibility: data.visibility().max(visibility(*data.group)),
+                selected: false,
+                player: false,
+            },
+            kind,
         })
     }
 
     pub(crate) fn apply_scale(&mut self, scale: f32) {
-        self.token_radius *= scale;
+        match &mut self.kind {
+            RenderObjectKind::Token(this) => {
+                this.token_radius *= scale;
+            }
+            RenderObjectKind::Static(this) => {
+                this.width *= scale;
+                this.height *= scale;
+            }
+        }
     }
 }
 
-pub(crate) struct RenderStatic {
-    pub(crate) transform: api::Transform,
+pub(crate) struct RenderToken<'a> {
+    pub(crate) transform: &'a api::Transform,
+    pub(crate) look_at: Option<&'a Vec3>,
     pub(crate) image: Option<Id>,
     pub(crate) color: api::Color,
-    pub(crate) selected: bool,
-    pub(crate) visibility: Visibility,
-    pub(crate) width: f32,
-    pub(crate) height: f32,
+    pub(crate) token_radius: f32,
+    pub(crate) arrow_target: Option<&'a Vec3>,
 }
 
-impl RenderStatic {
-    pub(crate) fn from_data(
-        data: &ObjectData,
-        visibility: impl FnOnce(Id) -> Visibility,
-    ) -> Option<Self> {
-        let s = match &data.kind {
-            ObjectKind::Static(s) => s,
-            _ => return None,
-        };
-
-        Some(Self {
-            transform: *s.transform,
-            image: *s.image,
-            color: s.color.unwrap_or_else(api::Color::neutral),
-            selected: false,
-            visibility: data.visibility().max(visibility(*data.group)),
-            width: *s.width,
-            height: *s.height,
-        })
-    }
-
-    pub(crate) fn apply_scale(&mut self, scale: f32) {
-        self.width *= scale;
-        self.height *= scale;
-    }
+pub(crate) struct RenderStatic<'a> {
+    pub(crate) transform: &'a api::Transform,
+    pub(crate) image: Option<Id>,
+    pub(crate) color: api::Color,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 /// Two point coordinates in canvas space.
@@ -290,16 +296,15 @@ fn draw_hidden_badge(
 
 pub(crate) fn draw_look_at(
     cx: &CanvasRenderingContext2d,
-    t: &ViewTransform,
+    view: &ViewTransform,
     target: Vec3,
-    color: &api::Color,
-    zoom: f64,
+    color: api::Color,
 ) -> Result<(), Error> {
-    let radius = 5.0 * zoom;
+    let radius = 0.1 * view.scale;
 
     let color = color.to_transparent_rgba(0.5);
 
-    let e = t.to_canvas(target);
+    let e = view.to_canvas(target);
 
     cx.set_fill_style_str(&color);
     cx.begin_path();
@@ -310,20 +315,20 @@ pub(crate) fn draw_look_at(
     Ok(())
 }
 
-pub(crate) fn draw_token_token(
+pub(crate) fn draw_token(
     cx: &CanvasRenderingContext2d,
-    t: &ViewTransform,
-    token: &RenderToken,
-    arrow_target: Option<&Vec3>,
+    view: &ViewTransform,
+    base: &RenderBase<'_>,
+    render: &RenderToken<'_>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let pos = t.to_canvas(token.transform.position);
+    let pos = view.to_canvas(render.transform.position);
 
-    let token_radius = token.token_radius as f64 * t.scale;
+    let token_radius = render.token_radius as f64 * view.scale;
 
-    let color = token.color.to_css_string();
+    let color = render.color.to_css_string();
 
-    if token.selected {
+    if base.selected {
         cx.set_stroke_style_str("#ffffff");
         cx.set_line_width(token_radius * 0.1);
         cx.begin_path();
@@ -332,7 +337,7 @@ pub(crate) fn draw_token_token(
     }
 
     let image_drawn = 'draw: {
-        let Some(id) = token.image else {
+        let Some(id) = render.image else {
             break 'draw false;
         };
 
@@ -371,23 +376,23 @@ pub(crate) fn draw_token_token(
         cx.fill();
     }
 
-    let front = if token.player
-        && let Some(m) = arrow_target
+    let front = if base.player
+        && let Some(m) = render.arrow_target
     {
-        token.transform.position.direction_to(*m)
+        render.transform.position.direction_to(*m)
     } else {
-        token.transform.front
+        render.transform.front
     };
 
     if front.x.hypot(front.z) > 0.01 {
         let angle = front.angle_xz() as f64;
         let arc_radius = token_radius * 1.5;
-        let color = token.color.to_transparent_rgba(0.5);
+        let color = render.color.to_transparent_rgba(0.5);
         cx.set_stroke_style_str(&color);
         draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
     }
 
-    if let Some(name) = &token.name {
+    if let Some(name) = base.name {
         let font_size = (token_radius * 0.6).max(10.0);
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
@@ -408,34 +413,35 @@ pub(crate) fn draw_token_token(
         cx.set_shadow_blur(0.0);
     }
 
-    if token.visibility.is_hidden() {
+    if base.visibility.is_hidden() {
         draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 
     Ok(())
 }
-pub(crate) fn draw_static_token(
+pub(crate) fn draw_static(
     cx: &CanvasRenderingContext2d,
-    t: &ViewTransform,
-    s: &RenderStatic,
+    view: &ViewTransform,
+    base: &RenderBase<'_>,
+    render: &RenderStatic<'_>,
     get_image: impl Fn(Id) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
-    let pos = t.to_canvas(s.transform.position);
+    let pos = view.to_canvas(render.transform.position);
 
-    let hw = s.width as f64 / 2.0 * t.scale;
-    let hh = s.height as f64 / 2.0 * t.scale;
+    let hw = render.width as f64 / 2.0 * view.scale;
+    let hh = render.height as f64 / 2.0 * view.scale;
 
-    let angle = s.transform.front.angle_xz() as f64;
+    let angle = render.transform.front.angle_xz() as f64;
     let rotation = angle - FRAC_PI_2;
 
-    let color = s.color.to_css_string();
+    let color = render.color.to_css_string();
 
     cx.save();
     cx.translate(pos.x, pos.y)?;
     cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
-        let Some(id) = s.image else {
+        let Some(id) = render.image else {
             break 'draw false;
         };
 
@@ -467,15 +473,15 @@ pub(crate) fn draw_static_token(
         cx.fill_rect(-hw, -hh, hw * 2.0, hh * 2.0);
     }
 
-    if s.selected {
+    if base.selected {
         cx.set_stroke_style_str("#ffffff");
-        cx.set_line_width(t.scale * 0.025);
+        cx.set_line_width(view.scale * 0.025);
         cx.stroke_rect(-hw, -hh, hw * 2.0, hh * 2.0);
     }
 
     cx.restore();
 
-    if s.visibility.is_hidden() {
+    if base.visibility.is_hidden() {
         let badge_size = hw.hypot(hh) * 0.38;
         draw_hidden_badge(cx, pos.x, pos.y, badge_size)?;
     }

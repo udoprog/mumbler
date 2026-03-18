@@ -7,7 +7,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url
 use yew::prelude::*;
 
 use crate::components::Icon;
-use crate::components::render::ViewTransform;
+use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
@@ -535,23 +535,27 @@ impl TokenSettings {
             return Ok(());
         };
 
-        let token = render::RenderToken {
-            transform: api::Transform::origin(),
+        let base = render::RenderBase {
+            name: self.name.as_deref(),
+            visibility: Visibility::Remote,
+            selected: false,
+            player: true,
+        };
+
+        let render = render::RenderToken {
+            transform: &api::Transform::origin(),
             look_at: None,
             image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
-            name: self.name.as_deref(),
-            player: true,
-            selected: false,
-            visibility: render::Visibility::Remote,
             token_radius: 1.0,
+            arrow_target: None,
         };
 
-        let t = ViewTransform::preview(&canvas);
+        let view = ViewTransform::preview(&canvas);
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        render::draw_token_token(&cx, &t, &token, None, |id| {
+        render::draw_token(&cx, &view, &base, &render, |id| {
             self.preview_images.get(id).cloned()
         })?;
 

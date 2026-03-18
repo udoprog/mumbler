@@ -605,22 +605,28 @@ impl StaticSettings {
             return Ok(());
         };
 
-        let s = render::RenderStatic {
-            transform: api::Transform::origin(),
+        let base = render::RenderBase {
+            name: self.name.as_deref(),
+            visibility: Visibility::Remote,
+            selected: false,
+            player: false,
+        };
+
+        let render = render::RenderStatic {
+            transform: &api::Transform::origin(),
             image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
-            selected: false,
-            visibility: Visibility::Remote,
             width: (*self.width).min(*self.height * 3.0),
             height: (*self.height).min(*self.width * 3.0),
         };
 
-        let t = ViewTransform::preview(&canvas);
+        let view = ViewTransform::preview(&canvas);
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        render::draw_static_token(&cx, &t, &s, |id| self.preview_images.get(id).cloned())?;
-
+        render::draw_static(&cx, &view, &base, &render, |id| {
+            self.preview_images.get(id).cloned()
+        })?;
         Ok(())
     }
 }
