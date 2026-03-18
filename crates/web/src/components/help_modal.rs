@@ -13,7 +13,7 @@ pub(crate) fn help_modal(props: &Props) -> Html {
         <div class="modal-backdrop" onclick={props.onclose.reform(|_| ())}>
             <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                 <div class="modal-header">
-                    <h2>{"Keyboard Shortcuts"}</h2>
+                    <h2>{"Shortcuts"}</h2>
                     <button class="btn sm square danger" title="Close"
                         onclick={props.onclose.reform(|_| ())}>
                         <Icon name="x-mark" />

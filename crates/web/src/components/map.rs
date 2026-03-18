@@ -577,91 +577,154 @@ impl Component for Map {
         let toolbar = {
             let o = self.updates.selected.and_then(|id| objects.get(id));
 
-            let is_hidden = o.map(|o| o.is_hidden()).unwrap_or_default();
-            let is_locked = o.map(|o| o.is_locked()).unwrap_or_default();
-            let is_mumble = o
-                .map(|o| *self.config.mumble_object == Some(o.id))
-                .unwrap_or_default();
+            let mumble = {
+                let is_mumble = o
+                    .map(|o| *self.config.mumble_object == Some(o.id))
+                    .unwrap_or_default();
 
-            let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
-            let locked_icon = if is_locked {
-                "lock-closed"
-            } else {
-                "lock-open"
+                let onclick = o.filter(|o| o.is_interactive()).map(|o| {
+                    let id = o.id;
+                    ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
+                });
+
+                let class = classes! {
+                    "btn", "square",
+                    is_mumble.then_some("success"),
+                    onclick.is_some().then_some("disabled"),
+                };
+
+                html! {
+                    <button {class} title="Toggle as MumbleLink Source" {onclick}>
+                        <Icon name="mumble" />
+                    </button>
+                }
             };
 
-            let hidden_title = if is_hidden {
-                "Hidden from others"
-            } else {
-                "Visible to others"
+            let hidden = {
+                let is_hidden = o.map(|o| o.is_hidden()).unwrap_or_default();
+
+                let hidden_icon = if is_hidden { "link-slash" } else { "link" };
+
+                let class = classes! {
+                    "btn", "square",
+                    is_hidden.then_some("danger"),
+                    o.is_none().then_some("disabled"),
+                };
+
+                let title = if is_hidden {
+                    "Hidden from others"
+                } else {
+                    "Visible to others"
+                };
+
+                let onclick = o.map(|o| {
+                    let id = o.id;
+                    ctx.link().callback(move |_| Msg::ToggleHidden(id))
+                });
+
+                html! {
+                    <button {class} title={title} onclick={onclick}>
+                        <Icon name={hidden_icon} />
+                    </button>
+                }
             };
 
-            let locked_title = if is_locked { "Locked" } else { "Unlocked" };
+            let local_hidden = {
+                let is_local_hidden = o.map(|o| o.is_local_hidden()).unwrap_or_default();
 
-            let follow_classes = classes! {
-                "btn", "square",
-                self.config.mumble_follow.then_some("success"),
+                let name = if is_local_hidden { "eye-slash" } else { "eye" };
+
+                let title = if is_local_hidden {
+                    "Hidden from everyone"
+                } else {
+                    "Visible to everyone"
+                };
+
+                let class = classes! {
+                    "btn", "square",
+                    is_local_hidden.then_some("danger"),
+                    o.is_none().then_some("disabled"),
+                };
+
+                let onclick = o.map(|o| {
+                    let id = o.id;
+                    ctx.link().callback(move |_| Msg::ToggleLocalHidden(id))
+                });
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon {name} />
+                    </button>
+                }
             };
 
-            let follow_title = if *self.config.mumble_follow {
-                "Disable MumbleLink selection following"
-            } else {
-                "Enable MumbleLink selection following"
+            let locked = {
+                let is_locked = o.map(|o| o.is_locked()).unwrap_or_default();
+
+                let title = if is_locked { "Locked" } else { "Unlocked" };
+
+                let name = if is_locked {
+                    "lock-closed"
+                } else {
+                    "lock-open"
+                };
+
+                let class = classes! {
+                    "btn", "square",
+                    is_locked.then_some("danger"),
+                    o.is_none().then_some("disabled"),
+                };
+
+                let onclick = o.map(|o| {
+                    let id = o.id;
+                    ctx.link().callback(move |_| Msg::ToggleLocked(id))
+                });
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon {name} />
+                    </button>
+                }
             };
 
-            let follow_click = ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection);
+            let follow = {
+                let class = classes! {
+                    "btn", "square",
+                    self.config.mumble_follow.then_some("success"),
+                };
 
-            let hidden_classes = classes! {
-                "btn", "square",
-                is_hidden.then_some("danger"),
-                o.is_none().then_some("disabled"),
+                let title = if *self.config.mumble_follow {
+                    "Disable MumbleLink selection following"
+                } else {
+                    "Enable MumbleLink selection following"
+                };
+
+                let onclick = ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection);
+
+                html! {
+                    <button {class} {title} {onclick}>
+                        <Icon name="cursor-arrow-rays" />
+                    </button>
+                }
             };
 
-            let locked_classes = classes! {
-                "btn", "square",
-                is_locked.then_some("danger"),
-                o.is_none().then_some("disabled"),
-            };
-
-            let hidden_click = o.map(|o| {
-                let id = o.id;
-                ctx.link().callback(move |_| Msg::ToggleHidden(id))
-            });
-
-            let locked_click = o.map(|o| {
-                let id = o.id;
-                ctx.link().callback(move |_| Msg::ToggleLocked(id))
-            });
-
-            let mumble_click = o.filter(|o| o.is_interactive()).map(|o| {
-                let id = o.id;
-                ctx.link().callback(move |_| Msg::ToggleMumbleObject(id))
-            });
-
-            let mumble_classes = classes! {
-                "btn", "square",
-                is_mumble.then_some("success"),
-                mumble_click.is_none().then_some("disabled"),
+            let help = {
+                html! {
+                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenHelp)}>
+                        <Icon name="question-mark-circle" />
+                    </button>
+                }
             };
 
             html! {
                 <div class="control-group">
-                    <button class={mumble_classes} title="Toggle as MumbleLink Source" onclick={mumble_click}>
-                        <Icon name="mumble" />
-                    </button>
-                    <button class={hidden_classes} title={hidden_title} onclick={hidden_click}>
-                        <Icon name={hidden_icon} />
-                    </button>
-                    <button class={locked_classes} title={locked_title} onclick={locked_click}>
-                        <Icon name={locked_icon} />
-                    </button>
+                    {mumble}
+                    {hidden}
+                    {local_hidden}
+                    {locked}
                     <div class="fill"></div>
-                    <button class={follow_classes} title={follow_title} onclick={follow_click}>
-                        <Icon name="cursor-arrow-rays" />
-                    </button>
-                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenHelp)}>
-                        <Icon name="question-mark-circle" />
-                    </button>
+                    {follow}
+                    {help}
                 </div>
             }
         };
@@ -1797,8 +1860,14 @@ impl Map {
         };
 
         let is_hidden = o.is_hidden();
-        let eye_label = if is_hidden { "Show" } else { "Hide" };
-        let eye_icon = if is_hidden { "eye" } else { "eye-slash" };
+        let hidden_icon = if is_hidden { "link-slash" } else { "link" };
+        let hidden_label = if is_hidden { "Show" } else { "Hide" };
+        let local_hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
+        let local_hidden_label = if is_hidden {
+            "Show locally"
+        } else {
+            "Hide locally"
+        };
         let is_mumble = *self.config.mumble_object == Some(object_id);
         let mumble_label = if is_mumble {
             "Unset MumbleLink"
@@ -1816,8 +1885,13 @@ impl Map {
                     </button>
                     <button class="context-menu-item"
                         onclick={ctx.link().callback(move |_| Msg::ToggleHidden(object_id))}>
-                        <Icon name={eye_icon} invert={true} />
-                        {eye_label}
+                        <Icon name={hidden_icon} invert={true} />
+                        {hidden_label}
+                    </button>
+                    <button class="context-menu-item"
+                        onclick={ctx.link().callback(move |_| Msg::ToggleLocalHidden(object_id))}>
+                        <Icon name={local_hidden_icon} invert={true} />
+                        {local_hidden_label}
                     </button>
                     <button class="context-menu-item"
                         onclick={ctx.link().callback(move |_| Msg::ToggleMumbleObject(object_id))}>
