@@ -73,13 +73,16 @@ pub(crate) struct RenderStatic {
     pub(crate) image: Option<Id>,
     pub(crate) color: api::Color,
     pub(crate) selected: bool,
-    pub(crate) hidden: bool,
+    pub(crate) visibility: Visibility,
     pub(crate) width: f32,
     pub(crate) height: f32,
 }
 
 impl RenderStatic {
-    pub(crate) fn from_data(data: &ObjectData) -> Option<Self> {
+    pub(crate) fn from_data(
+        data: &ObjectData,
+        visibility: impl FnOnce(Id) -> Visibility,
+    ) -> Option<Self> {
         let s = match &data.kind {
             ObjectKind::Static(s) => s,
             _ => return None,
@@ -90,7 +93,7 @@ impl RenderStatic {
             image: *s.image,
             color: s.color.unwrap_or_else(api::Color::neutral),
             selected: false,
-            hidden: *s.hidden,
+            visibility: data.visibility().max(visibility(*data.group)),
             width: *s.width,
             height: *s.height,
         })
@@ -472,9 +475,8 @@ pub(crate) fn draw_static_token(
 
     cx.restore();
 
-    if s.hidden {
+    if s.visibility.is_hidden() {
         let badge_size = hw.hypot(hh) * 0.38;
-
         draw_hidden_badge(cx, pos.x, pos.y, badge_size)?;
     }
 

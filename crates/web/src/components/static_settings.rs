@@ -7,7 +7,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url
 use yew::prelude::*;
 
 use crate::components::Icon;
-use crate::components::render::ViewTransform;
+use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
@@ -610,7 +610,7 @@ impl StaticSettings {
             image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             selected: false,
-            hidden: false,
+            visibility: Visibility::Remote,
             width: (*self.width).min(*self.height * 3.0),
             height: (*self.height).min(*self.width * 3.0),
         };

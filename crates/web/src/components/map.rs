@@ -2322,25 +2322,33 @@ impl Map {
 
         // Draw static objects first (behind tokens).
         for o in objects.values() {
-            if let Some(mut render) = RenderStatic::from_data(o) {
-                render.selected = selected == Some(o.id);
+            let Some(mut render) = RenderStatic::from_data(o, |id| objects.visibility(id)) else {
+                continue;
+            };
 
-                if let Some(s) = &self.scaling
-                    && s.id == o.id
-                {
-                    render.apply_scale(s.scale);
-                }
+            render.selected = selected == Some(o.id);
 
+            if let Some(s) = &self.scaling
+                && s.id == o.id
+            {
+                render.apply_scale(s.scale);
+            }
+
+            if !render.visibility.is_local_hidden() {
                 render::draw_static_token(&cx, &t, &render, |id| self.images.get(id).cloned())?;
             }
         }
 
         // Draw remote static objects.
-        for o in self.peers.iter() {
-            if let Some(s) = RenderStatic::from_data(o)
-                && !s.hidden
-            {
-                render::draw_static_token(&cx, &t, &s, |id| self.images.get(id).cloned())?;
+        for peer in self.peers.iter() {
+            let Some(render) =
+                RenderStatic::from_data(peer, |id| self.peers.visibility(peer.peer_id, id))
+            else {
+                continue;
+            };
+
+            if !render.visibility.is_hidden() {
+                render::draw_static_token(&cx, &t, &render, |id| self.images.get(id).cloned())?;
             }
         }
 
