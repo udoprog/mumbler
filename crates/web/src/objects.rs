@@ -14,6 +14,38 @@ const DEFAULT_STATIC_WIDTH: f32 = 1.0;
 const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 
+enum Shape {
+    Circle { radius: f32 },
+    Rectangle { width: f32, height: f32 },
+}
+
+pub(crate) struct Geometry<'a> {
+    transform: &'a Transform,
+    shape: Shape,
+}
+
+impl Geometry<'_> {
+    pub(crate) fn intersects(&self, point: Vec3) -> bool {
+        match self.shape {
+            Shape::Circle { radius } => self.transform.position.dist(point) <= radius,
+            Shape::Rectangle { width, height } => {
+                // Do a fast path and check if point is within bounding circle first.
+                let radius = (width * width + height * height).sqrt() / 2.0;
+
+                if self.transform.position.dist(point) > radius {
+                    return false;
+                }
+
+                // Transform point to object space.
+                let local = self.transform.transform_point(point);
+
+                // Check if point is within bounds.
+                local.x.abs() < width / 2.0 && local.z.abs() < height / 2.0
+            }
+        }
+    }
+}
+
 pub(crate) struct PeerObject {
     pub(crate) peer_id: PeerId,
     pub(crate) data: ObjectData,
@@ -533,14 +565,25 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn as_click_geometry(&self) -> Option<(&Transform, f32)> {
-        match &self.kind {
-            ObjectKind::Token(this) => Some((&this.transform, *this.token_radius)),
-            ObjectKind::Static(this) => {
-                Some((&this.transform, (*this.width).hypot(*this.height) / 2.0))
-            }
-            _ => None,
-        }
+    pub(crate) fn as_click_geometry(&self) -> Option<Geometry<'_>> {
+        let (transform, shape) = match &self.kind {
+            ObjectKind::Token(this) => (
+                &*this.transform,
+                Shape::Circle {
+                    radius: *this.token_radius,
+                },
+            ),
+            ObjectKind::Static(this) => (
+                &*this.transform,
+                Shape::Rectangle {
+                    width: *this.width,
+                    height: *this.height,
+                },
+            ),
+            _ => return None,
+        };
+
+        Some(Geometry { transform, shape })
     }
 
     /// Returns `true` if this is a token.

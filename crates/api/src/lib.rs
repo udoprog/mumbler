@@ -10,6 +10,7 @@ mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
 use core::fmt;
+use core::ops::Sub;
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
@@ -408,6 +409,29 @@ pub struct Vec3 {
 }
 
 impl Vec3 {
+    /// A unit vector pointing up in the world positive y direction.
+    pub const Y: Self = Self::new(0.0, 1.0, 0.0);
+
+    /// Calculate the cross product of `self` and `other`.
+    pub fn cross(&self, other: &Self) -> Self {
+        Self::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
+    /// Calculate the dot product of `self` and `other`.
+    pub fn dot(&self, other: &Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    /// Normalize the vector to a unit vector.
+    pub fn normalize(&self) -> Self {
+        let len = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
+        Self::new(self.x / len, self.y / len, self.z / len)
+    }
+
     /// Coerce into an array of floats.
     #[inline]
     pub fn as_array(&self) -> &[f32; 3] {
@@ -448,6 +472,15 @@ impl Vec3 {
     #[inline]
     pub fn angle_xz(&self) -> f32 {
         (-self.z).atan2(self.x)
+    }
+}
+
+impl Sub for Vec3 {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
     }
 }
 
@@ -493,6 +526,18 @@ impl Transform {
     /// A transform at the origin facing forward.
     pub const fn origin() -> Self {
         Self::new(Vec3::ZERO, Vec3::FORWARD)
+    }
+
+    /// Transforms a world-space point into this transform's local space.
+    pub fn transform_point(&self, point: Vec3) -> Vec3 {
+        let right = self.front.cross(&Vec3::Y).normalize();
+        let up = right.cross(&self.front).normalize();
+
+        // Translate point into the transform's local origin.
+        let delta = point - self.position;
+
+        // Project onto each local axis to get local coordinates.
+        Vec3::new(delta.dot(&right), delta.dot(&up), delta.dot(&self.front))
     }
 }
 

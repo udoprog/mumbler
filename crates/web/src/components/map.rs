@@ -1829,11 +1829,11 @@ impl Map {
         let hit = objects
             .values()
             .find(|o| {
-                let Some((transform, click_radius)) = o.as_click_geometry() else {
+                let Some(geometry) = o.as_click_geometry() else {
                     return false;
                 };
 
-                transform.position.dist(w) < click_radius
+                geometry.intersects(w)
             })
             .map(|o| o.id);
 
@@ -1966,11 +1966,11 @@ impl Map {
                 let e = view.to_world(e);
 
                 let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
-                    let Some((transform, click_radius)) = o.as_click_geometry() else {
+                    let Some(geometry) = o.as_click_geometry() else {
                         return false;
                     };
 
-                    transform.position.dist(e) < click_radius
+                    geometry.intersects(e)
                 });
 
                 let hit = hit.map(|o| o.id);
