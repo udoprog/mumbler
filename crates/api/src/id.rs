@@ -2,9 +2,7 @@ use core::error::Error;
 #[cfg(feature = "sqll")]
 use core::ffi::c_int;
 use core::fmt;
-use core::mem;
 use core::str::FromStr;
-use std::slice;
 
 use base64::display::Base64Display;
 use base64::engine::general_purpose::{GeneralPurpose, URL_SAFE_NO_PAD};
@@ -31,8 +29,8 @@ impl Id {
 
     /// Create a new identifier from a u64.
     #[inline]
-    pub const fn new(id: u64) -> Self {
-        Self { repr: id.to_le() }
+    pub const fn new(repr: u64) -> Self {
+        Self { repr }
     }
 
     /// Test if this is the zero id.
@@ -49,22 +47,21 @@ impl Id {
     /// Get the inner u64 value of the identifier.
     #[inline]
     pub const fn get(self) -> u64 {
-        u64::from_le(self.repr)
+        self.repr
     }
 
-    /// Get bytes corresponding to the identifier.
+    /// Coerce into an arbitrary byte vector that represents the id.
     #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(&self.repr as *const u64 as *const u8, mem::size_of::<u64>())
-        }
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.repr.to_le_bytes().to_vec()
     }
 }
 
 impl fmt::Display for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = Base64Display::new(self.as_bytes(), &ENGINE);
+        let bytes = self.repr.to_le_bytes();
+        let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
@@ -72,7 +69,8 @@ impl fmt::Display for Id {
 impl fmt::Debug for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = Base64Display::new(self.as_bytes(), &ENGINE);
+        let bytes = self.repr.to_le_bytes();
+        let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }

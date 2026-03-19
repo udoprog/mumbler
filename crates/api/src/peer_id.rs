@@ -16,28 +16,29 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
+#[repr(transparent)]
 pub struct PeerId {
-    raw: u64,
+    repr: u64,
 }
 
 impl PeerId {
     /// Create a new identifier from a u64.
     #[inline]
-    pub const fn new(id: u64) -> Self {
-        Self { raw: id }
+    pub const fn new(repr: u64) -> Self {
+        Self { repr }
     }
 
     /// Get the inner u64 value of the identifier.
     #[inline]
     pub const fn get(self) -> u64 {
-        self.raw
+        self.repr
     }
 }
 
 impl fmt::Display for PeerId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.raw.to_be_bytes();
+        let bytes = self.repr.to_le_bytes();
         let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
@@ -46,7 +47,7 @@ impl fmt::Display for PeerId {
 impl fmt::Debug for PeerId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.raw.to_be_bytes();
+        let bytes = self.repr.to_le_bytes();
         let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
@@ -84,7 +85,7 @@ impl<'de> Deserialize<'de> for PeerId {
                     )));
                 }
 
-                let id = u64::from_be_bytes(dest);
+                let id = u64::from_le_bytes(dest);
                 Ok(PeerId::new(id))
             }
         }
@@ -97,7 +98,7 @@ impl<'de> Deserialize<'de> for PeerId {
 impl BindValue for PeerId {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.raw.cast_signed().bind_value(stmt, index)
+        self.repr.cast_signed().bind_value(stmt, index)
     }
 }
 

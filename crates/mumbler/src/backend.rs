@@ -46,14 +46,6 @@ pub(crate) struct LocalObject {
     pub(crate) changed: HashSet<Key>,
 }
 
-impl LocalObject {
-    /// Construct an array corresponding to the default sort of this object,
-    /// which is based on its random identifier.
-    fn default_sort(&self) -> Vec<u8> {
-        self.id.as_bytes().to_vec()
-    }
-}
-
 /// Local image data.
 #[derive(Debug, Clone)]
 pub(crate) struct LocalImage {
@@ -199,7 +191,7 @@ impl Backend {
             // Migrate existing database objects to ensure they have an
             // established sort.
             if !object.props.contains(Key::SORT) {
-                let sort = object.default_sort();
+                let sort = object.id.to_vec();
                 object.props.insert(Key::SORT, Value::from(sort));
             }
 
@@ -419,7 +411,7 @@ impl Backend {
 
             let sort = match last {
                 Some(sort) => sorting::after(sort),
-                None => object.default_sort(),
+                None => object.id.to_vec(),
             };
 
             let sort = Value::from(sort);

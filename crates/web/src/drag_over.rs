@@ -67,7 +67,7 @@ impl DragOver {
                 if let Some(last) = last {
                     sorting::after(last)
                 } else {
-                    target.id.as_bytes().to_vec()
+                    target.id.to_vec()
                 }
             }
             Drag::Above => {
