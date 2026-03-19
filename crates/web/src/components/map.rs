@@ -89,11 +89,29 @@ impl Updates {
     }
 }
 
-struct ScaleState {
-    id: Id,
+struct Translate {
+    object_id: Id,
+    offset: Vec3,
+}
+
+struct Rotate {
+    object_id: Id,
+    center: Vec3,
+    rotation_offset: f32,
+    is_static: bool,
+}
+
+struct Scale {
+    object_id: Id,
     scale: f32,
     position: Vec3,
     initial_distance: f32,
+}
+
+enum Action {
+    Translate(Translate),
+    Rotate(Rotate),
+    Scale(Scale),
 }
 
 pub(crate) struct Config {
@@ -258,9 +276,7 @@ pub(crate) struct Map {
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
-    scaling: Option<ScaleState>,
-    start_press: Option<(Vec3, bool)>,
-    rotation_offset: f32,
+    action: Option<Action>,
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
@@ -299,7 +315,7 @@ pub(crate) enum Msg {
     ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
     OpenObjectSettings(Id),
     PointerDown(PointerEvent),
-    PointerLeave,
+    PointerLeave(PointerEvent),
     PointerMove(PointerEvent),
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
@@ -424,9 +440,7 @@ impl Component for Map {
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
-            scaling: None,
-            start_press: None,
-            rotation_offset: 0.0,
+            action: None,
             state,
             transform_requests: HashMap::new(),
             update_world: false,
@@ -741,7 +755,7 @@ impl Component for Map {
                                     onpointerdown={ctx.link().callback(Msg::PointerDown)}
                                     onpointermove={ctx.link().callback(Msg::PointerMove)}
                                     onpointerup={ctx.link().callback(Msg::PointerUp)}
-                                    onpointerleave={ctx.link().callback(|_| Msg::PointerLeave)}
+                                    onpointerleave={ctx.link().callback(Msg::PointerLeave)}
                                     onwheel={ctx.link().callback(Msg::Wheel)}
                                     oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
                                     ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
@@ -1359,14 +1373,8 @@ impl Map {
                 self.on_pointer_move(ev)?;
                 Ok(true)
             }
-            Msg::PointerUp(ev) => {
-                self.on_pointer_up(ev)?;
-                Ok(true)
-            }
-            Msg::PointerLeave => {
-                self.on_pointer_leave()?;
-                Ok(true)
-            }
+            Msg::PointerUp(ev) => self.on_pointer_up(ctx, ev),
+            Msg::PointerLeave(ev) => self.on_pointer_leave(ev),
             Msg::Wheel(e) => {
                 self.on_wheel(e)?;
                 Ok(true)
@@ -1379,7 +1387,7 @@ impl Map {
             Msg::KeyDown(ev) => self.on_key_down(ctx, ev),
             Msg::KeyUp(ev) => self.on_key_up(ctx, ev),
             Msg::SelectObject(id) => {
-                self.cancel_scaling();
+                self.cancel_action();
 
                 let objects = self.objects.borrow();
                 self.updates
@@ -1497,24 +1505,21 @@ impl Map {
 
         match key.as_str() {
             "Shift" => {
-                let Some((_, true)) = self.start_press else {
+                let Some(Action::Rotate(r)) = self.action.take() else {
                     return Ok(false);
                 };
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(o) = objects.get_mut(self.updates.selected) else {
+                let Some(o) = objects.get_mut(r.object_id) else {
                     return Ok(false);
                 };
 
                 o.arrow_target = None;
-                self.start_press = None;
-
-                let object_id = o.id;
 
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = None;
-                    self.updates.look_at.insert(object_id);
+                    self.updates.look_at.insert(r.object_id);
                 }
 
                 self.needs_redraw = true;
@@ -1524,8 +1529,8 @@ impl Map {
         }
     }
 
-    fn cancel_scaling(&mut self) -> bool {
-        if self.scaling.take().is_some() {
+    fn cancel_action(&mut self) -> bool {
+        if self.action.take().is_some() {
             self.needs_redraw = true;
             return true;
         }
@@ -1533,8 +1538,139 @@ impl Map {
         false
     }
 
-    fn update_scaling(&mut self, mouse: Vec3) -> bool {
-        let Some(scale) = &mut self.scaling else {
+    fn start_translate_on_hit(&mut self, ctx: &Context<Self>) {
+        let Some(m) = self.mouse_position else {
+            return;
+        };
+
+        let insert_transform;
+
+        let order = self.order.borrow();
+        let mut objects = self.objects.borrow_mut();
+
+        let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
+            let Some(geometry) = o.as_click_geometry() else {
+                return false;
+            };
+
+            geometry.intersects(m)
+        });
+
+        let hit = hit.map(|o| o.id);
+
+        self.needs_redraw = hit.is_some();
+
+        let object_id = match (self.updates.selected, hit) {
+            (id, _) if !id.is_zero() => id,
+            (Id::ZERO, Some(hit)) if self.updates.selected != hit => {
+                self.updates
+                    .select_object(ctx, hit, &mut self.config, &objects);
+
+                if objects.get(hit).is_some_and(|o| o.is_token()) {
+                    return;
+                }
+
+                hit
+            }
+            _ => {
+                return;
+            }
+        };
+
+        if let Some(hit) = hit
+            && hit != object_id
+            && objects.get(hit).is_some_and(|o| o.is_token())
+        {
+            // Forcibly update selection if the other click is a token.
+            self.updates
+                .select_object(ctx, hit, &mut self.config, &objects);
+            return;
+        };
+
+        if objects.is_locked(object_id) {
+            return;
+        }
+
+        let Some(o) = objects.get_mut(object_id) else {
+            return;
+        };
+
+        o.arrow_target = None;
+
+        let is_static = o.is_static();
+
+        let offset = if is_static {
+            // Check that we hit the thing we are currently dragging.
+            if let Some(hit) = hit
+                && hit != self.updates.selected
+            {
+                self.updates
+                    .select_object(ctx, Id::ZERO, &mut self.config, &objects);
+                return;
+            }
+
+            // Keep the cursor's offset relative to the object's origin
+            // while dragging. The stored vector is applied to the world
+            // cursor position on move.
+            let offset = o
+                .as_transform()
+                .map(|t| t.position - m)
+                .unwrap_or(Vec3::ZERO);
+
+            insert_transform = true;
+            offset
+        } else {
+            o.move_target = Some(m);
+            insert_transform = false;
+            m
+        };
+
+        self.action = Some(Action::Translate(Translate { object_id, offset }));
+
+        if insert_transform {
+            self.updates.transforms.insert(object_id);
+        }
+    }
+
+    fn start_scale(&mut self) -> bool {
+        let Some(m) = self.mouse_position else {
+            return false;
+        };
+
+        if self.updates.selected.is_zero() {
+            return false;
+        }
+
+        let mut objects = self.objects.borrow_mut();
+
+        if objects.is_locked(self.updates.selected) {
+            return false;
+        };
+
+        let Some(o) = objects.get_mut(self.updates.selected) else {
+            return false;
+        };
+
+        let Some(position) = o.as_transform().map(|t| t.position) else {
+            return false;
+        };
+
+        let initial_distance = position.dist(m).max(0.01);
+
+        o.move_target = None;
+
+        self.action = Some(Action::Scale(Scale {
+            object_id: self.updates.selected,
+            scale: 1.0,
+            position,
+            initial_distance,
+        }));
+
+        true
+    }
+
+    fn update_action(&mut self, mouse: Vec3) -> bool {
+        let Some(Action::Scale(scale)) = &mut self.action else {
             return false;
         };
 
@@ -1543,14 +1679,21 @@ impl Map {
         true
     }
 
-    fn finalize_scaling(&mut self, ctx: &Context<Self>) -> bool {
-        let Some(scale) = self.scaling.take() else {
+    fn finalize_action(&mut self, ctx: &Context<Self>) -> bool {
+        let Some(action) = self.action.take() else {
             return false;
         };
 
+        match action {
+            Action::Scale(scale) => self.finalize_scale(ctx, scale),
+            _ => true,
+        }
+    }
+
+    fn finalize_scale(&mut self, ctx: &Context<Self>, scale: Scale) -> bool {
         let mut objects = self.objects.borrow_mut();
 
-        let Some(o) = objects.get_mut(scale.id) else {
+        let Some(o) = objects.get_mut(scale.object_id) else {
             return false;
         };
 
@@ -1560,21 +1703,23 @@ impl Map {
                 let height = *s.height * scale.scale;
 
                 if (width - *s.width).abs() > f32::EPSILON {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-                    requests._scale_width = update(ctx, scale.id, Key::STATIC_WIDTH, width);
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    requests._scale_width = update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
                 }
 
                 if (height - *s.height).abs() > f32::EPSILON {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-                    requests._scale_height = update(ctx, scale.id, Key::STATIC_HEIGHT, height);
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    requests._scale_height =
+                        update(ctx, scale.object_id, Key::STATIC_HEIGHT, height);
                 }
             }
             ObjectKind::Token(t) => {
                 let radius = *t.token_radius * scale.scale;
 
                 if (radius - *t.token_radius).abs() > f32::EPSILON {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-                    requests._scale_radius = update(ctx, scale.id, Key::TOKEN_RADIUS, radius);
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    requests._scale_radius =
+                        update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
                 }
             }
             _ => {}
@@ -1614,41 +1759,7 @@ impl Map {
             }
             "s" | "S" => {
                 ev.prevent_default();
-
-                let Some(m) = self.mouse_position else {
-                    return Ok(false);
-                };
-
-                let mut objects = self.objects.borrow_mut();
-
-                if self.updates.selected.is_zero() {
-                    return Ok(false);
-                }
-
-                if objects.is_locked(self.updates.selected) {
-                    return Ok(false);
-                };
-
-                let Some(o) = objects.get_mut(self.updates.selected) else {
-                    return Ok(false);
-                };
-
-                let Some(position) = o.as_transform().map(|t| t.position) else {
-                    return Ok(false);
-                };
-
-                let distance = position.dist(m).max(0.01);
-
-                o.move_target = None;
-
-                self.scaling = Some(ScaleState {
-                    id: self.updates.selected,
-                    scale: 1.0,
-                    position,
-                    initial_distance: distance,
-                });
-
-                Ok(false)
+                Ok(self.start_scale())
             }
             "t" | "T" => {
                 if self.updates.selected.is_zero() {
@@ -1658,11 +1769,17 @@ impl Map {
                 ev.prevent_default();
                 self.toggle_locked(ctx, self.updates.selected)
             }
-            "r" | "R" => self.start_rotation(ev),
+            "r" | "R" => {
+                if self.start_rotation()? {
+                    return Ok(true);
+                }
+
+                Ok(false)
+            }
             "Escape" => {
                 ev.prevent_default();
 
-                if self.cancel_scaling() {
+                if self.cancel_action() {
                     return Ok(false);
                 }
 
@@ -1674,14 +1791,19 @@ impl Map {
                 self.updates.context_menu = None;
                 Ok(true)
             }
-            "Shift" => self.start_rotation(ev),
+            "Shift" => {
+                if self.start_rotation()? {
+                    ev.prevent_default();
+                    return Ok(true);
+                }
+
+                Ok(false)
+            }
             _ => Ok(false),
         }
     }
 
-    fn start_rotation(&mut self, ev: KeyboardEvent) -> Result<bool, Error> {
-        ev.prevent_default();
-
+    fn start_rotation(&mut self) -> Result<bool, Error> {
         let Some(m) = self.mouse_position else {
             return Ok(false);
         };
@@ -1702,27 +1824,42 @@ impl Map {
 
         let object_id = o.id;
 
-        if let Some(look_at) = o.as_look_at_mut() {
+        let has_look_at = if let Some(look_at) = o.as_look_at_mut() {
             **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+            true
+        } else {
+            false
+        };
+
+        let Some(transform) = o.as_transform() else {
+            return Ok(false);
+        };
+
+        let center = transform.position;
+
+        let rotation_offset = if o.is_static() {
+            let cursor = m - center;
+            transform.front.angle_xz() - cursor.angle_xz()
+        } else {
+            0.0
+        };
+
+        self.action = Some(Action::Rotate(Rotate {
+            object_id,
+            center,
+            rotation_offset,
+            is_static: o.is_static(),
+        }));
+
+        if has_look_at {
+            self.updates.look_at(&mut objects, center, m);
             self.updates.look_at.insert(object_id);
-        }
-
-        if let Some(transform) = o.as_transform() {
-            let p = transform.position;
-            self.start_press = Some((p, true));
-
-            self.rotation_offset = if o.is_static() {
-                let cursor = m - p;
-                transform.front.angle_xz() - cursor.angle_xz()
-            } else {
-                0.0
-            };
-
-            self.updates.look_at(&mut objects, p, m);
+        } else {
+            self.updates.look_at(&mut objects, center, m);
         }
 
         self.needs_redraw = true;
-        Ok(false)
+        Ok(true)
     }
 
     fn interpolate_movement(&mut self) {
@@ -1934,41 +2071,19 @@ impl Map {
                     return Ok(());
                 };
 
-                let mut objects = self.objects.borrow_mut();
-
-                let Some(o) = objects.get_mut(self.updates.selected) else {
-                    return Ok(());
-                };
-
-                let Some(t) = o.as_transform() else {
-                    return Ok(());
-                };
-
                 let view = ViewTransform::new(&canvas, &self.config);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
-                let p = t.position;
-                let id = o.id;
 
-                self.start_press = Some((p, true));
+                self.mouse_position = Some(e);
 
-                if o.is_static() {
-                    let cursor = e - p;
-                    self.rotation_offset = t.front.angle_xz() - cursor.angle_xz();
-                } else {
-                    self.rotation_offset = 0.0;
-                }
-
-                if let Some(look_at) = o.as_look_at_mut() {
-                    **look_at = Some(e);
-                    self.updates.look_at(&mut objects, p, e);
-                    self.updates.look_at.insert(id);
-                } else {
-                    self.updates.look_at(&mut objects, p, e);
+                if self.start_rotation()? {
+                    ev.prevent_default();
+                    return Ok(());
                 }
             }
             LEFT_MOUSE_BUTTON => {
-                if self.finalize_scaling(ctx) {
+                if self.finalize_action(ctx) {
                     self.needs_redraw = true;
                     return Ok(());
                 }
@@ -1977,88 +2092,12 @@ impl Map {
                     return Ok(());
                 };
 
-                let order = self.order.borrow();
-                let mut objects = self.objects.borrow_mut();
-
                 let view = ViewTransform::new(&canvas, &self.config);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
-                let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
-                    let Some(geometry) = o.as_click_geometry() else {
-                        return false;
-                    };
-
-                    geometry.intersects(e)
-                });
-
-                let hit = hit.map(|o| o.id);
-
-                self.needs_redraw = hit.is_some();
-
-                let id = match (self.updates.selected, hit) {
-                    (id, _) if !id.is_zero() => id,
-                    (Id::ZERO, Some(hit)) if self.updates.selected != hit => {
-                        self.updates
-                            .select_object(ctx, hit, &mut self.config, &objects);
-
-                        if objects.get(hit).is_some_and(|o| o.is_token()) {
-                            return Ok(());
-                        }
-
-                        hit
-                    }
-                    _ => {
-                        return Ok(());
-                    }
-                };
-
-                if let Some(hit) = hit
-                    && hit != id
-                    && objects.get(hit).is_some_and(|o| o.is_token())
-                {
-                    // Forcibly update selection if the other click is a token.
-                    self.updates
-                        .select_object(ctx, hit, &mut self.config, &objects);
-                    return Ok(());
-                };
-
-                if objects.is_locked(id) {
-                    return Ok(());
-                }
-
-                let Some(object) = objects.get_mut(id) else {
-                    return Ok(());
-                };
-
-                object.arrow_target = None;
-
-                let id = object.id;
-                let is_static = object.is_static();
-
-                if is_static {
-                    // Check that we hit the thing we are currently dragging.
-                    if let Some(hit) = hit
-                        && hit != self.updates.selected
-                    {
-                        self.updates
-                            .select_object(ctx, Id::ZERO, &mut self.config, &objects);
-                        return Ok(());
-                    }
-
-                    // Keep the cursor's offset relative to the object's origin while dragging.
-                    // The stored vector is applied to the world cursor position on move.
-                    let offset = object
-                        .as_transform()
-                        .map(|t| t.position - e)
-                        .unwrap_or(Vec3::ZERO);
-
-                    self.start_press = Some((offset, false));
-                    self.updates.transforms.insert(id);
-                } else {
-                    self.start_press = Some((e, false));
-                    object.move_target = Some(e);
-                }
+                self.mouse_position = Some(e);
+                self.start_translate_on_hit(ctx);
             }
             MIDDLE_MOUSE_BUTTON => {
                 ev.prevent_default();
@@ -2093,111 +2132,106 @@ impl Map {
 
         self.mouse_position = Some(m);
 
-        if self.update_scaling(m) {
+        if self.update_action(m) {
             return Ok(());
         }
 
         let mut objects = self.objects.borrow_mut();
 
         'done: {
-            let Some((p, shift_key)) = self.start_press else {
-                break 'done;
-            };
+            match &self.action {
+                Some(Action::Rotate(r)) => {
+                    let Some(o) = objects.get_mut(r.object_id) else {
+                        break 'done;
+                    };
 
-            let Some(o) = objects.get_mut(self.updates.selected) else {
-                break 'done;
-            };
+                    let dist = r.center.dist(m);
 
-            if shift_key {
-                let dist = p.dist(m);
-
-                if dist < ARROW_THRESHOLD {
-                    break 'done;
-                };
-
-                if o.is_static() {
-                    // Use the original cursor offset to rotate relative to the initial grab.
-                    if let Some(transform) = o.as_transform_mut() {
-                        let cursor = m - p;
-                        let angle = cursor.angle_xz() + self.rotation_offset;
-                        transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
-                        self.updates.transforms.insert(o.id);
+                    if dist < ARROW_THRESHOLD {
+                        break 'done;
                     }
 
-                    o.arrow_target = Some(m);
-                } else if let Some(look_at) = o.as_look_at_mut() {
-                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-                    self.updates.look_at.insert(o.id);
-                    self.updates.look_at(&mut objects, p, m);
+                    if r.is_static {
+                        // Use the original cursor offset to rotate relative to the initial grab.
+                        if let Some(transform) = o.as_transform_mut() {
+                            let cursor = m - r.center;
+                            let angle = cursor.angle_xz() + r.rotation_offset;
+                            transform.front =
+                                Vec3::new(angle.cos(), transform.front.y, -angle.sin());
+                            self.updates.transforms.insert(o.id);
+                        }
+
+                        o.arrow_target = Some(m);
+                    } else if let Some(look_at) = o.as_look_at_mut() {
+                        **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+                        self.updates.look_at.insert(o.id);
+                        self.updates.look_at(&mut objects, r.center, m);
+                    }
+
+                    self.needs_redraw = true;
                 }
+                Some(Action::Translate(t)) => {
+                    let Some(o) = objects.get_mut(t.object_id) else {
+                        break 'done;
+                    };
 
-                self.needs_redraw = true;
-                break 'done;
+                    if o.is_static() {
+                        let Some(transform) = o.as_transform_mut() else {
+                            break 'done;
+                        };
+
+                        transform.position = m + t.offset;
+                        self.updates.transforms.insert(o.id);
+                        self.needs_redraw = true;
+                    } else {
+                        o.move_target = Some(m);
+                        self.needs_redraw = true;
+                    }
+                }
+                _ => break 'done,
             }
-
-            if o.is_static() {
-                let Some(transform) = o.as_transform_mut() else {
-                    break 'done;
-                };
-
-                transform.position = m + p;
-                self.updates.transforms.insert(o.id);
-                self.needs_redraw = true;
-                break 'done;
-            }
-
-            o.move_target = Some(m);
-            self.needs_redraw = true;
         }
 
         Ok(())
     }
 
-    fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<(), Error> {
-        self.needs_redraw = {
-            match ev.button() {
-                LEFT_MOUSE_BUTTON => {
-                    self.start_press = None;
-                    self.rotation_offset = 0.0;
+    fn on_pointer_up(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<bool, Error> {
+        let mut update = false;
 
-                    let mut objects = self.objects.borrow_mut();
+        match ev.button() {
+            LEFT_MOUSE_BUTTON => {
+                ev.prevent_default();
 
-                    if let Some(object) = objects.get_mut(self.updates.selected) {
-                        object.arrow_target = None;
-                    }
+                update = self.finalize_action(ctx);
 
-                    true
+                let mut objects = self.objects.borrow_mut();
+
+                if let Some(o) = objects.get_mut(self.updates.selected) {
+                    o.arrow_target = None;
+                    self.needs_redraw = true;
                 }
-                MIDDLE_MOUSE_BUTTON => {
-                    self.pan_anchor = None;
-                    false
-                }
-                _ => false,
             }
-        };
+            MIDDLE_MOUSE_BUTTON => {
+                self.pan_anchor = None;
+            }
+            _ => {}
+        }
 
-        Ok(())
+        Ok(update)
     }
 
-    fn on_pointer_leave(&mut self) -> Result<(), Error> {
-        let mut objects = self.objects.borrow_mut();
+    fn on_pointer_leave(&mut self, ev: PointerEvent) -> Result<bool, Error> {
+        ev.prevent_default();
 
-        let selected_arrow = objects
-            .get(self.updates.selected)
-            .and_then(|o| o.arrow_target);
-
-        self.needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
-
+        self.needs_redraw |= self.action.take().is_some();
         self.pan_anchor = None;
-        self.start_press = None;
-        self.rotation_offset = 0.0;
         self.mouse_position = None;
 
-        if let Some(object) = objects.get_mut(self.updates.selected) {
-            object.arrow_target = None;
+        if let Some(o) = self.objects.borrow_mut().get_mut(self.updates.selected) {
+            self.needs_redraw |= o.arrow_target.take().is_some();
         }
 
-        Ok(())
+        Ok(false)
     }
 
     fn on_wheel(&mut self, ev: WheelEvent) -> Result<(), Error> {
@@ -2404,8 +2438,8 @@ impl Map {
                 continue;
             }
 
-            if let Some(s) = &self.scaling
-                && s.id == data.id
+            if let Some(Action::Scale(s)) = &self.action
+                && s.object_id == data.id
             {
                 render.apply_scale(s.scale);
             }
