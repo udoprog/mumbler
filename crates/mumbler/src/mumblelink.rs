@@ -19,7 +19,9 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
     let mut link = Link::new().context("creating link")?;
 
     let transform = 'transform: {
-        let Some(id) = b.mumble_object() else {
+        let id = b.mumble_object();
+
+        if id.is_zero() {
             break 'transform None;
         };
 

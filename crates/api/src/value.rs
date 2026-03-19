@@ -46,10 +46,10 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_id(&self) -> Option<Id> {
+    pub fn as_id(&self) -> Id {
         match &self.kind {
-            ValueKind::Id(id) => Some(*id),
-            _ => None,
+            ValueKind::Id(id) => *id,
+            _ => Id::ZERO,
         }
     }
 
@@ -229,7 +229,11 @@ impl From<Id> for Value {
     #[inline]
     fn from(value: Id) -> Self {
         Self {
-            kind: ValueKind::Id(value),
+            kind: if value.is_zero() {
+                ValueKind::Empty
+            } else {
+                ValueKind::Id(value)
+            },
         }
     }
 }

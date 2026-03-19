@@ -39,7 +39,11 @@ macro_rules! value_kind_switch {
                 $self.$add($($args),*, value).await?;
             }
             ValueKind::Id(value) => {
-                $self.$add($($args),*, value).await?;
+                if value.is_zero() {
+                    $self.$add($($args),*, value).await?;
+                } else {
+                    $self.$delete($($args),*).await?;
+                }
             }
             ValueKind::Transform(value) => {
                 $self.$add($($args),*, value).await?;

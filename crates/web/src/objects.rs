@@ -263,7 +263,7 @@ pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
-    pub(crate) image: State<Option<Id>>,
+    pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
@@ -324,7 +324,7 @@ impl TokenObject {
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
-    pub(crate) image: State<Option<Id>>,
+    pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
@@ -460,7 +460,7 @@ impl ObjectData {
         Self {
             id: o.id,
             kind,
-            group: State::new(o.props.get(Key::GROUP).as_id().unwrap_or(Id::ZERO)),
+            group: State::new(o.props.get(Key::GROUP).as_id()),
             name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),

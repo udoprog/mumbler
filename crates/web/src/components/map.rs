@@ -39,15 +39,15 @@ const ANIMATION_FPS: u32 = 60;
 struct Updates {
     look_at: HashSet<Id>,
     transforms: HashSet<Id>,
-    selected: Option<Id>,
+    selected: Id,
     context_menu: Option<ContextMenu>,
-    delete: Option<Id>,
+    delete: Id,
     _toggle_mumble_request: ws::Request,
 }
 
 impl Updates {
     fn look_at(&mut self, objects: &mut ObjectsRef, p: Vec3, m: Vec3) {
-        let Some(o) = self.selected.and_then(|id| objects.get_mut(id)) else {
+        let Some(o) = objects.get_mut(self.selected) else {
             return;
         };
 
@@ -63,24 +63,22 @@ impl Updates {
     fn select_object(
         &mut self,
         ctx: &Context<Map>,
-        id: Option<Id>,
+        id: Id,
         config: &mut Config,
         objects: &ObjectsRef,
     ) {
         self.selected = id;
         self.context_menu = None;
 
-        if id == self.delete {
-            self.delete = None;
+        if self.delete == id {
+            self.delete = Id::ZERO;
         }
 
         if !*config.mumble_follow || *config.mumble_object == id {
             return;
         }
 
-        if let Some(id) = id
-            && !objects.is_interactive(id)
-        {
+        if !id.is_zero() && !objects.is_interactive(id) {
             return;
         }
 
@@ -102,7 +100,7 @@ pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
     pub(crate) extent: State<Extent>,
-    pub(crate) mumble_object: State<Option<Id>>,
+    pub(crate) mumble_object: State<Id>,
     pub(crate) mumble_follow: State<bool>,
 }
 
@@ -145,7 +143,7 @@ impl Default for Config {
             zoom: State::new(2.0),
             pan: State::new(Pan::zero()),
             extent: State::new(Extent::arena()),
-            mumble_object: State::new(None),
+            mumble_object: State::new(Id::ZERO),
             mumble_follow: State::new(false),
         }
     }
@@ -243,7 +241,7 @@ pub(crate) struct Map {
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
-    mouse_world_pos: Option<Vec3>,
+    mouse_position: Option<Vec3>,
     needs_redraw: bool,
     object_ondragend: Callback<Id>,
     object_ondragover: Callback<DragOver>,
@@ -261,7 +259,6 @@ pub(crate) struct Map {
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
     scaling: Option<ScaleState>,
-    selected: Option<Id>,
     start_press: Option<(Vec3, bool)>,
     rotation_offset: f32,
     state: ws::State,
@@ -307,7 +304,7 @@ pub(crate) enum Msg {
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     Resized,
-    SelectObject(Option<Id>),
+    SelectObject(Id),
     SetLog(log::Log),
     StateChanged(ws::State),
     ToggleFollowMumbleSelection,
@@ -410,7 +407,7 @@ impl Component for Map {
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
-            mouse_world_pos: None,
+            mouse_position: None,
             needs_redraw: false,
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_ondragover: ctx.link().callback(Msg::DragOver),
@@ -419,7 +416,7 @@ impl Component for Map {
             object_onlocalhiddentoggle: ctx.link().callback(Msg::ToggleLocalHidden),
             object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
-            object_onselect: ctx.link().callback(|id| Msg::SelectObject(Some(id))),
+            object_onselect: ctx.link().callback(Msg::SelectObject),
             object_requests: HashMap::new(),
             objects: Objects::default(),
             open_help: false,
@@ -428,7 +425,6 @@ impl Component for Map {
             pan_anchor: None,
             peers: Peers::default(),
             scaling: None,
-            selected: None,
             start_press: None,
             rotation_offset: 0.0,
             state,
@@ -513,7 +509,7 @@ impl Component for Map {
 
         let pos;
 
-        if let Some(o) = self.updates.selected.and_then(|id| objects.get(id))
+        if let Some(o) = objects.get(self.updates.selected)
             && let Some(transform) = o.as_transform()
         {
             let p = transform.position;
@@ -530,7 +526,7 @@ impl Component for Map {
         }
 
         let object_list_header = {
-            let o = self.updates.selected.and_then(|id| objects.get(id));
+            let o = objects.get(self.updates.selected);
 
             let settings_classes = classes! {
                 "btn",
@@ -579,11 +575,11 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = self.updates.selected.and_then(|id| objects.get(id));
+            let o = objects.get(self.updates.selected);
 
             let mumble = {
                 let is_mumble = o
-                    .map(|o| *self.config.mumble_object == Some(o.id))
+                    .map(|o| *self.config.mumble_object == o.id)
                     .unwrap_or_default();
 
                 let onclick = o.filter(|o| o.is_interactive()).map(|o| {
@@ -781,7 +777,7 @@ impl Component for Map {
                         </div>
                     </div>
 
-                    if let Some(id) = self.updates.delete {
+                    if let Some(id) = self.updates.delete.as_non_zero() {
                         <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
                             <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                                 <div class="modal-header">
@@ -1012,10 +1008,10 @@ impl Map {
             Msg::ToggleMumbleObject(id) => {
                 self.updates.context_menu = None;
 
-                let update = if *self.config.mumble_object == Some(id) {
-                    None
+                let update = if *self.config.mumble_object == id {
+                    Id::ZERO
                 } else {
-                    Some(id)
+                    id
                 };
 
                 *self.config.mumble_object = update;
@@ -1145,9 +1141,13 @@ impl Map {
                                 order.remove(*o.group, o.sort().to_vec(), o.id);
                             }
 
-                            if self.updates.selected == Some(object_id) {
-                                self.updates
-                                    .select_object(ctx, None, &mut self.config, &objects);
+                            if self.updates.selected == object_id {
+                                self.updates.select_object(
+                                    ctx,
+                                    Id::ZERO,
+                                    &mut self.config,
+                                    &objects,
+                                );
                             }
 
                             self.object_requests.remove(&object_id);
@@ -1456,11 +1456,11 @@ impl Map {
             }
             Msg::ConfirmDelete(id) => {
                 self.updates.context_menu = None;
-                self.updates.delete = Some(id);
+                self.updates.delete = id;
                 Ok(true)
             }
             Msg::CancelDelete => {
-                self.updates.delete = None;
+                self.updates.delete = Id::ZERO;
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -1472,7 +1472,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
-                self.updates.delete = None;
+                self.updates.delete = Id::ZERO;
                 Ok(false)
             }
             Msg::ObjectDeleted(result) => {
@@ -1503,7 +1503,7 @@ impl Map {
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                let Some(o) = objects.get_mut(self.updates.selected) else {
                     return Ok(false);
                 };
 
@@ -1588,23 +1588,20 @@ impl Map {
 
         match key.as_str() {
             "Delete" => {
-                let Some(id) = self.updates.selected else {
-                    return Ok(false);
-                };
-
-                if self.updates.delete == Some(id) {
+                if self.updates.delete == self.updates.selected {
                     return Ok(false);
                 }
 
                 ev.prevent_default();
                 self.updates.context_menu = None;
-                self.updates.delete = Some(id);
+                self.updates.delete = self.updates.selected;
                 Ok(true)
             }
             "Enter" => {
-                if let Some(id) = self.updates.delete {
+                if !self.updates.delete.is_zero() {
                     ev.prevent_default();
-                    ctx.link().send_message(Msg::DeleteObject(id));
+                    ctx.link()
+                        .send_message(Msg::DeleteObject(self.updates.delete));
                 }
 
                 Ok(false)
@@ -1618,21 +1615,21 @@ impl Map {
             "s" | "S" => {
                 ev.prevent_default();
 
-                let Some(m) = self.mouse_world_pos else {
+                let Some(m) = self.mouse_position else {
                     return Ok(false);
                 };
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(id) = self.updates.selected else {
+                if self.updates.selected.is_zero() {
+                    return Ok(false);
+                }
+
+                if objects.is_locked(self.updates.selected) {
                     return Ok(false);
                 };
 
-                if objects.is_locked(id) {
-                    return Ok(false);
-                };
-
-                let Some(o) = objects.get_mut(id) else {
+                let Some(o) = objects.get_mut(self.updates.selected) else {
                     return Ok(false);
                 };
 
@@ -1645,7 +1642,7 @@ impl Map {
                 o.move_target = None;
 
                 self.scaling = Some(ScaleState {
-                    id,
+                    id: self.updates.selected,
                     scale: 1.0,
                     position,
                     initial_distance: distance,
@@ -1654,13 +1651,14 @@ impl Map {
                 Ok(false)
             }
             "t" | "T" => {
-                let Some(id) = self.updates.selected else {
+                if self.updates.selected.is_zero() {
                     return Ok(false);
-                };
+                }
 
                 ev.prevent_default();
-                self.toggle_locked(ctx, id)
+                self.toggle_locked(ctx, self.updates.selected)
             }
+            "r" | "R" => self.start_rotation(ev),
             "Escape" => {
                 ev.prevent_default();
 
@@ -1668,59 +1666,63 @@ impl Map {
                     return Ok(false);
                 }
 
-                self.updates.delete = None;
                 self.open_settings = None;
                 self.open_help = false;
 
-                self.updates.selected = None;
+                self.updates.delete = Id::ZERO;
+                self.updates.selected = Id::ZERO;
                 self.updates.context_menu = None;
                 Ok(true)
             }
-            "Shift" => {
-                let Some(m) = self.mouse_world_pos else {
-                    return Ok(false);
-                };
-
-                let mut objects = self.objects.borrow_mut();
-
-                let Some(id) = self.updates.selected else {
-                    return Ok(false);
-                };
-
-                if objects.is_locked(id) {
-                    return Ok(false);
-                }
-
-                let Some(o) = objects.get_mut(id) else {
-                    return Ok(false);
-                };
-
-                let object_id = o.id;
-
-                if let Some(look_at) = o.as_look_at_mut() {
-                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-                    self.updates.look_at.insert(object_id);
-                }
-
-                if let Some(transform) = o.as_transform() {
-                    let p = transform.position;
-                    self.start_press = Some((p, true));
-
-                    self.rotation_offset = if o.is_static() {
-                        let cursor = m - p;
-                        transform.front.angle_xz() - cursor.angle_xz()
-                    } else {
-                        0.0
-                    };
-
-                    self.updates.look_at(&mut objects, p, m);
-                }
-
-                self.needs_redraw = true;
-                Ok(false)
-            }
+            "Shift" => self.start_rotation(ev),
             _ => Ok(false),
         }
+    }
+
+    fn start_rotation(&mut self, ev: KeyboardEvent) -> Result<bool, Error> {
+        ev.prevent_default();
+
+        let Some(m) = self.mouse_position else {
+            return Ok(false);
+        };
+
+        let mut objects = self.objects.borrow_mut();
+
+        if self.updates.selected.is_zero() {
+            return Ok(false);
+        }
+
+        if objects.is_locked(self.updates.selected) {
+            return Ok(false);
+        }
+
+        let Some(o) = objects.get_mut(self.updates.selected) else {
+            return Ok(false);
+        };
+
+        let object_id = o.id;
+
+        if let Some(look_at) = o.as_look_at_mut() {
+            **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+            self.updates.look_at.insert(object_id);
+        }
+
+        if let Some(transform) = o.as_transform() {
+            let p = transform.position;
+            self.start_press = Some((p, true));
+
+            self.rotation_offset = if o.is_static() {
+                let cursor = m - p;
+                transform.front.angle_xz() - cursor.angle_xz()
+            } else {
+                0.0
+            };
+
+            self.updates.look_at(&mut objects, p, m);
+        }
+
+        self.needs_redraw = true;
+        Ok(false)
     }
 
     fn interpolate_movement(&mut self) {
@@ -1848,7 +1850,7 @@ impl Map {
             .map(|o| o.id);
 
         if let Some(object_id) = hit {
-            self.updates.selected = Some(object_id);
+            self.updates.selected = object_id;
             self.updates.context_menu = Some(ContextMenu {
                 object_id,
                 x: ev.offset_x() as f64,
@@ -1880,7 +1882,7 @@ impl Map {
         } else {
             "Hide locally"
         };
-        let is_mumble = *self.config.mumble_object == Some(object_id);
+        let is_mumble = *self.config.mumble_object == object_id;
         let mumble_label = if is_mumble {
             "Unset MumbleLink"
         } else {
@@ -1934,7 +1936,7 @@ impl Map {
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+                let Some(o) = objects.get_mut(self.updates.selected) else {
                     return Ok(());
                 };
 
@@ -1995,10 +1997,10 @@ impl Map {
                 self.needs_redraw = hit.is_some();
 
                 let id = match (self.updates.selected, hit) {
-                    (Some(id), _) => id,
-                    (None, Some(hit)) if self.updates.selected != Some(hit) => {
+                    (id, _) if !id.is_zero() => id,
+                    (Id::ZERO, Some(hit)) if self.updates.selected != hit => {
                         self.updates
-                            .select_object(ctx, Some(hit), &mut self.config, &objects);
+                            .select_object(ctx, hit, &mut self.config, &objects);
 
                         if objects.get(hit).is_some_and(|o| o.is_token()) {
                             return Ok(());
@@ -2017,7 +2019,7 @@ impl Map {
                 {
                     // Forcibly update selection if the other click is a token.
                     self.updates
-                        .select_object(ctx, Some(hit), &mut self.config, &objects);
+                        .select_object(ctx, hit, &mut self.config, &objects);
                     return Ok(());
                 };
 
@@ -2036,11 +2038,11 @@ impl Map {
 
                 if is_static {
                     // Check that we hit the thing we are currently dragging.
-                    if let Some(selected) = self.updates.selected
-                        && hit != Some(selected)
+                    if let Some(hit) = hit
+                        && hit != self.updates.selected
                     {
                         self.updates
-                            .select_object(ctx, None, &mut self.config, &objects);
+                            .select_object(ctx, Id::ZERO, &mut self.config, &objects);
                         return Ok(());
                     }
 
@@ -2089,7 +2091,7 @@ impl Map {
         let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let m = v.to_world(m);
 
-        self.mouse_world_pos = Some(m);
+        self.mouse_position = Some(m);
 
         if self.update_scaling(m) {
             return Ok(());
@@ -2102,7 +2104,7 @@ impl Map {
                 break 'done;
             };
 
-            let Some(o) = self.updates.selected.and_then(|id| objects.get_mut(id)) else {
+            let Some(o) = objects.get_mut(self.updates.selected) else {
                 break 'done;
             };
 
@@ -2160,7 +2162,7 @@ impl Map {
 
                     let mut objects = self.objects.borrow_mut();
 
-                    if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
+                    if let Some(object) = objects.get_mut(self.updates.selected) {
                         object.arrow_target = None;
                     }
 
@@ -2180,9 +2182,8 @@ impl Map {
     fn on_pointer_leave(&mut self) -> Result<(), Error> {
         let mut objects = self.objects.borrow_mut();
 
-        let selected_arrow = self
-            .selected
-            .and_then(|id| objects.get(id))
+        let selected_arrow = objects
+            .get(self.updates.selected)
             .and_then(|o| o.arrow_target);
 
         self.needs_redraw = selected_arrow.is_some() || self.start_press.is_some();
@@ -2190,9 +2191,9 @@ impl Map {
         self.pan_anchor = None;
         self.start_press = None;
         self.rotation_offset = 0.0;
-        self.mouse_world_pos = None;
+        self.mouse_position = None;
 
-        if let Some(object) = self.updates.selected.and_then(|id| objects.get_mut(id)) {
+        if let Some(object) = objects.get_mut(self.updates.selected) {
             object.arrow_target = None;
         }
 
@@ -2389,7 +2390,7 @@ impl Map {
                 continue;
             };
 
-            let selected = selected == Some(data.id);
+            let selected = selected == data.id;
 
             let arrow_target = selected.then_some(data.arrow_target.as_ref()).flatten();
 

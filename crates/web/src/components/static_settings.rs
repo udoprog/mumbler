@@ -20,7 +20,7 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     CropCancelled,
     CropConfirmed(api::CropRegion),
-    DeleteImage(api::Id),
+    DeleteImage(Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     FixedRatioChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
@@ -34,7 +34,7 @@ pub(crate) enum Msg {
     OpenGallery,
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    SelectImage(api::Id),
+    SelectImage(Id),
     SetLog(log::Log),
     StateChanged(ws::State),
     UpdateName(Option<String>),
@@ -66,7 +66,7 @@ pub(crate) struct StaticSettings {
     gallery_open: bool,
     height: State<f32>,
     image_uploading: bool,
-    image: State<Option<api::Id>>,
+    image: State<Id>,
     images: Vec<api::Image>,
     log: log::Log,
     name: State<Option<String>>,
@@ -123,7 +123,7 @@ impl Component for StaticSettings {
             gallery_open: false,
             height: State::new(1.0),
             image_uploading: false,
-            image: State::new(None),
+            image: State::new(Id::ZERO),
             images: Vec::new(),
             log,
             name: State::new(None),
@@ -411,7 +411,7 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::SelectImage(id) => {
-                *self.image = Some(id);
+                *self.image = id;
                 self.load_preview_image(ctx);
                 self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
@@ -587,8 +587,8 @@ impl StaticSettings {
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
 
-        if let Some(id) = *self.image {
-            self.preview_images.load(ctx, id);
+        if !self.image.is_zero() {
+            self.preview_images.load(ctx, *self.image);
         }
     }
 

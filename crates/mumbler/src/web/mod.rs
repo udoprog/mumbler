@@ -260,7 +260,7 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
                 break 'done;
             };
 
-            if backend.mumble_object() != Some(object_id) {
+            if backend.mumble_object() != object_id {
                 break 'done;
             };
 
@@ -277,7 +277,7 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
             backend.set_hidden(object_id, hidden);
 
             'out: {
-                if backend.mumble_object() != Some(object_id) {
+                if backend.mumble_object() != object_id {
                     break 'out;
                 }
 
@@ -325,13 +325,13 @@ async fn update_config(
                 backend.store_mumble_object(mumble_object);
 
                 let transform = 'transform: {
-                    let Some(object_id) = mumble_object else {
+                    if mumble_object.is_zero() {
                         break 'transform None;
                     };
 
                     let state = backend.client_state().await;
 
-                    let Some(object) = state.objects.get(&object_id) else {
+                    let Some(object) = state.objects.get(&mumble_object) else {
                         break 'transform None;
                     };
 

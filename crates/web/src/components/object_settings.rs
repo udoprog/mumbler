@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, Value};
+use api::{Color, Id, Image, Key, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -24,7 +24,7 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     CropCancelled,
     CropConfirmed(api::CropRegion),
-    DeleteImage(api::Id),
+    DeleteImage(Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
@@ -34,7 +34,7 @@ pub(crate) enum Msg {
     OpenGallery,
     RadiusChanged(Event),
     SelectColor(api::Color),
-    SelectImage(api::Id),
+    SelectImage(Id),
     SetLog(log::Log),
     SpeedChanged(Event),
     StateChanged(ws::State),
@@ -64,8 +64,8 @@ pub(crate) struct TokenSettings {
     crop_source_url: Option<String>,
     gallery_open: bool,
     image_uploading: bool,
-    image: State<Option<api::Id>>,
-    images: Vec<api::Image>,
+    image: State<Id>,
+    images: Vec<Image>,
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
@@ -119,7 +119,7 @@ impl Component for TokenSettings {
             crop_source_url: None,
             gallery_open: false,
             image_uploading: false,
-            image: State::new(None),
+            image: State::new(Id::ZERO),
             images: Vec::new(),
             log,
             name: State::new(None),
@@ -372,7 +372,7 @@ impl TokenSettings {
                 Ok(true)
             }
             Msg::SelectImage(id) => {
-                *self.image = Some(id);
+                *self.image = id;
                 self.load_preview_image(ctx);
                 self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
@@ -516,10 +516,7 @@ impl TokenSettings {
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
-
-        if let Some(id) = *self.image {
-            self.preview_images.load(ctx, id);
-        }
+        self.preview_images.load(ctx, *self.image);
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {

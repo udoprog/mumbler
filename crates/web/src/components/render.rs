@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Extent, Id, Vec3};
+use api::{Color, Extent, Id, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
@@ -56,14 +56,14 @@ impl<'a> RenderObject<'a> {
                 transform: &this.transform,
                 look_at: this.look_at.as_ref(),
                 image: *this.image,
-                color: this.color.unwrap_or_else(api::Color::neutral),
+                color: this.color.unwrap_or_else(Color::neutral),
                 token_radius: *this.token_radius,
                 arrow_target,
             }),
             ObjectKind::Static(this) => RenderObjectKind::Static(RenderStatic {
                 transform: &this.transform,
                 image: *this.image,
-                color: this.color.unwrap_or_else(api::Color::neutral),
+                color: this.color.unwrap_or_else(Color::neutral),
                 width: *this.width,
                 height: *this.height,
             }),
@@ -97,16 +97,16 @@ impl<'a> RenderObject<'a> {
 pub(crate) struct RenderToken<'a> {
     pub(crate) transform: &'a api::Transform,
     pub(crate) look_at: Option<&'a Vec3>,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: api::Color,
+    pub(crate) image: Id,
+    pub(crate) color: Color,
     pub(crate) token_radius: f32,
     pub(crate) arrow_target: Option<&'a Vec3>,
 }
 
 pub(crate) struct RenderStatic<'a> {
     pub(crate) transform: &'a api::Transform,
-    pub(crate) image: Option<Id>,
-    pub(crate) color: api::Color,
+    pub(crate) image: Id,
+    pub(crate) color: Color,
     pub(crate) width: f32,
     pub(crate) height: f32,
 }
@@ -300,7 +300,7 @@ pub(crate) fn draw_look_at(
     cx: &CanvasRenderingContext2d,
     view: &ViewTransform,
     target: Vec3,
-    color: api::Color,
+    color: Color,
 ) -> Result<(), Error> {
     let radius = 0.1 * view.scale;
 
@@ -339,11 +339,7 @@ pub(crate) fn draw_token(
     }
 
     let image_drawn = 'draw: {
-        let Some(id) = render.image else {
-            break 'draw false;
-        };
-
-        let Some(img) = get_image(id) else {
+        let Some(img) = get_image(render.image) else {
             break 'draw false;
         };
 
@@ -443,11 +439,7 @@ pub(crate) fn draw_static(
     cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
-        let Some(id) = render.image else {
-            break 'draw false;
-        };
-
-        let Some(img) = get_image(id) else {
+        let Some(img) = get_image(render.image) else {
             break 'draw false;
         };
 

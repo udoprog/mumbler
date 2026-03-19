@@ -56,6 +56,10 @@ where
 
     /// Remove a loaded image.
     pub(crate) fn remove(&mut self, id: Id) {
+        if id.is_zero() {
+            return;
+        }
+
         if let Some(state) = self.inner.get_mut(&id) {
             state.users = state.users.saturating_sub(1);
 
@@ -71,6 +75,10 @@ where
     }
 
     pub(crate) fn load(&mut self, ctx: &Context<M>, id: Id) {
+        if id.is_zero() {
+            return;
+        }
+
         if let Some(state) = self.inner.get_mut(&id) {
             state.users = state.users.saturating_add(1);
             return;

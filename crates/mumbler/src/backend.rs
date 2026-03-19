@@ -228,7 +228,7 @@ impl Backend {
             );
         }
 
-        let mumble_object = db.config(Key::MUMBLE_OBJECT).await?;
+        let mumble_object = db.config(Key::MUMBLE_OBJECT).await?.unwrap_or_default();
 
         tracing::debug!("Loaded {} objects", objects.len());
 
@@ -272,7 +272,7 @@ impl Backend {
     }
 
     /// Load the id of the object used to position mumble.
-    pub(crate) fn mumble_object(&self) -> Option<Id> {
+    pub(crate) fn mumble_object(&self) -> Id {
         self.inner.mumble_object.load()
     }
 
@@ -291,7 +291,7 @@ impl Backend {
     }
 
     /// Set the id of the object used to position mumble.
-    pub(crate) fn store_mumble_object(&self, id: Option<Id>) {
+    pub(crate) fn store_mumble_object(&self, id: Id) {
         self.inner.mumble_object.store(id);
     }
 
@@ -441,8 +441,8 @@ impl Backend {
     pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
         // If the mumble object is deleted, clear the mumble object setting to
         // avoid dangling references.
-        if self.mumble_object() == Some(id) {
-            self.store_mumble_object(None);
+        if self.mumble_object() == id {
+            self.store_mumble_object(Id::ZERO);
             self.set_mumblelink_transform(None).await;
         }
 
@@ -508,26 +508,19 @@ pub struct AtomicId {
 }
 
 impl AtomicId {
-    fn new(value: Option<Id>) -> Self {
+    fn new(value: Id) -> Self {
         Self {
-            raw: AtomicU64::new(value.map_or(u64::MAX, |id| id.get())),
+            raw: AtomicU64::new(value.get()),
         }
     }
 
     /// Load the identifier from the atomic, returning None if it is invalid.
-    pub fn load(&self) -> Option<Id> {
-        let id = self.raw.load(Ordering::Relaxed);
-
-        if id == u64::MAX {
-            None
-        } else {
-            Some(Id::new(id))
-        }
+    pub fn load(&self) -> Id {
+        Id::new(self.raw.load(Ordering::Relaxed))
     }
 
     /// Store an identifier in the atomic, replacing any existing value.
-    pub fn store(&self, id: Option<Id>) {
-        self.raw
-            .store(id.map_or(u64::MAX, |id| id.get()), Ordering::Relaxed);
+    pub fn store(&self, id: Id) {
+        self.raw.store(id.get(), Ordering::Relaxed);
     }
 }

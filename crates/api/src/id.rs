@@ -16,7 +16,7 @@ use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 
 /// A base64-encoded u64, used for identifiers in the API.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 pub struct Id {
     raw: [u8; 8],
@@ -32,6 +32,17 @@ impl Id {
         Self {
             raw: id.to_be_bytes(),
         }
+    }
+
+    /// Test if this is the zero id.
+    #[inline]
+    pub const fn is_zero(&self) -> bool {
+        matches!(self.raw, [0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    #[inline]
+    pub const fn as_non_zero(&self) -> Option<Self> {
+        if self.is_zero() { None } else { Some(*self) }
     }
 
     /// Get the inner u64 value of the identifier.
