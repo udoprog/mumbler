@@ -2,7 +2,9 @@ use core::error::Error;
 #[cfg(feature = "sqll")]
 use core::ffi::c_int;
 use core::fmt;
+use core::mem;
 use core::str::FromStr;
+use std::slice;
 
 use base64::display::Base64Display;
 use base64::engine::general_purpose::{GeneralPurpose, URL_SAFE_NO_PAD};
@@ -18,26 +20,25 @@ static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
+#[repr(transparent)]
 pub struct Id {
-    raw: [u8; 8],
+    repr: u64,
 }
 
 impl Id {
     /// The zero id.
-    pub const ZERO: Self = Self { raw: [0u8; 8] };
+    pub const ZERO: Self = Self { repr: 0 };
 
     /// Create a new identifier from a u64.
     #[inline]
     pub const fn new(id: u64) -> Self {
-        Self {
-            raw: id.to_be_bytes(),
-        }
+        Self { repr: id.to_le() }
     }
 
     /// Test if this is the zero id.
     #[inline]
     pub const fn is_zero(&self) -> bool {
-        matches!(self.raw, [0, 0, 0, 0, 0, 0, 0, 0])
+        self.repr == 0
     }
 
     #[inline]
@@ -47,27 +48,23 @@ impl Id {
 
     /// Get the inner u64 value of the identifier.
     #[inline]
-    pub const fn as_u64(&self) -> u64 {
-        u64::from_be_bytes(self.raw)
-    }
-
-    /// Get the inner u64 value of the identifier.
-    #[inline]
     pub const fn get(self) -> u64 {
-        u64::from_be_bytes(self.raw)
+        u64::from_le(self.repr)
     }
 
     /// Get bytes corresponding to the identifier.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.raw[..]
+        unsafe {
+            slice::from_raw_parts(&self.repr as *const u64 as *const u8, mem::size_of::<u64>())
+        }
     }
 }
 
 impl fmt::Display for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = Base64Display::new(&self.raw, &ENGINE);
+        let this = Base64Display::new(self.as_bytes(), &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
@@ -75,7 +72,7 @@ impl fmt::Display for Id {
 impl fmt::Debug for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = Base64Display::new(&self.raw, &ENGINE);
+        let this = Base64Display::new(self.as_bytes(), &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
@@ -136,7 +133,7 @@ impl FromStr for Id {
             });
         }
 
-        let id = u64::from_be_bytes(dest);
+        let id = u64::from_le_bytes(dest);
         Ok(Id::new(id))
     }
 }
@@ -173,7 +170,7 @@ impl<'de> Deserialize<'de> for Id {
 impl BindValue for Id {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.as_u64().cast_signed().bind_value(stmt, index)
+        self.get().cast_signed().bind_value(stmt, index)
     }
 }
 
@@ -191,7 +188,7 @@ impl FromColumn<'_> for Id {
 
     #[inline]
     fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
-        let id = i64::from_column(stmt, index)?.cast_unsigned();
-        Ok(Id::new(id))
+        let repr = i64::from_column(stmt, index)?.cast_unsigned();
+        Ok(Id::new(repr))
     }
 }

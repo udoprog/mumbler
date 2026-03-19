@@ -202,7 +202,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
 }
 
 async fn upload_image(backend: &Backend, request: api::UploadImageRequest) -> Result<Id> {
-    tracing::info!(?request.content_type, size = request.data.len(), "Received image upload request");
+    tracing::info!(?request.content_type, size = request.data.len(), "received image upload request");
 
     let task = task::spawn_blocking(move || {
         imaging::process(&request.data, request.crop, request.sizing, request.size)

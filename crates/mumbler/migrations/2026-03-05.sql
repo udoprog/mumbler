@@ -1,5 +1,5 @@
 CREATE TABLE `images` (
-    `id` BLOB PRIMARY KEY,
+    `id` INTEGER PRIMARY KEY,
     `content_type` INTEGER NOT NULL,
     `data` BLOB NOT NULL,
     `width` INTEGER NOT NULL,
