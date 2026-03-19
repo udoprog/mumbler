@@ -161,12 +161,14 @@ impl ViewTransform {
         }
     }
 
+    #[inline]
     pub(crate) fn to_canvas(&self, w: Vec3) -> Canvas2 {
         let x = self.center_x + w.x as f64 * self.scale;
         let y = self.center_y - w.z as f64 * self.scale;
         Canvas2::new(x, y)
     }
 
+    #[inline]
     pub(crate) fn to_world(&self, p: Canvas2) -> Vec3 {
         let world_x = ((p.x - self.center_x) / self.scale) as f32;
         let world_z = ((self.center_y - p.y) / self.scale) as f32;

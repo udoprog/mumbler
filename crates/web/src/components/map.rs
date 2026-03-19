@@ -31,7 +31,7 @@ use super::{GroupSettings, HelpModal, ObjectList, StaticSettings, TokenSettings}
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
 
-const ZOOM_FACTOR: f64 = 1.2;
+const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const ANIMATION_FPS: u32 = 60;
 
@@ -2200,30 +2200,27 @@ impl Map {
     }
 
     fn on_wheel(&mut self, ev: WheelEvent) -> Result<(), Error> {
+        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+            return Ok(());
+        };
+
         ev.prevent_default();
 
         let delta = if ev.delta_y() < 0.0 {
             ZOOM_FACTOR
         } else {
             1.0 / ZOOM_FACTOR
-        } as f32;
-
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return Ok(());
         };
 
-        let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
-
-        let t_before = ViewTransform::new(&canvas, &self.config);
-        let w = t_before.to_world(m);
-
+        let view_before = ViewTransform::new(&canvas, &self.config);
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
+        let view_after = ViewTransform::new(&canvas, &self.config);
 
-        let t_after = ViewTransform::new(&canvas, &self.config);
-        let c2 = t_after.to_canvas(w);
+        let c1 = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let c2 = view_after.to_canvas(view_before.to_world(c1));
 
-        self.config.pan.x += m.x - c2.x;
-        self.config.pan.y += m.y - c2.y;
+        self.config.pan.x += c1.x - c2.x;
+        self.config.pan.y += c1.y - c2.y;
 
         self.update_world = true;
         self.needs_redraw = true;
