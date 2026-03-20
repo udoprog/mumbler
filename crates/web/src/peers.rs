@@ -28,6 +28,15 @@ impl Peer {
         self.objects.values()
     }
 
+    /// The name of the peer.
+    pub(crate) fn display(&self) -> String {
+        let Some(name) = self.props.get(Key::PEER_NAME).as_str() else {
+            return self.id.to_string();
+        };
+
+        name.to_string()
+    }
+
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
     pub(crate) fn visibility(&self, group: Id) -> Visibility {
@@ -54,6 +63,11 @@ pub(crate) struct Peers {
 }
 
 impl Peers {
+    /// Check if collection of peers is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.peers.is_empty()
+    }
+
     /// Iterate over peers.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Peer> {
         self.peers.values()

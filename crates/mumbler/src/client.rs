@@ -27,7 +27,7 @@ async fn handle_peer(
         match id {
             Event::Pong => {
                 let body = body.decode::<PongBody>()?;
-                tracing::debug!(?id, body.payload);
+                tracing::trace!(?id, body.payload);
 
                 if Some(body.payload) == *last_ping {
                     *last_ping = None;

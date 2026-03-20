@@ -414,7 +414,7 @@ impl State {
             match message {
                 Event::Ping => {
                     let body = body.decode::<PingBody>()?;
-                    tracing::debug!(?message, payload = ?body.payload);
+                    tracing::trace!(?message, payload = ?body.payload);
 
                     timeout
                         .as_mut()

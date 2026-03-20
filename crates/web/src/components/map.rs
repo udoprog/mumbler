@@ -798,19 +798,21 @@ impl Component for Map {
             }
         };
 
-        let peers = html! {
-            <div>
-                <h2>{"Peers"}</h2>
+        let peers = (!self.peers.is_empty()).then(|| {
+            html! {
+                <div>
+                    <h2>{"Peers"}</h2>
 
-                {for self.peers.iter().map(|peer| html! {
-                    html! {
-                        <div class="peer">
-                            <div>{peer.id.to_string()}</div>
-                        </div>
-                    }
-                })}
-            </div>
-        };
+                    {for self.peers.iter().map(|peer| html! {
+                        html! {
+                            <div class="peer">
+                                <div>{peer.display()}</div>
+                            </div>
+                        }
+                    })}
+                </div>
+            }
+        });
 
         html! {
             <>
@@ -1298,9 +1300,10 @@ impl Map {
 
                 tracing::debug!(?body, "Remote update");
 
-                match body {
+                let update = match body {
                     RemoteUpdateBody::RemoteLost => {
                         self.peers.clear();
+                        true
                     }
                     RemoteUpdateBody::PeerJoin {
                         peer_id,
@@ -1318,18 +1321,24 @@ impl Map {
                         for id in images {
                             self.images.load(ctx, id);
                         }
+
+                        true
                     }
                     RemoteUpdateBody::PeerUpdate {
                         peer_id,
                         key,
                         value,
-                    } => {
-                        if let Some(peer) = self.peers.get_mut(peer_id) {
-                            peer.update(key, value);
-                        }
+                    } => 'done: {
+                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                            break 'done false;
+                        };
+
+                        peer.update(key, value);
+                        true
                     }
                     RemoteUpdateBody::PeerLeave { peer_id } => {
                         self.peers.remove_peer(peer_id);
+                        true
                     }
                     RemoteUpdateBody::ObjectUpdate {
                         object_id,
@@ -1338,31 +1347,37 @@ impl Map {
                         value,
                     } => 'done: {
                         let Some(a) = self.peers.get_object_mut(peer_id, object_id) else {
-                            break 'done;
+                            break 'done false;
                         };
 
                         a.update(key, value);
+                        true
                     }
-                    RemoteUpdateBody::ObjectAdded { peer_id, object } => {
-                        let data = ObjectData::from_remote(&object);
+                    RemoteUpdateBody::ObjectAdded { peer_id, object } => 'done: {
+                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                            break 'done false;
+                        };
 
-                        if let Some(peer) = self.peers.get_mut(peer_id) {
-                            peer.insert(data.id, data);
-                        }
+                        let data = ObjectData::from_remote(&object);
+                        peer.insert(data.id, data);
+                        true
                     }
                     RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
                         self.peers.remove(peer_id, object_id);
+                        true
                     }
                     RemoteUpdateBody::ImageAdded { image_id, .. } => {
                         self.images.load(ctx, image_id);
+                        true
                     }
                     RemoteUpdateBody::ImageRemoved { image_id, .. } => {
                         self.images.remove(image_id);
+                        true
                     }
-                }
+                };
 
                 self.s.redraw = true;
-                Ok(false)
+                Ok(update)
             }
             Msg::UpdateResult(body) => {
                 let body = body?;
@@ -1626,45 +1641,59 @@ impl Map {
             return;
         };
 
-        let order = self.order.borrow();
-        let mut objects = self.objects.borrow_mut();
+        let object_id = {
+            let order = self.order.borrow();
+            let objects = self.objects.borrow();
 
-        let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
-            let Some(geometry) = o.as_click_geometry() else {
-                return false;
-            };
+            let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
+                let Some(geometry) = o.as_click_geometry() else {
+                    return false;
+                };
 
-            geometry.intersects(m)
-        });
+                geometry.intersects(m)
+            });
 
-        let hit = hit.map(|o| o.id);
+            self.s.redraw = hit.is_some();
 
-        self.s.redraw = hit.is_some();
+            'done: {
+                let Some(hit) = hit else {
+                    break 'done self.s.selected;
+                };
 
-        let object_id = match (self.s.selected, hit) {
-            (id, _) if !id.is_zero() => id,
-            (Id::ZERO, Some(hit)) if self.s.selected != hit => {
-                self.s.select_object(ctx, hit, &mut self.config, &objects);
-
-                if objects.get(hit).is_some_and(|o| o.is_token()) {
-                    return;
+                if hit.id == self.s.selected {
+                    break 'done hit.id;
                 }
 
-                hit
-            }
-            _ => {
-                return;
+                if self.s.selected.is_zero() || hit.is_token() {
+                    self.s
+                        .select_object(ctx, hit.id, &mut self.config, &objects);
+
+                    // For token selection, we want to avoid "stutter", so we
+                    // don't immediately start translating.
+                    if hit.is_token() {
+                        return;
+                    }
+
+                    break 'done hit.id;
+                }
+
+                self.s.selected
             }
         };
 
-        if let Some(hit) = hit
-            && hit != object_id
-            && objects.get(hit).is_some_and(|o| o.is_token())
-        {
-            // Forcibly update selection if the other click is a token.
-            self.s.select_object(ctx, hit, &mut self.config, &objects);
+        self.start_translate(object_id)
+    }
+
+    fn start_translate(&mut self, object_id: Id) {
+        if object_id.is_zero() {
+            return;
+        }
+
+        let Some(m) = self.mouse else {
             return;
         };
+
+        let mut objects = self.objects.borrow_mut();
 
         if objects.is_locked(object_id) {
             return;
@@ -1679,15 +1708,6 @@ impl Map {
         let is_static = o.is_static();
 
         let offset = if is_static {
-            // Check that we hit the thing we are currently dragging.
-            if let Some(hit) = hit
-                && hit != self.s.selected
-            {
-                self.s
-                    .select_object(ctx, Id::ZERO, &mut self.config, &objects);
-                return;
-            }
-
             let Some(transform) = o.as_transform() else {
                 return;
             };
@@ -1836,12 +1856,10 @@ impl Map {
                 ev.prevent_default();
                 self.toggle_locked(ctx, self.s.selected)
             }
-            "r" | "R" => {
-                if self.start_rotation()? {
-                    return Ok(true);
-                }
-
-                Ok(false)
+            "r" | "R" => self.start_rotation(),
+            "g" | "G" => {
+                self.start_translate(self.s.selected);
+                Ok(true)
             }
             "Escape" => {
                 ev.prevent_default();
