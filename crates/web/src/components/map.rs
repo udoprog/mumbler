@@ -800,14 +800,13 @@ impl Component for Map {
 
         let peers = (!self.peers.is_empty()).then(|| {
             html! {
-                <div>
-                    <h2>{"Peers"}</h2>
-
+                <div class="object-list static">
                     {for self.peers.iter().map(|peer| html! {
                         html! {
-                            <div class="peer">
-                                <div>{peer.display()}</div>
-                            </div>
+                            <section class="object-content">
+                                <Icon name="user" invert={true} />
+                                <span>{peer.display()}</span>
+                            </section>
                         }
                     })}
                 </div>

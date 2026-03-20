@@ -204,6 +204,14 @@ impl Backend {
             objects.insert(id, object);
         }
 
+        let mut props = Properties::new();
+
+        for (key, value) in db.configs().await? {
+            if key.is_remote() {
+                props.insert(key, value);
+            }
+        }
+
         for image in db.images_with_data().await? {
             tracing::debug! {
                 ?image.id,
@@ -243,7 +251,7 @@ impl Backend {
                     images,
                     images_added: HashSet::new(),
                     images_deleted: HashSet::new(),
-                    props: Properties::new(),
+                    props,
                     props_changed: HashSet::new(),
                 }),
                 images: RwLock::new(Images {
@@ -348,7 +356,7 @@ impl Backend {
     pub(crate) async fn update(&self, key: Key, value: Value) -> Result<()> {
         self.db().set_config_value(key, value.clone()).await?;
 
-        if !matches!(key, Key::PEER_NAME) {
+        if !key.is_remote() {
             return Ok(());
         }
 

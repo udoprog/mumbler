@@ -76,6 +76,13 @@ crate::macros::keys! {
     }
 }
 
+impl Key {
+    /// Test if the key is remotely exported, making it visible to other peers.
+    pub fn is_remote(&self) -> bool {
+        matches!(*self, Key::PEER_NAME)
+    }
+}
+
 crate::macros::ids! {
     pub struct ContentType {
         PNG = 0;

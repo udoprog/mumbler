@@ -273,7 +273,40 @@ impl Component for ObjectList {
             let drop_into_last =
                 (ctx.props().drag_over == Some(DragOver::into(group, o.id))).then_some(group);
 
-            let children = match &o.kind {
+            let class = classes! {
+                "object-content",
+                selected.then_some("selected"),
+            };
+
+            list.push(html! {
+                <section
+                    key={format!("drag-{target}")}
+                    class="object-drag"
+                    draggable={true}
+                    {onclick}
+                    {ondragstart}
+                    {ondragend}
+                    {ondragover}
+                >
+                    <section {class}>
+                        <Icon name={o.icon()} invert={true} small={true} />
+
+                        <span class="object-label">{label}</span>
+
+                        {mumble_button}
+
+                        {expand_button}
+
+                        {hidden_button}
+
+                        {local_hidden_button}
+
+                        {locked_button}
+                    </section>
+                </section>
+            });
+
+            list.extend(match &o.kind {
                 ObjectKind::Group(g) => (g.is_expanded()
                     && (drop_into_last.is_some() || !order.is_empty(target)))
                 .then(|| {
@@ -300,46 +333,7 @@ impl Component for ObjectList {
                     }
                 }),
                 _ => None,
-            };
-
-            let class = classes! {
-                "object-button",
-                selected.then_some("selected"),
-            };
-
-            let node = html! {
-                <div key={format!("object-{target}")} class="object-item">
-                    <section
-                        key={format!("drag-{target}")}
-                        class="object-drag"
-                        draggable={true}
-                        {onclick}
-                        {ondragstart}
-                        {ondragend}
-                        {ondragover}
-                    >
-                        <section {class}>
-                            <Icon name={o.icon()} invert={true} small={true} />
-
-                            <span class="object-label">{label}</span>
-
-                            {mumble_button}
-
-                            {expand_button}
-
-                            {hidden_button}
-
-                            {local_hidden_button}
-
-                            {locked_button}
-                        </section>
-                    </section>
-
-                    {children}
-                </div>
-            };
-
-            list.push(node);
+            });
 
             let class = classes! {
                 "object-drop",
