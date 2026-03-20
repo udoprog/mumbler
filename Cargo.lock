@@ -100,6 +100,7 @@ dependencies = [
  "musli-web",
  "serde_core",
  "sqll",
+ "yew",
 ]
 
 [[package]]

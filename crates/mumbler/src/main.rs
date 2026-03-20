@@ -44,7 +44,7 @@ pub fn main() -> Result<()> {
     let opts = Opts::parse();
 
     let (default_level, default_filter) = if opts.debug {
-        (LevelFilter::DEBUG, "")
+        (LevelFilter::DEBUG, "mumbler=debug")
     } else {
         (LevelFilter::INFO, "mumbler=info")
     };

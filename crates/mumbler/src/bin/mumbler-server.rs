@@ -8,8 +8,6 @@ use tokio::task::LocalSet;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
-const DEFUALT_FILTER: &str = "mumbler=info";
-
 #[derive(Parser)]
 struct Opts {
     /// Specify the host to bind to.
@@ -36,9 +34,9 @@ fn main() -> Result<()> {
     let opts = Opts::parse();
 
     let (level, default_filter) = if opts.debug {
-        (LevelFilter::DEBUG, "")
+        (LevelFilter::DEBUG, "mumbler=debug")
     } else {
-        (LevelFilter::INFO, DEFUALT_FILTER)
+        (LevelFilter::INFO, "mumbler=info")
     };
 
     let builder = EnvFilter::builder().with_default_directive(level.into());

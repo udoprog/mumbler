@@ -75,6 +75,14 @@ impl fmt::Debug for Id {
     }
 }
 
+#[cfg(feature = "yew")]
+impl From<Id> for yew::virtual_dom::Key {
+    #[inline]
+    fn from(id: Id) -> Self {
+        yew::virtual_dom::Key::from(id.to_string())
+    }
+}
+
 #[derive(Debug)]
 enum IdParseErrorKind {
     DecodeSliceError(DecodeSliceError),

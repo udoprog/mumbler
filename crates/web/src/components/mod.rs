@@ -18,6 +18,9 @@ pub(crate) use self::image_gallery_modal::ImageGalleryModal;
 mod settings;
 pub(crate) use self::settings::Settings;
 
+mod rooms;
+pub(crate) use self::rooms::Rooms;
+
 mod object_settings;
 pub(crate) use self::object_settings::TokenSettings;
 

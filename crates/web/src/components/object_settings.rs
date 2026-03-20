@@ -469,7 +469,7 @@ impl TokenSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::Update {
+                    api::LocalUpdateBody::ObjectUpdated {
                         object_id,
                         key,
                         value,

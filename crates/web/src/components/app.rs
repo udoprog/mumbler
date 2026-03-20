@@ -5,7 +5,7 @@ use yew_router::prelude::*;
 use crate::error::Error;
 use crate::log;
 
-use super::{Icon, Log, Map, MumbleStatus, Navigation, RemoteStatus, Route, Settings};
+use super::{Icon, Log, Map, MumbleStatus, Navigation, RemoteStatus, Rooms, Route, Settings};
 
 const COMPONENT: &str = "app::update";
 
@@ -113,6 +113,7 @@ impl Component for App {
 fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     let component = match route {
         Route::Map => html!(<Map ws={ws.clone()} />),
+        Route::Rooms => html!(<Rooms ws={ws.clone()} />),
         Route::Settings => html!(<Settings ws={ws.clone()} />),
         Route::Log => html!(<Log />),
         Route::NotFound => {

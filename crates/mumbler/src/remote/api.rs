@@ -88,8 +88,6 @@ pub struct ConnectBody {
     /// The signature over the server challenge nonce, proving ownership of peer
     /// id.
     pub signature: Signature,
-    /// The context to connect to.
-    pub room: Box<[u8]>,
     /// List of objects owned by peer.
     pub objects: Vec<RemoteObject>,
     /// List of images owned by peer.
@@ -106,8 +104,6 @@ pub struct ConnectBodyRef<'a> {
     /// The signature over the server challenge nonce, proving ownership of peer
     /// id.
     pub signature: Signature,
-    /// The context to connect to.
-    pub room: &'a [u8],
     /// List of objects owned by peer.
     pub objects: &'a [RemoteObject],
     /// List of images owned by peer.
@@ -155,6 +151,28 @@ pub struct RemoteImage {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
+pub struct PeerConnectedBody {
+    /// The peer that connected.
+    pub peer_id: PeerId,
+    /// The global key-value pairs that were immediately set for the peer.
+    pub objects: Vec<RemoteObject>,
+    /// Properties of the peer.
+    pub props: Properties,
+}
+
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct PeerConnectedBodyRef<'a> {
+    /// The peer that connected.
+    pub peer_id: PeerId,
+    /// The objects that are associated with the peer.
+    pub objects: &'a [RemoteObject],
+    /// Properties of the peer.
+    pub props: &'a Properties,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
 pub struct PeerJoinBody {
     /// The peer that joined.
     pub peer_id: PeerId,
@@ -162,8 +180,6 @@ pub struct PeerJoinBody {
     pub objects: Vec<RemoteObject>,
     /// Remote images associated with the peer.
     pub images: Vec<RemoteImage>,
-    /// Properties of the peer.
-    pub props: Properties,
 }
 
 #[derive(Debug, Encode)]
@@ -175,8 +191,6 @@ pub struct PeerJoinBodyRef<'a> {
     pub objects: &'a [RemoteObject],
     /// The images that are associated with the peer.
     pub images: &'a [RemoteImage],
-    /// The properties of the peer.
-    pub props: &'a Properties,
 }
 
 /// A request to update a peer.
@@ -221,6 +235,13 @@ pub struct PeerUpdatedBodyRef<'a> {
     pub key: Key,
     /// The value that was updated.
     pub value: &'a Value,
+}
+
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct PeerDisconnectBody {
+    /// The peer that disconnected.
+    pub id: PeerId,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -391,11 +412,24 @@ api::define! {
         impl Event for PongBody;
     }
 
+    pub type PeerConnected;
+
+    impl Broadcast for PeerConnected {
+        impl Event for PeerConnectedBody;
+        impl Event for PeerConnectedBodyRef<'_>;
+    }
+
     pub type PeerJoin;
 
     impl Broadcast for PeerJoin {
         impl Event for PeerJoinBody;
         impl Event for PeerJoinBodyRef<'_>;
+    }
+
+    pub type PeerDisconnect;
+
+    impl Broadcast for PeerDisconnect {
+        impl Event for PeerDisconnectBody;
     }
 
     pub type PeerLeave;

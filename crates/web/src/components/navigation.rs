@@ -7,6 +7,8 @@ use crate::log::{self, Severity};
 pub enum Route {
     #[at("/")]
     Map,
+    #[at("/rooms")]
+    Rooms,
     #[at("/settings")]
     Settings,
     #[at("/log")]
@@ -69,6 +71,9 @@ pub(crate) fn navigation(props: &NavigationProps) -> Html {
         <section class="navigation">
             <Link<Route> to={Route::Map} classes={classes!((props.route == Route::Map).then_some("active"))}>
                 {"Map"}
+            </Link<Route>>
+            <Link<Route> to={Route::Rooms} classes={classes!((props.route == Route::Rooms).then_some("active"))}>
+                {"Rooms"}
             </Link<Route>>
             <Link<Route> to={Route::Settings} classes={classes!((props.route == Route::Settings).then_some("active"))}>
                 {"Settings"}

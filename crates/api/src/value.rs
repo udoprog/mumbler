@@ -2,7 +2,7 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Extent, Id, Pan, Transform, Vec3};
+use crate::{Color, Extent, Id, Pan, RemoteId, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
@@ -18,6 +18,7 @@ pub enum ValueType {
     Color,
     Bytes,
     Integer,
+    RemoteId,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -179,6 +180,14 @@ impl Value {
     }
 
     #[inline]
+    pub fn as_room(&self) -> Option<&RemoteId> {
+        match &self.kind {
+            ValueKind::RemoteId(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn into_vec3_mut(&mut self) -> &mut Vec3 {
         if !matches!(self.kind, ValueKind::Vec3(_)) {
             self.kind = ValueKind::Vec3(Vec3::default());
@@ -212,6 +221,7 @@ impl fmt::Debug for Value {
 #[musli(crate = musli_core)]
 pub enum ValueKind {
     Id(Id),
+    RemoteId(RemoteId),
     Float(f64),
     Integer(i64),
     Boolean(bool),
@@ -333,6 +343,15 @@ impl From<Extent> for Value {
     fn from(value: Extent) -> Self {
         Self {
             kind: ValueKind::Extent(value),
+        }
+    }
+}
+
+impl From<RemoteId> for Value {
+    #[inline]
+    fn from(value: RemoteId) -> Self {
+        Self {
+            kind: ValueKind::RemoteId(value),
         }
     }
 }

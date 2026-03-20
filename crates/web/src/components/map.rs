@@ -26,7 +26,7 @@ use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, ViewTransform};
-use super::{GroupSettings, HelpModal, ObjectList, StaticSettings, TokenSettings};
+use super::{GroupSettings, HelpModal, ObjectList, Rooms, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -354,7 +354,7 @@ pub(crate) enum Msg {
     CreateToken,
     CreateStatic,
     CreateGroup,
-    DeleteObject(Id),
+    RemoveObject(Id),
     DragEnd(Id),
     DragOver(DragOver),
     CanvasDragOver(DragEvent),
@@ -368,7 +368,7 @@ pub(crate) enum Msg {
     KeyUp(KeyboardEvent),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
-    ObjectDeleted(Result<Packet<api::DeleteObject>, ws::Error>),
+    ObjectRemoved(Result<Packet<api::RemoveObject>, ws::Error>),
     OpenObjectSettings(Id),
     PointerDown(PointerEvent),
     PointerLeave(PointerEvent),
@@ -798,19 +798,19 @@ impl Component for Map {
             }
         };
 
-        let peers = (!self.peers.is_empty()).then(|| {
+        let players = self.peers.iter().any(|p| p.in_room).then(|| {
             html! {
-                <div class="list static">
+                <div class="list">
                     <div class="list-title">
                         <Icon name="remote" invert={true} />
-                        <span>{"Remote"}</span>
+                        <span>{"Players"}</span>
                     </div>
 
-                    {for self.peers.iter().map(|peer| html! {
+                    {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
                         html! {
                             <section class="list-content">
                                 <Icon name="user" invert={true} />
-                                <span>{peer.display()}</span>
+                                <span class="list-label">{peer.display()}</span>
                             </section>
                         }
                     })}
@@ -866,7 +866,9 @@ impl Component for Map {
                             </ContextProvider<Hierarchy>>
                         </ContextProvider<Objects>>
 
-                        {peers}
+                        {players}
+
+                        <Rooms ws={&ctx.props().ws} />
                     </div>
                 </div>
 
@@ -884,7 +886,7 @@ impl Component for Map {
                                 <p>{format!("Remove \"{}\"?", objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
                                 <div class="btn-group">
                                     <button class="btn danger"
-                                        onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
+                                        onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
                                         {"Delete"}
                                     </button>
                                     <button class="btn"
@@ -1246,7 +1248,7 @@ impl Map {
                             self.object_requests.remove(&object_id);
                             true
                         }
-                        LocalUpdateBody::Update {
+                        LocalUpdateBody::ObjectUpdated {
                             object_id,
                             key,
                             value,
@@ -1309,23 +1311,50 @@ impl Map {
                         self.peers.clear();
                         true
                     }
-                    RemoteUpdateBody::PeerJoin {
+                    RemoteUpdateBody::PeerConnected {
                         peer_id,
                         objects,
-                        images,
                         props,
                     } => {
                         let peer = self.peers.create(peer_id, props);
 
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
-                            peer.insert(data.id, data);
+                            peer.insert(object.id, data);
+                        }
+
+                        true
+                    }
+                    RemoteUpdateBody::PeerJoin {
+                        peer_id,
+                        objects,
+                        images,
+                    } => 'done: {
+                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                            break 'done false;
+                        };
+
+                        tracing::warn!("IN ROOM");
+
+                        peer.in_room = true;
+
+                        for object in objects {
+                            let data = ObjectData::from_remote(&object);
+                            peer.insert(object.id, data);
                         }
 
                         for id in images {
                             self.images.load(ctx, id);
                         }
 
+                        true
+                    }
+                    RemoteUpdateBody::PeerLeave { peer_id } => {
+                        self.peers.leave(peer_id);
+                        true
+                    }
+                    RemoteUpdateBody::PeerDisconnect { peer_id } => {
+                        self.peers.remove_peer(peer_id);
                         true
                     }
                     RemoteUpdateBody::PeerUpdate {
@@ -1340,11 +1369,7 @@ impl Map {
                         peer.update(key, value);
                         true
                     }
-                    RemoteUpdateBody::PeerLeave { peer_id } => {
-                        self.peers.remove_peer(peer_id);
-                        true
-                    }
-                    RemoteUpdateBody::ObjectUpdate {
+                    RemoteUpdateBody::ObjectUpdated {
                         object_id,
                         peer_id,
                         key,
@@ -1357,7 +1382,7 @@ impl Map {
                         a.update(key, value);
                         true
                     }
-                    RemoteUpdateBody::ObjectAdded { peer_id, object } => 'done: {
+                    RemoteUpdateBody::ObjectCreated { peer_id, object } => 'done: {
                         let Some(peer) = self.peers.get_mut(peer_id) else {
                             break 'done false;
                         };
@@ -1573,19 +1598,19 @@ impl Map {
                 self.s.delete = Id::ZERO;
                 Ok(true)
             }
-            Msg::DeleteObject(id) => {
+            Msg::RemoveObject(id) => {
                 self._delete_object = ctx
                     .props()
                     .ws
                     .request()
-                    .body(api::DeleteObjectRequest { id })
-                    .on_packet(ctx.link().callback(Msg::ObjectDeleted))
+                    .body(api::RemoveObjectRequest { id })
+                    .on_packet(ctx.link().callback(Msg::ObjectRemoved))
                     .send();
 
                 self.s.delete = Id::ZERO;
                 Ok(false)
             }
-            Msg::ObjectDeleted(result) => {
+            Msg::ObjectRemoved(result) => {
                 let result = result?;
                 _ = result.decode()?;
                 Ok(false)
@@ -1837,7 +1862,7 @@ impl Map {
             "Enter" => {
                 if !self.s.delete.is_zero() {
                     ev.prevent_default();
-                    ctx.link().send_message(Msg::DeleteObject(self.s.delete));
+                    ctx.link().send_message(Msg::RemoveObject(self.s.delete));
                 }
 
                 Ok(false)

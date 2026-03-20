@@ -5,7 +5,7 @@ publish = false
 
 [dependencies]
 
-api = { path = "../api" }
+api = { path = "../api", features = ["yew"] }
 sorting = { path = "../sorting" }
 
 anyhow = "1.0.83"

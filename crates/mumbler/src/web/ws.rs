@@ -51,7 +51,15 @@ impl ws::Handler for Handler<'_> {
                 _ = incoming
                     .read::<api::InitializeMapRequest>()
                     .context("missing request")?;
+
                 outgoing.write(super::initialize_map(&self.backend).await?);
+            }
+            api::Request::InitializeRooms => {
+                _ = incoming
+                    .read::<api::InitializeRoomsRequest>()
+                    .context("missing request")?;
+
+                outgoing.write(super::initialize_rooms(&self.backend).await?);
             }
             api::Request::Updates => {
                 let request = incoming
@@ -81,7 +89,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::Update {
+                        body: LocalUpdateBody::ObjectUpdated {
                             object_id: request.object_id,
                             key: request.key,
                             value: request.value,
@@ -119,18 +127,20 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(api::Empty);
             }
-            api::Request::DeleteObject => {
+            api::Request::RemoveObject => {
                 let request = incoming
-                    .read::<api::DeleteObjectRequest>()
+                    .read::<api::RemoveObjectRequest>()
                     .context("missing request")?;
 
-                self.backend.delete_object(request.id).await?;
+                self.backend.remove_object(request.id).await?;
+
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
                         body: LocalUpdateBody::ObjectRemoved {
                             object_id: request.id,
                         },
                     }));
+
                 outgoing.write(api::Empty);
             }
             api::Request::UploadImage => {

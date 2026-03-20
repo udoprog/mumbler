@@ -10,6 +10,7 @@ $btn-height-sm: 20px;
 $input-height: 24px;
 $icon-height: 20px;
 $icon-height-sm: 16px;
+$control-gap: 0.5em;
 
 @import "_icons";
 @import "_log";
@@ -69,7 +70,7 @@ h6 {
     display: flex;
     align-items: center;
     padding: 0.25em;
-    gap: $grid-gap;
+    gap: $control-gap;
 
     .fill {
         flex: 1;

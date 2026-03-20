@@ -10,7 +10,7 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 /// The identifier and public key for a peer.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 #[repr(transparent)]
 pub struct PeerId {
@@ -18,6 +18,9 @@ pub struct PeerId {
 }
 
 impl PeerId {
+    /// The zero peer ID, which is invalid and should not be used.
+    pub const ZERO: Self = Self { repr: [0u8; 32] };
+
     /// Construct a `PeerId` from the raw 32-byte representation.
     #[inline]
     pub const fn new(repr: [u8; 32]) -> Self {
@@ -28,6 +31,17 @@ impl PeerId {
     #[inline]
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.repr
+    }
+
+    #[inline]
+    pub const fn is_zero(&self) -> bool {
+        matches!(
+            self.repr,
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
+        )
     }
 }
 

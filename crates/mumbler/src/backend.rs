@@ -8,12 +8,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use api::ContentType;
 use api::Properties;
+use api::RemoteId;
 use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::crypto;
+use crate::crypto::Keypair;
 
 use super::{Database, Paths};
 
@@ -75,8 +77,8 @@ pub(crate) struct PeerInfo {
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
-    /// The client's own secret, used for deriving its keypair and `PeerId`.
-    pub(crate) client_secret: String,
+    /// The keypair assocaited with this client.
+    pub(crate) keypair: Keypair,
     /// Remote objects.
     pub(crate) peers: HashMap<PeerId, PeerInfo>,
     /// Local objects.
@@ -238,8 +240,8 @@ impl Backend {
             );
         }
 
-        let client_secret = match db.config(Key::PEER_SECRET).await? {
-            Some(secret) => secret,
+        let client_secret = match props.get(Key::PEER_SECRET).as_str() {
+            Some(secret) => secret.to_owned(),
             None => {
                 let secret = crypto::random_string();
                 db.set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
@@ -247,6 +249,8 @@ impl Backend {
                 secret
             }
         };
+
+        let keypair = crypto::derive_keypair(client_secret.as_bytes());
 
         let mumble_object = db.config(Key::MUMBLE_OBJECT).await?.unwrap_or_default();
 
@@ -257,7 +261,7 @@ impl Backend {
                 database: db,
                 paths,
                 client_state: Mutex::new(ClientState {
-                    client_secret,
+                    keypair,
                     peers: HashMap::new(),
                     objects,
                     objects_changed: HashSet::new(),
@@ -371,13 +375,30 @@ impl Backend {
     pub(crate) async fn update(&self, key: Key, value: Value) -> Result<()> {
         self.db().set_config_value(key, value.clone()).await?;
 
+        let mut restart_client = false;
+        let mut state = self.inner.client_state.lock().await;
+
+        match key {
+            Key::PEER_SECRET => {
+                let peer_secret = value.as_str().unwrap_or_default();
+                let keypair = crypto::derive_keypair(peer_secret.as_bytes());
+                state.keypair = keypair;
+                restart_client = true;
+            }
+            _ => {}
+        }
+
+        if restart_client {
+            self.restart_client();
+        }
+
         if !key.is_remote() {
             return Ok(());
         }
 
-        let mut state = self.inner.client_state.lock().await;
         state.props.insert(key, value);
         state.props_changed.insert(key);
+
         self.inner.client_notify.notify_one();
         Ok(())
     }
@@ -436,10 +457,6 @@ impl Backend {
 
         self.db().insert_object(id, ty).await?;
 
-        for (key, value) in props.iter() {
-            self.db().set_property_value(id, key, value.clone()).await?;
-        }
-
         let mut object = LocalObject {
             ty,
             id,
@@ -447,37 +464,41 @@ impl Backend {
             changed: HashSet::new(),
         };
 
-        let (sort, props) = {
+        let props = {
             let mut state = self.inner.client_state.lock().await;
 
-            let last = state
-                .objects
-                .values()
-                .map(|o| o.props.get(Key::SORT).as_bytes().unwrap_or_default())
-                .max();
+            if !object.ty.is_global() {
+                let last = state
+                    .objects
+                    .values()
+                    .map(|o| o.props.get(Key::SORT).as_bytes().unwrap_or_default())
+                    .max();
 
-            let sort = match last {
-                Some(sort) => sorting::after(sort),
-                None => object.id.to_vec(),
-            };
+                let sort = match last {
+                    Some(sort) => sorting::after(sort),
+                    None => object.id.to_vec(),
+                };
 
-            let sort = Value::from(sort);
+                let sort = Value::from(sort);
+                object.props.insert(Key::SORT, sort.clone());
+            }
 
-            object.props.insert(Key::SORT, sort.clone());
             let props = object.props.clone();
             state.objects.insert(id, object);
             state.objects_added.insert(id);
-            (sort, props)
+            props
         };
 
-        self.db().set_property_value(id, Key::SORT, sort).await?;
-        self.inner.client_notify.notify_one();
+        for (key, value) in props.iter() {
+            self.db().set_property_value(id, key, value.clone()).await?;
+        }
 
+        self.inner.client_notify.notify_one();
         Ok(RemoteObject { ty, id, props })
     }
 
     /// Delete a local object, removing it from the database and in-memory state.
-    pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
+    pub(crate) async fn remove_object(&self, id: Id) -> Result<()> {
         // If the mumble object is deleted, clear the mumble object setting to
         // avoid dangling references.
         if self.mumble_object() == id {
@@ -486,7 +507,16 @@ impl Backend {
         }
 
         self.db().delete_object(id).await?;
+
         let mut state = self.inner.client_state.lock().await;
+
+        if state.props.get(Key::ROOM).as_room() == Some(&RemoteId::new(state.keypair.peer_id(), id))
+        {
+            self.db().delete_config(Key::ROOM).await?;
+            state.props.remove(Key::ROOM);
+            state.props_changed.insert(Key::ROOM);
+        }
+
         state.objects.remove(&id);
         state.objects_changed.remove(&id);
         state.objects_added.remove(&id);

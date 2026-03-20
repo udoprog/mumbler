@@ -1,18 +1,20 @@
 use core::pin::{Pin, pin};
 use core::time::Duration;
 
+use std::collections::HashSet;
+
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, RemoteObject, RemoteUpdateBody};
+use api::{Key, RemoteId, RemoteObject, RemoteUpdateBody, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
-use crate::backend::BackendEvent;
-use crate::crypto::{self, Keypair};
+use crate::backend::{BackendEvent, PeerInfo};
 use crate::remote::api::{
     ChallengeBody, Event, ImageCreatedBody, ImageRemovedBody, ObjectCreatedBody, ObjectRemovedBody,
-    ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PeerUpdatedBody, PongBody, RemoteImage,
+    ObjectUpdatedBody, PeerConnectedBody, PeerDisconnectBody, PeerJoinBody, PeerLeaveBody,
+    PeerUpdatedBody, PongBody, RemoteImage,
 };
 use crate::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 
@@ -21,15 +23,17 @@ const COMPONENT: &str = "remote-client";
 async fn handle_peer(
     peer: &mut Peer,
     b: &Backend,
-    keypair: &Keypair,
     last_ping: &mut Option<u64>,
     mut ping_timeout: Pin<&mut Sleep>,
+    authenticated: &mut bool,
 ) -> Result<()> {
     while let Some((id, body)) = peer.read::<Event>()? {
         match id {
             Event::Challenge => {
                 let body = body.decode::<ChallengeBody>()?;
-                let sig = keypair.sign(&body.nonce);
+
+                let peer_id;
+                let sig;
 
                 let mut objects = Vec::new();
                 let mut images = Vec::new();
@@ -37,6 +41,9 @@ async fn handle_peer(
 
                 {
                     let state = b.client_state().await;
+
+                    peer_id = state.keypair.peer_id();
+                    sig = state.keypair.sign(&body.nonce);
 
                     for object in state.objects.values() {
                         objects.push(RemoteObject {
@@ -59,14 +66,8 @@ async fn handle_peer(
                     props = state.props.clone();
                 }
 
-                peer.connect(
-                    keypair.peer_id(),
-                    sig,
-                    b"default",
-                    &objects,
-                    &images,
-                    &props,
-                )?;
+                peer.connect(peer_id, sig, &objects, &images, &props)?;
+                *authenticated = true;
             }
             Event::Pong => {
                 let body = body.decode::<PongBody>()?;
@@ -79,12 +80,37 @@ async fn handle_peer(
                         .reset(Instant::now() + Duration::from_secs(1));
                 }
             }
+            Event::PeerConnected => {
+                let body = body.decode::<PeerConnectedBody>()?;
+                tracing::debug!(?id, ?body.peer_id, objects = body.objects.len(), "PeerConnected");
+
+                let mut state = b.client_state().await;
+
+                let peer = PeerInfo {
+                    objects: body.objects.iter().map(|o| (o.id, o.clone())).collect(),
+                    images: HashSet::new(),
+                    props: body.props.clone(),
+                };
+
+                state.peers.insert(body.peer_id, peer);
+
+                b.broadcast(BackendEvent::RemoteUpdate(
+                    RemoteUpdateBody::PeerConnected {
+                        peer_id: body.peer_id,
+                        objects: body.objects,
+                        props: body.props.clone(),
+                    },
+                ));
+            }
             Event::PeerJoin => {
                 let body = body.decode::<PeerJoinBody>()?;
                 tracing::debug!(?id, ?body.peer_id, objects = body.objects.len());
 
-                let mut remote = b.client_state().await;
-                let peer = remote.peers.entry(body.peer_id).or_default();
+                let mut state = b.client_state().await;
+
+                let Some(peer) = state.peers.get_mut(&body.peer_id) else {
+                    continue;
+                };
 
                 if !body.images.is_empty() {
                     let mut images = b.images().await;
@@ -99,28 +125,51 @@ async fn handle_peer(
                     peer.objects.insert(o.id, o);
                 }
 
-                peer.props = body.props.clone();
-
                 b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerJoin {
                     peer_id: body.peer_id,
                     objects: peer.objects.values().cloned().collect(),
                     images: peer.images.iter().cloned().collect(),
-                    props: peer.props.clone(),
+                }));
+            }
+            Event::PeerDisconnect => {
+                let body = body.decode::<PeerDisconnectBody>()?;
+                tracing::debug!(?id, ?body.id);
+
+                let mut state = b.client_state().await;
+                state.peers.remove(&body.id);
+
+                b.broadcast(BackendEvent::RemoteUpdate(
+                    RemoteUpdateBody::PeerDisconnect { peer_id: body.id },
+                ));
+            }
+            Event::PeerLeave => {
+                let body = body.decode::<PeerLeaveBody>()?;
+                tracing::debug!(?id, ?body.id);
+
+                let mut state = b.client_state().await;
+
+                let Some(peer) = state.peers.get_mut(&body.id) else {
+                    continue;
+                };
+
+                peer.objects.retain(|_, o| o.ty.is_global());
+                peer.images.clear();
+
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerLeave {
+                    peer_id: body.id,
                 }));
             }
             Event::PeerUpdated => {
                 let body = body.decode::<PeerUpdatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, key = ?body.key, value = ?body.value);
 
-                {
-                    let mut remote = b.client_state().await;
+                let mut state = b.client_state().await;
 
-                    let Some(peer) = remote.peers.get_mut(&body.peer_id) else {
-                        continue;
-                    };
+                let Some(peer) = state.peers.get_mut(&body.peer_id) else {
+                    continue;
+                };
 
-                    peer.props.insert(body.key, body.value.clone());
-                }
+                peer.props.insert(body.key, body.value.clone());
 
                 b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerUpdate {
                     peer_id: body.peer_id,
@@ -128,26 +177,13 @@ async fn handle_peer(
                     value: body.value,
                 }));
             }
-            Event::PeerLeave => {
-                let body = body.decode::<PeerLeaveBody>()?;
-                tracing::debug!(?id, ?body.id);
-
-                {
-                    let mut remote = b.client_state().await;
-                    remote.peers.remove(&body.id);
-                }
-
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerLeave {
-                    peer_id: body.id,
-                }));
-            }
             Event::ObjectUpdated => {
                 let body = body.decode::<ObjectUpdatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.key, ?body.value);
 
-                let mut remote = b.client_state().await;
+                let mut state = b.client_state().await;
 
-                let Some(peer) = remote.peers.get_mut(&body.peer_id) else {
+                let Some(peer) = state.peers.get_mut(&body.peer_id) else {
                     continue;
                 };
 
@@ -157,27 +193,33 @@ async fn handle_peer(
 
                 object.props.insert(body.key, body.value.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ObjectUpdate {
-                    peer_id: body.peer_id,
-                    object_id: body.object_id,
-                    key: body.key,
-                    value: body.value,
-                }));
+                b.broadcast(BackendEvent::RemoteUpdate(
+                    RemoteUpdateBody::ObjectUpdated {
+                        peer_id: body.peer_id,
+                        object_id: body.object_id,
+                        key: body.key,
+                        value: body.value,
+                    },
+                ));
             }
             Event::ObjectCreated => {
                 let body = body.decode::<ObjectCreatedBody>()?;
-                tracing::debug!(?id, ?body.peer_id, object_id = ?body.object.id, "ObjectAdded");
+                tracing::debug!(?id, ?body.peer_id, ?body.object.ty, ?body.object.id, "ObjectAdded");
 
-                let mut remote = b.client_state().await;
+                let mut state = b.client_state().await;
 
-                let peer = remote.peers.entry(body.peer_id).or_default();
+                let Some(peer) = state.peers.get_mut(&body.peer_id) else {
+                    continue;
+                };
 
                 peer.objects.insert(body.object.id, body.object.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ObjectAdded {
-                    peer_id: body.peer_id,
-                    object: body.object,
-                }));
+                b.broadcast(BackendEvent::RemoteUpdate(
+                    RemoteUpdateBody::ObjectCreated {
+                        peer_id: body.peer_id,
+                        object: body.object,
+                    },
+                ));
             }
             Event::ImageCreated => {
                 let body = body.decode::<ImageCreatedBody>()?;
@@ -195,10 +237,15 @@ async fn handle_peer(
                 let body = body.decode::<ObjectRemovedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.object_id, "ObjectRemoved");
 
-                let removed = 'found: {
-                    let mut remote = b.client_state().await;
+                let remove_room;
 
-                    if let Some(peer) = remote.peers.get_mut(&body.peer_id) {
+                let removed = 'found: {
+                    let mut state = b.client_state().await;
+
+                    remove_room = state.props.get(Key::ROOM).as_room()
+                        == Some(&RemoteId::new(body.peer_id, body.object_id));
+
+                    if let Some(peer) = state.peers.get_mut(&body.peer_id) {
                         break 'found peer.objects.remove(&body.object_id).is_some();
                     }
 
@@ -212,6 +259,10 @@ async fn handle_peer(
                             object_id: body.object_id,
                         },
                     ));
+                }
+
+                if remove_room {
+                    crate::web::updates(b, [(Key::ROOM, Value::empty())]).await?;
                 }
             }
             Event::ImageRemoved => {
@@ -267,21 +318,18 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
 
-    let keypair = {
-        let s = b.client_state().await;
-        crypto::derive_keypair(s.client_secret.as_bytes())
-    };
-
     let mut peer = Peer::new(client);
     peer.hello()?;
+
+    let mut authenticated = false;
 
     loop {
         tokio::select! {
             result = peer.ready() => {
                 result?;
-                handle_peer(&mut peer, &b, &keypair, &mut last_ping, ping_timeout.as_mut()).await?
+                handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut(), &mut authenticated).await?
             }
-            () = wait.as_mut() => {
+            () = wait.as_mut(), if authenticated => {
                 let mut client_state = b.client_state().await;
                 let state = &mut *client_state;
 
@@ -381,9 +429,8 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
 
     let build = async |connect: Option<&str>, enabled: bool, tls: bool| {
         {
-            let mut remote = b.client_state().await;
-            remote.peers.clear();
-
+            let mut state = b.client_state().await;
+            state.peers.clear();
             b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::RemoteLost));
         }
 

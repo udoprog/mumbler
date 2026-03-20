@@ -15,8 +15,9 @@ use musli_web::api::{ErrorMessage, MessageId};
 use super::api::{
     ChallengeBodyRef, ConnectBodyRef, Header, HelloBody, ImageCreateBody, ImageCreatedBody,
     ImageRemoveBody, ImageRemovedBody, ObjectCreateBody, ObjectCreatedBody, ObjectRemoveBody,
-    ObjectRemovedBody, ObjectUpdateBodyRef, ObjectUpdatedBodyRef, PeerJoinBodyRef, PeerLeaveBody,
-    PeerUpdateBodyRef, PeerUpdatedBodyRef, PingBody, PongBody, RemoteImage, Signature,
+    ObjectRemovedBody, ObjectUpdateBodyRef, ObjectUpdatedBodyRef, PeerConnectedBodyRef,
+    PeerDisconnectBody, PeerJoinBodyRef, PeerLeaveBody, PeerUpdateBodyRef, PeerUpdatedBodyRef,
+    PingBody, PongBody, RemoteImage, Signature,
 };
 use super::{Buf, Client, Scratch, VERSION};
 
@@ -138,7 +139,6 @@ impl Peer {
         &mut self,
         peer_id: PeerId,
         signature: Signature,
-        room: &[u8],
         objects: &[RemoteObject],
         images: &[RemoteImage],
         props: &Properties,
@@ -146,7 +146,6 @@ impl Peer {
         self.scratch.send(ConnectBodyRef {
             peer_id,
             signature,
-            room,
             objects,
             images,
             props,
@@ -169,19 +168,33 @@ impl Peer {
         Ok(())
     }
 
+    /// Mark the given peer as having connected.
+    pub fn peer_connected(
+        &mut self,
+        peer_id: PeerId,
+        objects: &[RemoteObject],
+        props: &Properties,
+    ) -> Result<()> {
+        self.scratch.send(PeerConnectedBodyRef {
+            peer_id,
+            objects,
+            props,
+        })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
     /// Mark the given peer as having joined the room.
     pub fn peer_join(
         &mut self,
         peer_id: PeerId,
         objects: &[RemoteObject],
         images: &[RemoteImage],
-        props: &Properties,
     ) -> Result<()> {
         self.scratch.send(PeerJoinBodyRef {
             peer_id,
             objects,
             images,
-            props,
         })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
@@ -201,6 +214,13 @@ impl Peer {
             key,
             value,
         })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Mark the given peer as having disconnected.
+    pub fn peer_disconnected(&mut self, id: PeerId) -> Result<()> {
+        self.scratch.send(PeerDisconnectBody { id })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

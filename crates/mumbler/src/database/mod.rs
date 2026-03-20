@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, Transform, Type, Value,
-    ValueKind, ValueType, Vec3,
+    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, RemoteId, Transform, Type,
+    Value, ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
 use musli::alloc::Global;
@@ -40,9 +40,16 @@ macro_rules! value_kind_switch {
             }
             ValueKind::Id(value) => {
                 if value.is_zero() {
-                    $self.$add($($args),*, value).await?;
-                } else {
                     $self.$delete($($args),*).await?;
+                } else {
+                    $self.$add($($args),*, value).await?;
+                }
+            }
+            ValueKind::RemoteId(value) => {
+                if value.id.is_zero() {
+                    $self.$delete($($args),*).await?;
+                } else {
+                    $self.$add($($args),*, value).await?;
                 }
             }
             ValueKind::Transform(value) => {
@@ -565,6 +572,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
         ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
         ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
         ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
+        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
     };
 
     Ok(value)

@@ -2,8 +2,25 @@
 mod bundle;
 mod imaging;
 mod nonbundle;
-
 mod ws;
+
+use std::future::Future;
+use std::net::SocketAddr;
+
+use anyhow::{Context as _, Result};
+use api::{
+    GetObjectSettingsRequest, GetObjectSettingsResponse, Id, InitializeMapResponse,
+    InitializeRoomsResponse, Key, Properties, RemoteObject, RemotePeer, Type, UpdateBody,
+    UploadImageRequest, Value,
+};
+use axum::extract::Path;
+use axum::http::{StatusCode, header};
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::{Extension, Router};
+use tokio::net::TcpListener;
+use tokio::task;
+use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::backend::{Backend, BackendEvent, LocalConfigEvent};
 use crate::remote::DEFAULT_PORT;
@@ -46,20 +63,6 @@ impl From<anyhow::Error> for WebError {
         }
     }
 }
-
-use std::future::Future;
-use std::net::SocketAddr;
-
-use anyhow::{Context as _, Result};
-use api::{Id, Key, Properties, Value};
-use axum::extract::Path;
-use axum::http::{StatusCode, header};
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::{Extension, Router};
-use tokio::net::TcpListener;
-use tokio::task;
-use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 const DEV_PORT: u16 = 44614;
 const TRUNK_PORT: u16 = 8080;
@@ -145,7 +148,7 @@ async fn image(
     Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data))
 }
 
-async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
+async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     let mut objects = Vec::new();
     let mut images = Vec::new();
     let mut peers = Vec::new();
@@ -155,7 +158,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         let state = b.client_state().await;
 
         for (id, object) in state.objects.iter() {
-            objects.push(api::RemoteObject {
+            objects.push(RemoteObject {
                 ty: object.ty,
                 id: *id,
                 props: object.props.clone(),
@@ -167,14 +170,14 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         }
 
         for (peer_id, peer) in state.peers.iter() {
-            let mut new_peer = api::RemotePeer {
+            let mut new_peer = RemotePeer {
                 peer_id: *peer_id,
                 props: peer.props.clone(),
                 objects: Vec::new(),
             };
 
             for object in peer.objects.values() {
-                new_peer.objects.push(api::RemoteObject {
+                new_peer.objects.push(RemoteObject {
                     ty: object.ty,
                     id: object.id,
                     props: object.props.clone(),
@@ -195,7 +198,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         config.insert(key, value);
     }
 
-    let ev = api::InitializeMapEvent {
+    let res = InitializeMapResponse {
         objects,
         images,
         peers,
@@ -203,10 +206,71 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         config,
     };
 
-    Ok(ev)
+    Ok(res)
 }
 
-async fn upload_image(backend: &Backend, request: api::UploadImageRequest) -> Result<Id> {
+async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
+    let mut local = Vec::new();
+    let mut peers = Vec::new();
+    let peer_id;
+
+    {
+        let state = b.client_state().await;
+
+        for (id, object) in state.objects.iter() {
+            if object.ty != Type::ROOM {
+                continue;
+            }
+
+            local.push(RemoteObject {
+                ty: object.ty,
+                id: *id,
+                props: object.props.clone(),
+            });
+        }
+
+        for (peer_id, peer) in state.peers.iter() {
+            let mut objects = Vec::new();
+
+            for (id, object) in peer.objects.iter() {
+                if object.ty != Type::ROOM {
+                    continue;
+                }
+
+                objects.push(RemoteObject {
+                    ty: object.ty,
+                    id: *id,
+                    props: object.props.clone(),
+                });
+            }
+
+            peers.push(RemotePeer {
+                peer_id: *peer_id,
+                props: peer.props.clone(),
+                objects,
+            });
+        }
+
+        peer_id = state.keypair.peer_id();
+    }
+
+    let mut config = Properties::new();
+
+    for (key, value) in b.db().configs().await? {
+        config.insert(key, value);
+    }
+
+    let res = InitializeRoomsResponse {
+        local,
+        peers,
+        config,
+        peer_id,
+    };
+
+    Ok(res)
+}
+
+async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<Id> {
     tracing::info!(?request.content_type, size = request.data.len(), "received image upload request");
 
     let task = task::spawn_blocking(move || {
@@ -241,13 +305,13 @@ async fn get_config(backend: &Backend) -> Result<Properties> {
 
 async fn get_object_settings(
     backend: &Backend,
-    request: api::GetObjectSettingsRequest,
-) -> Result<api::GetObjectSettingsResponse> {
+    request: GetObjectSettingsRequest,
+) -> Result<GetObjectSettingsResponse> {
     let object = {
         let state = backend.client_state().await;
         let object = state.objects.get(&request.id).context("object not found")?;
 
-        api::RemoteObject {
+        RemoteObject {
             ty: object.ty,
             id: request.id,
             props: object.props.clone(),
@@ -255,7 +319,7 @@ async fn get_object_settings(
     };
 
     let images = backend.db().images().await?;
-    Ok(api::GetObjectSettingsResponse { object, images })
+    Ok(GetObjectSettingsResponse { object, images })
 }
 
 async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {
@@ -308,7 +372,10 @@ async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value
     Ok(())
 }
 
-async fn updates(backend: &Backend, values: impl IntoIterator<Item = (Key, Value)>) -> Result<()> {
+pub(crate) async fn updates(
+    backend: &Backend,
+    values: impl IntoIterator<Item = (Key, Value)>,
+) -> Result<()> {
     let mut restart_mumblelink = false;
     let mut restart_client = false;
 
@@ -350,7 +417,7 @@ async fn updates(backend: &Backend, values: impl IntoIterator<Item = (Key, Value
         backend.update(key, value.clone()).await?;
 
         backend.broadcast(BackendEvent::ConfigUpdate(LocalConfigEvent {
-            body: api::UpdateBody { key, value },
+            body: UpdateBody { key, value },
         }));
     }
 

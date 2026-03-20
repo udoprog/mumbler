@@ -6,10 +6,12 @@ use crate::components::render::Visibility;
 use crate::objects::ObjectData;
 
 /// State assocaited with a peer.
+#[derive(Default)]
 pub(crate) struct Peer {
     pub(crate) id: PeerId,
     pub(crate) props: Properties,
     objects: HashMap<Id, ObjectData>,
+    pub(crate) in_room: bool,
 }
 
 impl Peer {
@@ -63,11 +65,6 @@ pub(crate) struct Peers {
 }
 
 impl Peers {
-    /// Check if collection of peers is empty.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.peers.is_empty()
-    }
-
     /// Iterate over peers.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Peer> {
         self.peers.values()
@@ -76,6 +73,16 @@ impl Peers {
     /// Clear remote peers.
     pub(crate) fn clear(&mut self) {
         self.peers.clear();
+    }
+
+    /// The given peer left our room.
+    pub(crate) fn leave(&mut self, id: PeerId) {
+        let Some(peer) = self.peers.get_mut(&id) else {
+            return;
+        };
+
+        peer.objects.clear();
+        peer.in_room = false;
     }
 
     /// Remove all objects associated with a peer.
@@ -105,10 +112,11 @@ impl Peers {
 
     /// Insert a new peer.
     pub(crate) fn create(&mut self, id: PeerId, props: Properties) -> &mut Peer {
-        self.peers.entry(id).or_insert_with(move || Peer {
-            id,
-            props,
-            objects: HashMap::new(),
-        })
+        let peer = self.peers.entry(id).or_default();
+        peer.id = id;
+        peer.props = props;
+        peer.objects.clear();
+        peer.in_room = false;
+        peer
     }
 }

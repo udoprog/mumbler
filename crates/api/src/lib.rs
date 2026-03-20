@@ -6,6 +6,9 @@ pub use id::Id;
 mod peer_id;
 pub use peer_id::PeerId;
 
+mod remote_id;
+pub use remote_id::RemoteId;
+
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
@@ -25,6 +28,17 @@ crate::macros::ids! {
         STATIC = 0x1001;
         /// The group type.
         GROUP = 0x1002;
+        /// A saved room bookmark.
+        ROOM = 0x1003;
+    }
+}
+
+impl Type {
+    /// Test if the object is a global object. That means it will be sent to all
+    /// peers regardless of room.
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        matches!(*self, Self::ROOM)
     }
 }
 
@@ -75,13 +89,15 @@ crate::macros::keys! {
         PEER_NAME: String = 28;
         /// A secret used to derive the peer's identity keypair.
         PEER_SECRET: String = 29;
+        /// The name of the room to connect to on the remote server.
+        ROOM: RemoteId = 30;
     }
 }
 
 impl Key {
     /// Test if the key is remotely exported, making it visible to other peers.
     pub fn is_remote(&self) -> bool {
-        matches!(*self, Key::PEER_NAME)
+        matches!(*self, Key::PEER_NAME | Key::ROOM)
     }
 }
 
@@ -175,10 +191,6 @@ impl fmt::Debug for Color {
             .finish()
     }
 }
-
-#[derive(Encode, Decode)]
-#[musli(crate = musli_core)]
-pub struct InitializeMapRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -329,7 +341,7 @@ impl Pan {
     }
 }
 
-#[derive(Default, Clone, Debug, Encode, Decode)]
+#[derive(Default, Clone, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 pub struct Properties {
     /// Global values.
@@ -382,6 +394,13 @@ impl Properties {
         };
 
         value
+    }
+}
+
+impl fmt::Debug for Properties {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.values.iter()).finish()
     }
 }
 
@@ -581,14 +600,36 @@ pub struct RemoteObject {
     pub props: Properties,
 }
 
-/// Event emitted when the map is initialized.
+#[derive(Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct InitializeMapRequest;
+
+/// Response when the map view is initialized.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct InitializeMapEvent {
+pub struct InitializeMapResponse {
     pub objects: Vec<RemoteObject>,
     pub images: Vec<Id>,
     pub peers: Vec<RemotePeer>,
     pub remote_images: Vec<Id>,
+    pub config: Properties,
+}
+
+#[derive(Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct InitializeRoomsRequest;
+
+/// Response when the rooms view is initialized.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct InitializeRoomsResponse {
+    /// This peer identifier.
+    pub peer_id: PeerId,
+    /// List of local rooms on the server.
+    pub local: Vec<RemoteObject>,
+    /// List of remote rooms associated with peers.
+    pub peers: Vec<RemotePeer>,
+    /// List of image identifiers currently stored in the database.
     pub config: Properties,
 }
 
@@ -656,7 +697,7 @@ pub struct CreateObjectRequest {
 /// Request to delete a local object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct DeleteObjectRequest {
+pub struct RemoveObjectRequest {
     pub id: Id,
 }
 
@@ -672,6 +713,14 @@ pub struct DeleteImageRequest {
 #[musli(crate = musli_core)]
 pub struct UpdatesRequest {
     pub values: Vec<(Key, Value)>,
+}
+
+/// Information about a single room on the remote server.
+#[derive(Debug, Clone, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct RoomInfo {
+    pub room: RemoteId,
+    pub name: String,
 }
 
 /// Request to restart the mumble link connection.
@@ -723,7 +772,7 @@ pub enum LocalUpdateBody {
     ObjectRemoved {
         object_id: Id,
     },
-    Update {
+    ObjectUpdated {
         object_id: Id,
         key: Key,
         value: Value,
@@ -742,12 +791,17 @@ pub enum RemoteUpdateBody {
     /// Indicates that the remote connection has been lost and all local state
     /// should be cleared.
     RemoteLost,
+    /// Indicates that a new peer has connected.
+    PeerConnected {
+        peer_id: PeerId,
+        objects: Vec<RemoteObject>,
+        props: Properties,
+    },
     /// Indicates that a new peer has joined.
     PeerJoin {
         peer_id: PeerId,
         objects: Vec<RemoteObject>,
         images: Vec<Id>,
-        props: Properties,
     },
     /// A property update.
     PeerUpdate {
@@ -755,17 +809,21 @@ pub enum RemoteUpdateBody {
         key: Key,
         value: Value,
     },
-    /// Indicates that a peer has left.
+    /// Indicates that a peer has fully disconnected.
+    PeerDisconnect {
+        peer_id: PeerId,
+    },
+    /// Indicates that a peer left your room.
     PeerLeave {
         peer_id: PeerId,
     },
-    ObjectUpdate {
+    ObjectUpdated {
         peer_id: PeerId,
         object_id: Id,
         key: Key,
         value: Value,
     },
-    ObjectAdded {
+    ObjectCreated {
         peer_id: PeerId,
         object: RemoteObject,
     },
@@ -788,7 +846,14 @@ api::define! {
 
     impl Endpoint for InitializeMap {
         impl Request for InitializeMapRequest;
-        type Response<'de> = InitializeMapEvent;
+        type Response<'de> = InitializeMapResponse;
+    }
+
+    pub type InitializeRooms;
+
+    impl Endpoint for InitializeRooms {
+        impl Request for InitializeRoomsRequest;
+        type Response<'de> = InitializeRoomsResponse;
     }
 
     pub type ObjectUpdate;
@@ -826,10 +891,10 @@ api::define! {
         type Response<'de> = Empty;
     }
 
-    pub type DeleteObject;
+    pub type RemoveObject;
 
-    impl Endpoint for DeleteObject {
-        impl Request for DeleteObjectRequest;
+    impl Endpoint for RemoveObject {
+        impl Request for RemoveObjectRequest;
         type Response<'de> = Empty;
     }
 
