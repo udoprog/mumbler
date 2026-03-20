@@ -137,7 +137,7 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     }
 
     html! {
-        <div class="container">
+        <div class="container rows">
             <div class="status">
                 <Navigation route={route} />
                 <MumbleStatus ws={ws.clone()} />

@@ -2,6 +2,12 @@ $grid-columns: 12 !default;
 $grid-breakpoint: 560px !default;
 $grid-gap: 1em !default;
 
+.rows {
+    display: flex;
+    flex-direction: column;
+    gap: $grid-gap;
+}
+
 .row {
     display: grid;
     grid-template-columns: repeat(#{$grid-columns}, 1fr);

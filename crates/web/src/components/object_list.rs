@@ -124,7 +124,7 @@ impl Component for ObjectList {
 
             if n == 0 {
                 let class = classes! {
-                    "object-drop",
+                    "list-drop",
                     (ctx.props().drag_over == Some(DragOver::above(group, target))).then_some("active"),
                 };
 
@@ -142,7 +142,7 @@ impl Component for ObjectList {
                 let is_mumble = ctx.props().mumble_object == Some(target);
 
                 let class = classes! {
-                    "btn", "sm", "square", "object-action",
+                    "btn", "sm", "square", "list-action",
                     is_mumble.then_some("success"),
                     is_mumble.then_some("active"),
                 };
@@ -163,7 +163,7 @@ impl Component for ObjectList {
                 let is_expanded = o.is_expanded();
 
                 let class = classes! {
-                    "btn", "sm", "square", "object-action",
+                    "btn", "sm", "square", "list-action",
                     is_expanded.then_some("success"),
                     is_expanded.then_some("active"),
                 };
@@ -184,7 +184,7 @@ impl Component for ObjectList {
                 let is_hidden = o.is_hidden();
 
                 let class = classes! {
-                    "btn", "sm", "square", "object-action",
+                    "btn", "sm", "square", "list-action",
                     is_hidden.then_some("danger"),
                     is_hidden.then_some("active"),
                 };
@@ -213,7 +213,7 @@ impl Component for ObjectList {
                 let is_local_hidden = o.is_local_hidden();
 
                 let class = classes! {
-                    "btn", "sm", "square", "object-action",
+                    "btn", "sm", "square", "list-action",
                     is_local_hidden.then_some("danger"),
                     is_local_hidden.then_some("active"),
                 };
@@ -245,7 +245,7 @@ impl Component for ObjectList {
                 let is_locked = o.is_locked();
 
                 let class = classes! {
-                    "btn", "sm", "square", "object-action",
+                    "btn", "sm", "square", "list-action",
                     is_locked.then_some("danger"),
                     is_locked.then_some("active"),
                 };
@@ -274,14 +274,14 @@ impl Component for ObjectList {
                 (ctx.props().drag_over == Some(DragOver::into(group, o.id))).then_some(group);
 
             let class = classes! {
-                "object-content",
+                "list-content",
                 selected.then_some("selected"),
             };
 
             list.push(html! {
                 <section
                     key={format!("drag-{target}")}
-                    class="object-drag"
+                    class="list-drag"
                     draggable={true}
                     {onclick}
                     {ondragstart}
@@ -291,7 +291,7 @@ impl Component for ObjectList {
                     <section {class}>
                         <Icon name={o.icon()} invert={true} small={true} />
 
-                        <span class="object-label">{label}</span>
+                        <span class="list-label">{label}</span>
 
                         {mumble_button}
 
@@ -311,7 +311,7 @@ impl Component for ObjectList {
                     && (drop_into_last.is_some() || !order.is_empty(target)))
                 .then(|| {
                     html! {
-                        <section key={format!("{target}-children")} class="object-children">
+                        <section key={format!("{target}-children")} class="list-children">
                             <ObjectList
                                 key={format!("{}", o.id)}
                                 group={o.id}
@@ -336,7 +336,7 @@ impl Component for ObjectList {
             });
 
             let class = classes! {
-                "object-drop",
+                "list-drop",
                 (is_last && ctx.props().drop_into_last.is_some() || ctx.props().drag_over == Some(DragOver::below(group, target))).then_some("active"),
             };
 
@@ -357,12 +357,12 @@ impl Component for ObjectList {
             });
 
             list.push(html! {
-                <div key={format!("drag-last")} class="object-drop active" {ondragover} />
+                <div key={format!("drag-last")} class="list-drop active" {ondragover} />
             });
         }
 
         let class = classes! {
-            "object-list",
+            "list",
             ctx.props().drag_over.is_some().then_some("dragging"),
         };
         let objects = VNode::from(VList::from(list));
