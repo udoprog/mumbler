@@ -15,10 +15,10 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     ServerChanged(Event),
     TlsToggled(Event),
-    UpdateConfig(Result<Packet<api::UpdateConfig>, ws::Error>),
+    UpdateConfig(Result<Packet<api::Updates>, ws::Error>),
     ContextUpdate(log::Log),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
-    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -57,7 +57,7 @@ impl Component for Settings {
         let _config_update_listener = ctx
             .props()
             .ws
-            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
 
         let mut this = Self {
             state,
@@ -157,7 +157,7 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::UpdateConfigRequest {
+                    .body(api::UpdatesRequest {
                         values: vec![(api::Key::REMOTE_SERVER, value)],
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateConfig))
@@ -175,7 +175,7 @@ impl Settings {
                     .props()
                     .ws
                     .request()
-                    .body(api::UpdateConfigRequest {
+                    .body(api::UpdatesRequest {
                         values: vec![(api::Key::REMOTE_TLS, remote_server_tls.into())],
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateConfig))

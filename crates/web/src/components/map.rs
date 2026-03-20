@@ -84,8 +84,7 @@ impl Updates {
 
         *config.mumble_object = id;
 
-        self._toggle_mumble_request =
-            update_config(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id))]);
+        self._toggle_mumble_request = updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id))]);
     }
 }
 
@@ -291,8 +290,8 @@ pub(crate) enum Msg {
     CloseSettings,
     OpenHelp,
     CloseHelp,
-    ConfigResult(Result<Packet<api::UpdateConfig>, ws::Error>),
-    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
+    ConfigResult(Result<Packet<api::Updates>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmDelete(Id),
     ContextMenu(MouseEvent),
     CreateToken,
@@ -329,7 +328,7 @@ pub(crate) enum Msg {
     ToggleExpanded(Id),
     ToggleLocked(Id),
     ToggleMumbleObject(Id),
-    UpdateResult(Result<Packet<api::Update>, ws::Error>),
+    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     Wheel(WheelEvent),
 }
 
@@ -363,7 +362,7 @@ impl Component for Map {
         let _config_update_listener = ctx
             .props()
             .ws
-            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
 
         let _local_update_listener = ctx
             .props()
@@ -490,7 +489,7 @@ impl Component for Map {
         }
 
         if self.update_world {
-            self._update_world = update_config(ctx, self.config.world_values());
+            self._update_world = updates(ctx, self.config.world_values());
             self.update_world = false;
         }
 
@@ -1031,7 +1030,7 @@ impl Map {
                 *self.config.mumble_object = update;
 
                 self.updates._toggle_mumble_request =
-                    update_config(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update))]);
+                    updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update))]);
                 Ok(true)
             }
             Msg::ToggleLocked(id) => self.toggle_locked(ctx, id),
@@ -1052,7 +1051,7 @@ impl Map {
                 *object.hidden = new_hidden;
 
                 let requests = self.object_requests.entry(id).or_default();
-                requests._toggle_hidden = update(ctx, id, Key::HIDDEN, new_hidden);
+                requests._toggle_hidden = object_update(ctx, id, Key::HIDDEN, new_hidden);
                 Ok(true)
             }
             Msg::ToggleLocalHidden(id) => {
@@ -1069,7 +1068,7 @@ impl Map {
 
                 let requests = self.object_requests.entry(id).or_default();
                 requests._toggle_local_hidden =
-                    update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
+                    object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
                 Ok(true)
             }
             Msg::ToggleExpanded(id) => {
@@ -1089,7 +1088,7 @@ impl Map {
                 **expanded = new_expanded;
 
                 let requests = self.object_requests.entry(id).or_default();
-                requests._expanded = update(ctx, id, Key::EXPANDED, new_expanded);
+                requests._expanded = object_update(ctx, id, Key::EXPANDED, new_expanded);
                 Ok(true)
             }
             Msg::SetLog(log) => {
@@ -1109,11 +1108,20 @@ impl Map {
                     .borrow_mut()
                     .extend(self.objects.borrow().values());
 
-                self.peers = body
-                    .remote_objects
-                    .iter()
-                    .map(PeerObject::from_peer)
-                    .collect();
+                self.peers.clear();
+
+                for peer in body.peers {
+                    let new_peer = self.peers.create(peer.peer_id, peer.props);
+
+                    for object in peer.objects {
+                        let data = ObjectData::from_remote(&object);
+                        let object = PeerObject {
+                            peer_id: new_peer.peer_id,
+                            data,
+                        };
+                        new_peer.insert(object.id, object);
+                    }
+                }
 
                 self.images.clear();
 
@@ -1229,32 +1237,42 @@ impl Map {
                     RemoteUpdateBody::RemoteLost => {
                         self.peers.clear();
                     }
-                    RemoteUpdateBody::Join {
+                    RemoteUpdateBody::PeerJoin {
                         peer_id,
                         objects,
                         images,
+                        props,
                     } => {
+                        let peer = self.peers.create(peer_id, props);
+
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
-
-                            self.peers
-                                .insert(peer_id, data.id, PeerObject { peer_id, data });
+                            peer.insert(data.id, PeerObject { peer_id, data });
                         }
 
                         for id in images {
                             self.images.load(ctx, id);
                         }
                     }
-                    RemoteUpdateBody::Leave { peer_id } => {
+                    RemoteUpdateBody::PeerUpdate {
+                        peer_id,
+                        key,
+                        value,
+                    } => {
+                        if let Some(peer) = self.peers.get_mut(peer_id) {
+                            peer.update(key, value);
+                        }
+                    }
+                    RemoteUpdateBody::PeerLeave { peer_id } => {
                         self.peers.remove_peer(peer_id);
                     }
-                    RemoteUpdateBody::Update {
+                    RemoteUpdateBody::ObjectUpdate {
                         object_id,
                         peer_id,
                         key,
                         value,
                     } => 'done: {
-                        let Some(a) = self.peers.get_mut(peer_id, object_id) else {
+                        let Some(a) = self.peers.get_object_mut(peer_id, object_id) else {
                             break 'done;
                         };
 
@@ -1263,8 +1281,9 @@ impl Map {
                     RemoteUpdateBody::ObjectAdded { peer_id, object } => {
                         let data = ObjectData::from_remote(&object);
 
-                        self.peers
-                            .insert(peer_id, data.id, PeerObject { peer_id, data });
+                        if let Some(peer) = self.peers.get_mut(peer_id) {
+                            peer.insert(data.id, PeerObject { peer_id, data });
+                        }
                     }
                     RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
                         self.peers.remove(peer_id, object_id);
@@ -1352,7 +1371,7 @@ impl Map {
                     .body(api::CreateObjectRequest {
                         ty: api::Type::STATIC,
                         props: api::Properties::from([
-                            (Key::NAME, Value::from("Image")),
+                            (Key::OBJECT_NAME, Value::from("Image")),
                             (Key::HIDDEN, Value::from(true)),
                             (Key::IMAGE_ID, Value::from(body.id)),
                             (Key::TRANSFORM, Value::from(transform)),
@@ -1397,7 +1416,7 @@ impl Map {
             Msg::ToggleFollowMumbleSelection => {
                 *self.config.mumble_follow = !*self.config.mumble_follow;
 
-                self._set_mumble_follow = update_config(
+                self._set_mumble_follow = updates(
                     ctx,
                     vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
                 );
@@ -1411,7 +1430,7 @@ impl Map {
                     .body(api::CreateObjectRequest {
                         ty: api::Type::TOKEN,
                         props: api::Properties::from([
-                            (Key::NAME, Value::from("Owlbear")),
+                            (Key::OBJECT_NAME, Value::from("Owlbear")),
                             (Key::HIDDEN, Value::from(true)),
                         ]),
                     })
@@ -1428,7 +1447,7 @@ impl Map {
                     .body(api::CreateObjectRequest {
                         ty: api::Type::STATIC,
                         props: api::Properties::from([
-                            (Key::NAME, Value::from("Object")),
+                            (Key::OBJECT_NAME, Value::from("Object")),
                             (Key::HIDDEN, Value::from(true)),
                             (Key::STATIC_WIDTH, Value::from(1.0_f32)),
                             (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
@@ -1447,7 +1466,7 @@ impl Map {
                     .body(api::CreateObjectRequest {
                         ty: api::Type::GROUP,
                         props: api::Properties::from([
-                            (Key::NAME, Value::from("Group")),
+                            (Key::OBJECT_NAME, Value::from("Group")),
                             (Key::HIDDEN, Value::from(false)),
                             (Key::EXPANDED, Value::from(true)),
                         ]),
@@ -1704,13 +1723,14 @@ impl Map {
 
                 if (width - *s.width).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
-                    requests._scale_width = update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
+                    requests._scale_width =
+                        object_update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
                 }
 
                 if (height - *s.height).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
                     requests._scale_height =
-                        update(ctx, scale.object_id, Key::STATIC_HEIGHT, height);
+                        object_update(ctx, scale.object_id, Key::STATIC_HEIGHT, height);
                 }
             }
             ObjectKind::Token(t) => {
@@ -1719,7 +1739,7 @@ impl Map {
                 if (radius - *t.token_radius).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
                     requests._scale_radius =
-                        update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
+                        object_update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
                 }
             }
             _ => {}
@@ -1940,7 +1960,7 @@ impl Map {
                 continue;
             };
 
-            let req = update(ctx, id, Key::TRANSFORM, *transform);
+            let req = object_update(ctx, id, Key::TRANSFORM, *transform);
             self.transform_requests.insert(id, req);
         }
     }
@@ -1958,7 +1978,7 @@ impl Map {
                 continue;
             };
 
-            let req = update(ctx, id, Key::LOOK_AT, o.look_at().copied());
+            let req = object_update(ctx, id, Key::LOOK_AT, o.look_at().copied());
             self.look_at_requests.insert(id, req);
         }
     }
@@ -2332,11 +2352,13 @@ impl Map {
         let sort_changed = o_sort.update(new_sort.clone());
 
         if group_changed {
-            self._set_group = self::update(ctx, object_id, Key::GROUP, Value::from(new_group));
+            self._set_group =
+                self::object_update(ctx, object_id, Key::GROUP, Value::from(new_group));
         }
 
         if sort_changed {
-            self._set_sort = self::update(ctx, object_id, Key::SORT, Value::from(new_sort.clone()));
+            self._set_sort =
+                self::object_update(ctx, object_id, Key::SORT, Value::from(new_sort.clone()));
         }
 
         if sort_changed || group_changed {
@@ -2360,7 +2382,7 @@ impl Map {
 
         let new = !**locked;
         **locked = new;
-        self._toggle_locked = update(ctx, id, Key::LOCKED, Value::from(new));
+        self._toggle_locked = object_update(ctx, id, Key::LOCKED, Value::from(new));
         self.needs_redraw = true;
         Ok(true)
     }
@@ -2473,11 +2495,16 @@ impl Map {
     }
 }
 
-fn update(ctx: &Context<Map>, object_id: Id, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(
+    ctx: &Context<Map>,
+    object_id: Id,
+    key: Key,
+    value: impl Into<Value>,
+) -> ws::Request {
     ctx.props()
         .ws
         .request()
-        .body(api::UpdateRequest {
+        .body(api::ObjectUpdateBody {
             object_id,
             key,
             value: value.into(),
@@ -2486,11 +2513,11 @@ fn update(ctx: &Context<Map>, object_id: Id, key: Key, value: impl Into<Value>) 
         .send()
 }
 
-fn update_config(ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
+fn updates(ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
     ctx.props()
         .ws
         .request()
-        .body(api::UpdateConfigRequest { values })
+        .body(api::UpdatesRequest { values })
         .on_packet(ctx.link().callback(Msg::ConfigResult))
         .send()
 }

@@ -53,12 +53,20 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
                 outgoing.write(super::initialize_map(&self.backend).await?);
             }
-            api::Request::Update => {
+            api::Request::Updates => {
                 let request = incoming
-                    .read::<api::UpdateRequest>()
+                    .read::<api::UpdatesRequest>()
                     .context("missing request")?;
 
-                super::update(
+                super::updates(&self.backend, request.values).await?;
+                outgoing.write(api::Empty);
+            }
+            api::Request::ObjectUpdate => {
+                let request = incoming
+                    .read::<api::ObjectUpdateBody>()
+                    .context("missing request")?;
+
+                super::object_update(
                     &self.backend,
                     request.object_id,
                     request.key,
@@ -154,14 +162,6 @@ impl ws::Handler for Handler<'_> {
                             image_id: request.id,
                         },
                     }));
-            }
-            api::Request::UpdateConfig => {
-                let request = incoming
-                    .read::<api::UpdateConfigRequest>()
-                    .context("missing request")?;
-
-                super::update_config(&self.backend, request.values).await?;
-                outgoing.write(api::Empty);
             }
             api::Request::MumbleRestart => {
                 _ = incoming

@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, PeerId, RemoteObject, RemotePeerObject, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -49,16 +49,6 @@ impl Geometry<'_> {
 pub(crate) struct PeerObject {
     pub(crate) peer_id: PeerId,
     pub(crate) data: ObjectData,
-}
-
-impl PeerObject {
-    #[inline]
-    pub(crate) fn from_peer(remote: &RemotePeerObject) -> Self {
-        Self {
-            peer_id: remote.peer_id,
-            data: ObjectData::from_remote(&remote.object),
-        }
-    }
 }
 
 impl Deref for PeerObject {
@@ -345,7 +335,7 @@ impl StaticObject {
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             width: State::new(
                 o.props
@@ -377,7 +367,7 @@ impl StaticObject {
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.into_string()),
+            Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             Key::STATIC_WIDTH => self
                 .width
@@ -461,7 +451,7 @@ impl ObjectData {
             id: o.id,
             kind,
             group: State::new(o.props.get(Key::GROUP).as_id()),
-            name: State::new(o.props.get(Key::NAME).as_str().map(str::to_owned)),
+            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),
         }
@@ -470,7 +460,7 @@ impl ObjectData {
     #[inline]
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::NAME => self.name.update(value.into_string()),
+            Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
             _ => match &mut self.kind {
                 ObjectKind::Token(this) => this.update(key, value),

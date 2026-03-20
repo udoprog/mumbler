@@ -38,7 +38,7 @@ pub(crate) enum Msg {
     SetLog(log::Log),
     StateChanged(ws::State),
     UpdateName(Option<String>),
-    UpdateResult(Result<Packet<api::Update>, ws::Error>),
+    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     WidthChanged(Event),
 }
 
@@ -457,7 +457,7 @@ impl StaticSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::NAME, name);
+                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::WidthChanged(e) => {
@@ -576,7 +576,7 @@ impl StaticSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.as_str().map(str::to_owned)),
+            Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
             Key::STATIC_WIDTH => self.width.update(value.as_f32().unwrap_or(1.0)),
             Key::STATIC_HEIGHT => self.height.update(value.as_f32().unwrap_or(1.0)),
             Key::RATIO => self.ratio.update(value.as_f32()),
@@ -635,7 +635,7 @@ fn send_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>)
     ctx.props()
         .ws
         .request()
-        .body(api::UpdateRequest {
+        .body(api::ObjectUpdateBody {
             object_id: ctx.props().id,
             key,
             value: value.into(),

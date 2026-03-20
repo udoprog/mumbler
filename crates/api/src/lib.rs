@@ -34,7 +34,7 @@ crate::macros::keys! {
         COLOR: Color = 1;
         TRANSFORM: Transform = 2;
         LOOK_AT: Vec3 = 3;
-        NAME: String = 4;
+        OBJECT_NAME: String = 4;
         MUMBLE_ENABLED: Boolean = 5;
         REMOTE_SERVER: String = 6;
         REMOTE_ENABLED: Boolean = 7;
@@ -71,6 +71,8 @@ crate::macros::keys! {
         GROUP: Id = 25;
         /// Whether a group is expanded in the UI.
         EXPANDED: Boolean = 26;
+        /// The name of a peer.
+        PEER_NAME: String = 28;
     }
 }
 
@@ -171,7 +173,7 @@ pub struct InitializeMapRequest;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateRequest {
+pub struct ObjectUpdateBody {
     pub object_id: Id,
     pub key: Key,
     pub value: Value,
@@ -552,9 +554,10 @@ impl Transform {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct RemotePeerObject {
+pub struct RemotePeer {
     pub peer_id: PeerId,
-    pub object: RemoteObject,
+    pub props: Properties,
+    pub objects: Vec<RemoteObject>,
 }
 
 // The definition of a remote object.
@@ -575,7 +578,7 @@ pub struct RemoteObject {
 pub struct InitializeMapEvent {
     pub objects: Vec<RemoteObject>,
     pub images: Vec<Id>,
-    pub remote_objects: Vec<RemotePeerObject>,
+    pub peers: Vec<RemotePeer>,
     pub remote_images: Vec<Id>,
     pub config: Properties,
 }
@@ -658,7 +661,7 @@ pub struct DeleteImageRequest {
 /// Request to update config.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateConfigRequest {
+pub struct UpdatesRequest {
     pub values: Vec<(Key, Value)>,
 }
 
@@ -697,7 +700,7 @@ pub enum ServerNotificationBody {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct ConfigUpdateBody {
+pub struct UpdateBody {
     pub key: Key,
     pub value: Value,
 }
@@ -727,16 +730,27 @@ pub enum LocalUpdateBody {
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum RemoteUpdateBody {
+    /// Indicates that the remote connection has been lost and all local state
+    /// should be cleared.
     RemoteLost,
-    Join {
+    /// Indicates that a new peer has joined.
+    PeerJoin {
         peer_id: PeerId,
         objects: Vec<RemoteObject>,
         images: Vec<Id>,
+        props: Properties,
     },
-    Leave {
+    /// A property update.
+    PeerUpdate {
+        peer_id: PeerId,
+        key: Key,
+        value: Value,
+    },
+    /// Indicates that a peer has left.
+    PeerLeave {
         peer_id: PeerId,
     },
-    Update {
+    ObjectUpdate {
         peer_id: PeerId,
         object_id: Id,
         key: Key,
@@ -768,10 +782,10 @@ api::define! {
         type Response<'de> = InitializeMapEvent;
     }
 
-    pub type Update;
+    pub type ObjectUpdate;
 
-    impl Endpoint for Update {
-        impl Request for UpdateRequest;
+    impl Endpoint for ObjectUpdate {
+        impl Request for ObjectUpdateBody;
         type Response<'de> = Empty;
     }
 
@@ -817,13 +831,6 @@ api::define! {
         type Response<'de> = Empty;
     }
 
-    pub type UpdateConfig;
-
-    impl Endpoint for UpdateConfig {
-        impl Request for UpdateConfigRequest;
-        type Response<'de> = Empty;
-    }
-
     pub type MumbleRestart;
 
     impl Endpoint for MumbleRestart {
@@ -838,10 +845,17 @@ api::define! {
         type Response<'de> = Empty;
     }
 
-    pub type ConfigUpdate;
+    pub type Updates;
 
-    impl Broadcast for ConfigUpdate {
-        impl Event for ConfigUpdateBody;
+    impl Endpoint for Updates {
+        impl Request for UpdatesRequest;
+        type Response<'de> = Empty;
+    }
+
+    pub type Update;
+
+    impl Broadcast for Update {
+        impl Event for UpdateBody;
     }
 
     pub type LocalUpdate;

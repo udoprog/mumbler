@@ -39,7 +39,7 @@ pub(crate) enum Msg {
     SpeedChanged(Event),
     StateChanged(ws::State),
     UpdateName(Option<String>),
-    UpdateResult(Result<Packet<api::Update>, ws::Error>),
+    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -416,7 +416,7 @@ impl TokenSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::NAME, name);
+                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::RadiusChanged(e) => {
@@ -507,7 +507,7 @@ impl TokenSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::NAME => self.name.update(value.as_str().map(str::to_owned)),
+            Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
             Key::TOKEN_RADIUS => self.token_radius.update(value.as_f32().unwrap_or(0.25)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(5.0)),
             _ => false,
@@ -564,7 +564,7 @@ fn send_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) 
     ctx.props()
         .ws
         .request()
-        .body(api::UpdateRequest {
+        .body(api::ObjectUpdateBody {
             object_id: ctx.props().id,
             key,
             value: value.into(),

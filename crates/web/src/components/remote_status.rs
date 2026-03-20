@@ -12,11 +12,11 @@ pub(crate) enum Msg {
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
-    ToggleResponse(Result<Packet<api::UpdateConfig>, ws::Error>),
+    ToggleResponse(Result<Packet<api::Updates>, ws::Error>),
     StateChanged(ws::State),
     LogUpdate(log::Log),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
-    ConfigUpdate(Result<Packet<api::ConfigUpdate>, ws::Error>),
+    ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -54,7 +54,7 @@ impl Component for RemoteStatus {
         let _config_update_listener = ctx
             .props()
             .ws
-            .on_broadcast::<api::ConfigUpdate>(ctx.link().callback(Msg::ConfigUpdate));
+            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
 
         let mut this = Self {
             enabled: State::new(true),
@@ -156,7 +156,7 @@ impl RemoteStatus {
                     .props()
                     .ws
                     .request()
-                    .body(api::UpdateConfigRequest {
+                    .body(api::UpdatesRequest {
                         values: Vec::from([(Key::REMOTE_ENABLED, Value::from(new_enabled))]),
                     })
                     .on_packet(ctx.link().callback(Msg::ToggleResponse))

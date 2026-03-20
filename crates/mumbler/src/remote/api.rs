@@ -1,7 +1,7 @@
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{ContentType, Id, Key, PeerId, RemoteObject, Value};
+use ::api::{ContentType, Id, Key, PeerId, Properties, RemoteObject, Value};
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -23,6 +23,8 @@ pub struct ConnectBody {
     pub objects: Vec<RemoteObject>,
     /// List of images owned by peer.
     pub images: Vec<RemoteImage>,
+    /// Properties of the client.
+    pub props: Properties,
 }
 
 #[derive(Debug, Encode)]
@@ -36,6 +38,8 @@ pub struct ConnectBodyRef<'a> {
     pub objects: &'a [RemoteObject],
     /// List of images owned by peer.
     pub images: &'a [RemoteImage],
+    /// Properties of the client.
+    pub props: &'a Properties,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -77,29 +81,77 @@ pub struct RemoteImage {
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct JoinBody {
+pub struct PeerJoinBody {
     /// The peer that joined.
     pub peer_id: PeerId,
     /// The key-value pairs that were immediately set for the peer.
     pub objects: Vec<RemoteObject>,
     /// Remote images associated with the peer.
     pub images: Vec<RemoteImage>,
+    /// Properties of the peer.
+    pub props: Properties,
 }
 
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
-pub struct JoinBodyRef<'a> {
+pub struct PeerJoinBodyRef<'a> {
     /// The peer that joined.
     pub peer_id: PeerId,
-    /// The objects thare are associated with the peer.
+    /// The objects that are associated with the peer.
     pub objects: &'a [RemoteObject],
     /// The images that are associated with the peer.
     pub images: &'a [RemoteImage],
+    /// The properties of the peer.
+    pub props: &'a Properties,
+}
+
+/// A request to update a peer.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct PeerUpdateBody {
+    /// The key to update.
+    pub key: Key,
+    /// The value to update.
+    pub value: Value,
+}
+
+/// A request to update a peer.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct PeerUpdateBodyRef<'a> {
+    /// The key to update.
+    pub key: Key,
+    /// The value to update.
+    pub value: &'a Value,
+}
+
+/// Information that a peer has updated.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct PeerUpdatedBody {
+    /// The peer that updated.
+    pub peer_id: PeerId,
+    /// The key that was updated.
+    pub key: Key,
+    /// The value that was updated.
+    pub value: Value,
+}
+
+/// Information that a peer has updated.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct PeerUpdatedBodyRef<'a> {
+    /// The peer that updated.
+    pub peer_id: PeerId,
+    /// The key that was updated.
+    pub key: Key,
+    /// The value that was updated.
+    pub value: &'a Value,
 }
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct LeaveBody {
+pub struct PeerLeaveBody {
     /// The peer that left the room.
     pub id: PeerId,
 }
@@ -107,7 +159,7 @@ pub struct LeaveBody {
 /// A request to update.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdatePeer {
+pub struct ObjectUpdateBody {
     /// The id of the object being updated.
     pub object_id: Id,
     /// The key to update.
@@ -121,7 +173,7 @@ pub struct UpdatePeer {
 /// Can only be used to encode.
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
-pub struct UpdatePeerRef<'a> {
+pub struct ObjectUpdateBodyRef<'a> {
     /// The id of the object being updated.
     pub object_id: Id,
     /// The key to update.
@@ -133,7 +185,7 @@ pub struct UpdatePeerRef<'a> {
 /// Information that a peer has updated.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdatedPeer {
+pub struct ObjectUpdatedBody {
     /// The peer that updated.
     pub peer_id: PeerId,
     /// The object id being updated.
@@ -149,7 +201,7 @@ pub struct UpdatedPeer {
 /// Can only be used to encode.
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
-pub struct UpdatedPeerRef<'a> {
+pub struct ObjectUpdatedBodyRef<'a> {
     /// The peer that updated.
     pub peer_id: PeerId,
     /// The object id being updated.
@@ -163,7 +215,7 @@ pub struct UpdatedPeerRef<'a> {
 /// A request to add an object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct AddObjectBody {
+pub struct ObjectCreateBody {
     /// The object being added.
     pub object: RemoteObject,
 }
@@ -171,7 +223,7 @@ pub struct AddObjectBody {
 /// A request to add a new image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct AddImageBody {
+pub struct ImageCreateBody {
     /// The image being added.
     pub image: RemoteImage,
 }
@@ -179,7 +231,7 @@ pub struct AddImageBody {
 /// Broadcast by the server when a peer adds an object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct ObjectAddedBody {
+pub struct ObjectCreatedBody {
     /// The peer that added the object.
     pub peer_id: PeerId,
     /// The object that was added.
@@ -189,7 +241,7 @@ pub struct ObjectAddedBody {
 /// Broadcast by the server when a peer adds an image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct ImageAddedBody {
+pub struct ImageCreatedBody {
     /// The peer that added the image.
     pub peer_id: PeerId,
     /// The image that was added.
@@ -199,7 +251,7 @@ pub struct ImageAddedBody {
 /// A request to remove an object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct RemoveObjectBody {
+pub struct ObjectRemoveBody {
     /// The id of the object being removed.
     pub object_id: Id,
 }
@@ -207,7 +259,7 @@ pub struct RemoveObjectBody {
 /// A request to remove an image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct RemoveImageBody {
+pub struct ImageRemoveBody {
     /// The id of the image being removed.
     pub image_id: Id,
 }
@@ -252,61 +304,75 @@ api::define! {
         impl Event for PongBody;
     }
 
-    pub type Join;
+    pub type PeerJoin;
 
-    impl Broadcast for Join {
-        impl Event for JoinBody;
-        impl Event for JoinBodyRef<'_>;
+    impl Broadcast for PeerJoin {
+        impl Event for PeerJoinBody;
+        impl Event for PeerJoinBodyRef<'_>;
     }
 
-    pub type Leave;
+    pub type PeerLeave;
 
-    impl Broadcast for Leave {
-        impl Event for LeaveBody;
+    impl Broadcast for PeerLeave {
+        impl Event for PeerLeaveBody;
     }
 
-    pub type Update;
+    pub type PeerUpdate;
 
-    impl Broadcast for Update {
-        impl Event for UpdatePeer;
-        impl Event for UpdatePeerRef<'_>;
+    impl Broadcast for PeerUpdate {
+        impl Event for PeerUpdateBody;
+        impl Event for PeerUpdateBodyRef<'_>;
     }
 
-    pub type Updated;
+    pub type PeerUpdated;
 
-    impl Broadcast for Updated {
-        impl Event for UpdatedPeer;
-        impl Event for UpdatedPeerRef<'_>;
+    impl Broadcast for PeerUpdated {
+        impl Event for PeerUpdatedBody;
+        impl Event for PeerUpdatedBodyRef<'_>;
     }
 
-    pub type AddObject;
+    pub type ObjectUpdate;
 
-    impl Broadcast for AddObject {
-        impl Event for AddObjectBody;
+    impl Broadcast for ObjectUpdate {
+        impl Event for ObjectUpdateBody;
+        impl Event for ObjectUpdateBodyRef<'_>;
     }
 
-    pub type ObjectAdded;
+    pub type ObjectUpdated;
 
-    impl Broadcast for ObjectAdded {
-        impl Event for ObjectAddedBody;
+    impl Broadcast for ObjectUpdated {
+        impl Event for ObjectUpdatedBody;
+        impl Event for ObjectUpdatedBodyRef<'_>;
     }
 
-    pub type AddImage;
+    pub type ObjectCreate;
 
-    impl Broadcast for AddImage {
-        impl Event for AddImageBody;
+    impl Broadcast for ObjectCreate {
+        impl Event for ObjectCreateBody;
     }
 
-    pub type ImageAdded;
+    pub type ObjectCreated;
 
-    impl Broadcast for ImageAdded {
-        impl Event for ImageAddedBody;
+    impl Broadcast for ObjectCreated {
+        impl Event for ObjectCreatedBody;
     }
 
-    pub type RemoveObject;
+    pub type ImageCreate;
 
-    impl Broadcast for RemoveObject {
-        impl Event for RemoveObjectBody;
+    impl Broadcast for ImageCreate {
+        impl Event for ImageCreateBody;
+    }
+
+    pub type ImageCreated;
+
+    impl Broadcast for ImageCreated {
+        impl Event for ImageCreatedBody;
+    }
+
+    pub type ObjectRemove;
+
+    impl Broadcast for ObjectRemove {
+        impl Event for ObjectRemoveBody;
     }
 
     pub type ObjectRemoved;
@@ -315,10 +381,10 @@ api::define! {
         impl Event for ObjectRemovedBody;
     }
 
-    pub type RemoveImage;
+    pub type ImageRemove;
 
-    impl Broadcast for RemoveImage {
-        impl Event for RemoveImageBody;
+    impl Broadcast for ImageRemove {
+        impl Event for ImageRemoveBody;
     }
 
     pub type ImageRemoved;

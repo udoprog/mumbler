@@ -17,7 +17,7 @@ use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalConfigEvent {
-    pub(crate) body: api::ConfigUpdateBody,
+    pub(crate) body: api::UpdateBody,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +67,8 @@ pub(crate) struct PeerInfo {
     pub(crate) objects: HashMap<Id, RemoteObject>,
     /// Images associated with the peer.
     pub(crate) images: HashSet<Id>,
+    /// Properties associated with the peer.
+    pub(crate) props: Properties,
 }
 
 /// Information about remote peers.
@@ -87,6 +89,10 @@ pub(crate) struct ClientState {
     pub(crate) images_added: HashSet<Id>,
     /// Identifiers of images that have been deleted.
     pub(crate) images_deleted: HashSet<Id>,
+    /// Remote properties.
+    pub(crate) props: Properties,
+    /// Collection of properties that have changed.
+    pub(crate) props_changed: HashSet<Key>,
 }
 
 struct Data {
@@ -237,6 +243,8 @@ impl Backend {
                     images,
                     images_added: HashSet::new(),
                     images_deleted: HashSet::new(),
+                    props: Properties::new(),
+                    props_changed: HashSet::new(),
                 }),
                 images: RwLock::new(Images {
                     images: HashMap::new(),
@@ -335,8 +343,24 @@ impl Backend {
         self.inner.mumblelink_notify.notified().await;
     }
 
+    /// Update a property, this will filter properties that should not be
+    /// propagated to other peers.
+    pub(crate) async fn update(&self, key: Key, value: Value) -> Result<()> {
+        self.db().set_config_value(key, value.clone()).await?;
+
+        if !matches!(key, Key::PEER_NAME) {
+            return Ok(());
+        }
+
+        let mut state = self.inner.client_state.lock().await;
+        state.props.insert(key, value);
+        state.props_changed.insert(key);
+        self.inner.client_notify.notify_one();
+        Ok(())
+    }
+
     /// Update position and front.
-    pub(crate) async fn update_object_property(&self, id: Id, key: Key, value: Value) {
+    pub(crate) async fn object_update(&self, id: Id, key: Key, value: Value) {
         let mut state = self.inner.client_state.lock().await;
 
         let Some(object) = state.objects.get_mut(&id) else {

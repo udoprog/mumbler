@@ -148,7 +148,7 @@ async fn image(
 async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let mut objects = Vec::new();
     let mut images = Vec::new();
-    let mut remote_objects = Vec::new();
+    let mut peers = Vec::new();
     let mut remote_images = Vec::new();
 
     {
@@ -167,20 +167,25 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
         }
 
         for (peer_id, peer) in state.peers.iter() {
+            let mut new_peer = api::RemotePeer {
+                peer_id: *peer_id,
+                props: peer.props.clone(),
+                objects: Vec::new(),
+            };
+
             for object in peer.objects.values() {
-                remote_objects.push(api::RemotePeerObject {
-                    peer_id: *peer_id,
-                    object: api::RemoteObject {
-                        ty: object.ty,
-                        id: object.id,
-                        props: object.props.clone(),
-                    },
+                new_peer.objects.push(api::RemoteObject {
+                    ty: object.ty,
+                    id: object.id,
+                    props: object.props.clone(),
                 });
             }
 
             for image_id in peer.images.iter() {
                 remote_images.push(*image_id);
             }
+
+            peers.push(new_peer);
         }
     }
 
@@ -193,7 +198,7 @@ async fn initialize_map(b: &Backend) -> Result<api::InitializeMapEvent> {
     let ev = api::InitializeMapEvent {
         objects,
         images,
-        remote_objects,
+        peers,
         remote_images,
         config,
     };
@@ -253,7 +258,7 @@ async fn get_object_settings(
     Ok(api::GetObjectSettingsResponse { object, images })
 }
 
-async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {
+async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {
     match key {
         Key::TRANSFORM => 'done: {
             let Some(transform) = value.as_transform() else {
@@ -299,16 +304,11 @@ async fn update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Re
         _ => {}
     }
 
-    backend
-        .update_object_property(object_id, key, value.clone())
-        .await;
+    backend.object_update(object_id, key, value.clone()).await;
     Ok(())
 }
 
-async fn update_config(
-    backend: &Backend,
-    values: impl IntoIterator<Item = (Key, Value)>,
-) -> Result<()> {
+async fn updates(backend: &Backend, values: impl IntoIterator<Item = (Key, Value)>) -> Result<()> {
     let mut restart_mumblelink = false;
     let mut restart_client = false;
 
@@ -347,10 +347,10 @@ async fn update_config(
             _ => {}
         }
 
-        backend.db().set_config_value(key, value.clone()).await?;
+        backend.update(key, value.clone()).await?;
 
         backend.broadcast(BackendEvent::ConfigUpdate(LocalConfigEvent {
-            body: api::ConfigUpdateBody { key, value },
+            body: api::UpdateBody { key, value },
         }));
     }
 

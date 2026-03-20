@@ -10,8 +10,8 @@ use tokio::time::{self, Instant, Sleep};
 use crate::Backend;
 use crate::backend::BackendEvent;
 use crate::remote::api::{
-    Event, ImageAddedBody, ImageRemovedBody, JoinBody, LeaveBody, ObjectAddedBody,
-    ObjectRemovedBody, PongBody, RemoteImage, UpdatedPeer,
+    Event, ImageCreatedBody, ImageRemovedBody, ObjectCreatedBody, ObjectRemovedBody,
+    ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PeerUpdatedBody, PongBody, RemoteImage,
 };
 use crate::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 
@@ -36,8 +36,8 @@ async fn handle_peer(
                         .reset(Instant::now() + Duration::from_secs(1));
                 }
             }
-            Event::Join => {
-                let body = body.decode::<JoinBody>()?;
+            Event::PeerJoin => {
+                let body = body.decode::<PeerJoinBody>()?;
                 tracing::debug!(?id, ?body.peer_id, objects = body.objects.len());
 
                 let mut remote = b.client_state().await;
@@ -56,14 +56,37 @@ async fn handle_peer(
                     peer.objects.insert(o.id, o);
                 }
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::Join {
+                peer.props = body.props.clone();
+
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerJoin {
                     peer_id: body.peer_id,
                     objects: peer.objects.values().cloned().collect(),
                     images: peer.images.iter().cloned().collect(),
+                    props: peer.props.clone(),
                 }));
             }
-            Event::Leave => {
-                let body = body.decode::<LeaveBody>()?;
+            Event::PeerUpdated => {
+                let body = body.decode::<PeerUpdatedBody>()?;
+                tracing::debug!(?id, ?body.peer_id, key = ?body.key, value = ?body.value);
+
+                {
+                    let mut remote = b.client_state().await;
+
+                    let Some(peer) = remote.peers.get_mut(&body.peer_id) else {
+                        continue;
+                    };
+
+                    peer.props.insert(body.key, body.value.clone());
+                }
+
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerUpdate {
+                    peer_id: body.peer_id,
+                    key: body.key,
+                    value: body.value,
+                }));
+            }
+            Event::PeerLeave => {
+                let body = body.decode::<PeerLeaveBody>()?;
                 tracing::debug!(?id, ?body.id);
 
                 {
@@ -71,12 +94,12 @@ async fn handle_peer(
                     remote.peers.remove(&body.id);
                 }
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::Leave {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerLeave {
                     peer_id: body.id,
                 }));
             }
-            Event::Updated => {
-                let body = body.decode::<UpdatedPeer>()?;
+            Event::ObjectUpdated => {
+                let body = body.decode::<ObjectUpdatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.key, ?body.value);
 
                 let mut remote = b.client_state().await;
@@ -91,15 +114,15 @@ async fn handle_peer(
 
                 object.props.insert(body.key, body.value.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::Update {
+                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ObjectUpdate {
                     peer_id: body.peer_id,
                     object_id: body.object_id,
                     key: body.key,
                     value: body.value,
                 }));
             }
-            Event::ObjectAdded => {
-                let body = body.decode::<ObjectAddedBody>()?;
+            Event::ObjectCreated => {
+                let body = body.decode::<ObjectCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, object_id = ?body.object.id, "ObjectAdded");
 
                 let mut remote = b.client_state().await;
@@ -113,8 +136,8 @@ async fn handle_peer(
                     object: body.object,
                 }));
             }
-            Event::ImageAdded => {
-                let body = body.decode::<ImageAddedBody>()?;
+            Event::ImageCreated => {
+                let body = body.decode::<ImageCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, image_id = ?body.image.id, "ImageAdded");
 
                 let mut images = b.images().await;
@@ -203,6 +226,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
     let mut objects = Vec::new();
     let mut images = Vec::new();
+    let props;
 
     {
         let state = b.client_state().await;
@@ -224,10 +248,12 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 height: image.height,
             });
         }
+
+        props = state.props.clone();
     }
 
     let mut peer = Peer::new(client);
-    peer.connect(b"default", &objects, &images)?;
+    peer.connect(b"default", &objects, &images, &props)?;
 
     loop {
         tokio::select! {
@@ -239,6 +265,11 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 let mut client_state = b.client_state().await;
                 let state = &mut *client_state;
 
+                for key in state.props_changed.drain() {
+                    let value = state.props.get(key);
+                    peer.peer_update(key, value)?;
+                }
+
                 for id in state.objects_changed.drain() {
                     let Some(object) = state.objects.get_mut(&id) else {
                         continue;
@@ -246,7 +277,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 
                     for key in object.changed.drain() {
                         let value = object.props.get(key);
-                        peer.update_peer(id, key, value)?;
+                        peer.object_update(id, key, value)?;
                     }
                 }
 
@@ -255,11 +286,11 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         continue;
                     };
 
-                    peer.add_object(RemoteObject { ty: object.ty, id, props: object.props.clone() })?;
+                    peer.object_create(RemoteObject { ty: object.ty, id, props: object.props.clone() })?;
                 }
 
                 for id in state.objects_deleted.drain() {
-                    peer.remove_object(id)?;
+                    peer.object_remove(id)?;
                 }
 
                 for id in state.images_added.drain() {
@@ -267,7 +298,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                         continue;
                     };
 
-                    peer.add_image(RemoteImage {
+                    peer.image_create(RemoteImage {
                         id: image.id,
                         content_type: image.content_type,
                         bytes: Box::from(image.bytes.as_slice()),
@@ -277,7 +308,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                 }
 
                 for id in state.images_deleted.drain() {
-                    peer.remove_image(id)?;
+                    peer.image_remove(id)?;
                 }
 
                 wait.set(b.client_wait());

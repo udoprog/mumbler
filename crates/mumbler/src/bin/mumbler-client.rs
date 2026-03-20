@@ -4,8 +4,9 @@
 use core::pin::pin;
 
 use anyhow::{Context, Result, bail};
+use api::Properties;
 use clap::Parser;
-use mumbler::remote::api::{Event, JoinBody, LeaveBody, PongBody, UpdatedPeer};
+use mumbler::remote::api::{Event, ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PongBody};
 use mumbler::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 use tokio::net::TcpStream;
 use tokio::time::{self, Duration, Instant};
@@ -73,9 +74,10 @@ async fn main() -> Result<()> {
 
     let objects = Vec::new();
     let images = Vec::new();
+    let props = Properties::new();
 
     let mut peer = Peer::new(client);
-    peer.connect(opts.room.as_bytes(), &objects, &images)?;
+    peer.connect(opts.room.as_bytes(), &objects, &images, &props)?;
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
@@ -98,16 +100,16 @@ async fn main() -> Result<()> {
                                 ping_timeout.as_mut().reset(Instant::now() + Duration::from_secs(1));
                             }
                         },
-                        Event::Join => {
-                            let event = body.decode::<JoinBody>()?;
+                        Event::PeerJoin => {
+                            let event = body.decode::<PeerJoinBody>()?;
                             tracing::debug!(?event, "Join");
                         }
-                        Event::Leave => {
-                            let event = body.decode::<LeaveBody>()?;
+                        Event::PeerLeave => {
+                            let event = body.decode::<PeerLeaveBody>()?;
                             tracing::debug!(?event, "Leave");
                         }
-                        Event::Updated => {
-                            let event = body.decode::<UpdatedPeer>()?;
+                        Event::ObjectUpdated => {
+                            let event = body.decode::<ObjectUpdatedBody>()?;
                             tracing::debug!(?event.peer_id, ?event.key, ?event.value, "Updated");
                         }
                         event => {
