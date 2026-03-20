@@ -13,6 +13,7 @@ use super::into_target;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
+    NameChanged(Event),
     ServerChanged(Event),
     TlsToggled(Event),
     UpdateConfig(Result<Packet<api::Updates>, ws::Error>),
@@ -28,6 +29,8 @@ pub(crate) struct Props {
 
 pub(crate) struct Settings {
     state: ws::State,
+    name: State<String>,
+    _name_request: ws::Request,
     remote_server: State<String>,
     _remote_server_request: ws::Request,
     remote_server_tls: State<bool>,
@@ -61,6 +64,8 @@ impl Component for Settings {
 
         let mut this = Self {
             state,
+            name: State::new(String::new()),
+            _name_request: ws::Request::new(),
             remote_server: State::new(String::new()),
             _remote_server_request: ws::Request::new(),
             remote_server_tls: State::new(false),
@@ -89,13 +94,21 @@ impl Component for Settings {
     fn view(&self, ctx: &Context<Self>) -> Html {
         html! {
             <div id="content" class="rows">
-                <h2>{"Remote Server"}</h2>
+                <section class="input-group">
+                    <label for="name">{"Name:"}</label>
 
-                <div class="hint">
-                    {"If a remote server is configured and enabled, it can be used to synchronize state between many Mumbler Clients."}
-                </div>
+                    <input
+                        id="name"
+                        type="text"
+                        placeholder="Name"
+                        value={(*self.name).clone()}
+                        onchange={ctx.link().callback(Msg::NameChanged)}
+                        />
+                </section>
 
-                <section>
+                <section class="input-group">
+                    <label for="remote-server">{"Remote Server:"}</label>
+
                     <input
                         id="remote-server"
                         type="text"
@@ -138,6 +151,32 @@ impl Settings {
                 self.state = state;
                 self.refresh(ctx);
                 Ok(true)
+            }
+            Msg::NameChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+
+                let value = input.value();
+                let value = value.trim();
+
+                let value = if value.is_empty() {
+                    *self.name = String::new();
+                    api::Value::empty()
+                } else {
+                    *self.name = value.to_owned();
+                    api::Value::from((*self.name).clone())
+                };
+
+                self._name_request = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdatesRequest {
+                        values: vec![(api::Key::PEER_NAME, value)],
+                    })
+                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
+                    .send();
+
+                Ok(false)
             }
             Msg::ServerChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -214,6 +253,9 @@ impl Settings {
 
     fn update_config(&mut self, key: Key, value: &Value) -> Result<bool, Error> {
         match key {
+            Key::PEER_NAME => Ok(self
+                .name
+                .update(value.as_str().unwrap_or_default().to_string())),
             Key::REMOTE_SERVER => Ok(self
                 .remote_server
                 .update(value.as_str().unwrap_or_default().to_string())),

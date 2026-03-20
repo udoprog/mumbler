@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -43,27 +43,6 @@ impl Geometry<'_> {
                 local.x.abs() < width / 2.0 && local.z.abs() < height / 2.0
             }
         }
-    }
-}
-
-pub(crate) struct PeerObject {
-    pub(crate) peer_id: PeerId,
-    pub(crate) data: ObjectData,
-}
-
-impl Deref for PeerObject {
-    type Target = ObjectData;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl DerefMut for PeerObject {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
     }
 }
 

@@ -21,7 +21,7 @@ use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::{ImageMessage, Images};
 use crate::log;
-use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRef, PeerObject};
+use crate::objects::{LocalObject, ObjectData, ObjectKind, Objects, ObjectsRef};
 use crate::peers::Peers;
 use crate::state::State;
 
@@ -35,17 +35,20 @@ const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const ANIMATION_FPS: u32 = 60;
 
+/// We keep some interior state separate, since it's needed to borrow certain
+/// fields mutably.
 #[derive(Default)]
-struct Updates {
+struct Inner {
     look_at: HashSet<Id>,
     transforms: HashSet<Id>,
     selected: Id,
     context_menu: Option<ContextMenu>,
     delete: Id,
     _toggle_mumble_request: ws::Request,
+    redraw: bool,
 }
 
-impl Updates {
+impl Inner {
     fn look_at(&mut self, objects: &mut ObjectsRef, p: Vec3, m: Vec3) {
         let Some(o) = objects.get_mut(self.selected) else {
             return;
@@ -83,8 +86,63 @@ impl Updates {
         }
 
         *config.mumble_object = id;
-
         self._toggle_mumble_request = updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id))]);
+    }
+
+    fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, m: Vec3) {
+        match action {
+            Action::Rotate(r) => {
+                let Some(o) = objects.get_mut(r.object_id) else {
+                    return;
+                };
+
+                let dist = r.center.dist(m);
+
+                if dist < ARROW_THRESHOLD {
+                    return;
+                }
+
+                if r.is_static {
+                    // Use the original cursor offset to rotate relative to the initial grab.
+                    if let Some(transform) = o.as_transform_mut() {
+                        let cursor = m - r.center;
+                        let angle = cursor.angle_xz() + r.rotation_offset;
+                        transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
+                        self.transforms.insert(o.id);
+                    }
+
+                    o.arrow_target = Some(m);
+                } else if let Some(look_at) = o.as_look_at_mut() {
+                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+                    self.look_at.insert(o.id);
+                    self.look_at(objects, r.center, m);
+                }
+
+                self.redraw = true;
+            }
+            Action::Translate(t) => {
+                let Some(o) = objects.get_mut(t.object_id) else {
+                    return;
+                };
+
+                if o.is_static() {
+                    let Some(transform) = o.as_transform_mut() else {
+                        return;
+                    };
+
+                    transform.position = m + t.offset;
+                    self.transforms.insert(o.id);
+                    self.redraw = true;
+                } else {
+                    o.move_target = Some(m);
+                    self.redraw = true;
+                }
+            }
+            Action::Scale(scale) => {
+                let distance = scale.position.dist(m).max(0.01);
+                scale.scale = distance / scale.initial_distance;
+            }
+        }
     }
 }
 
@@ -258,8 +316,7 @@ pub(crate) struct Map {
     images: Images<Self>,
     log: log::Log,
     look_at_requests: HashMap<Id, ws::Request>,
-    mouse_position: Option<Vec3>,
-    needs_redraw: bool,
+    mouse: Option<Vec3>,
     object_ondragend: Callback<Id>,
     object_ondragover: Callback<DragOver>,
     object_onexpandtoggle: Callback<Id>,
@@ -279,8 +336,8 @@ pub(crate) struct Map {
     state: ws::State,
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
-    updates: Updates,
     look_ats: Vec<(Vec3, Color)>,
+    s: Inner,
 }
 
 pub(crate) enum Msg {
@@ -422,8 +479,7 @@ impl Component for Map {
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
-            mouse_position: None,
-            needs_redraw: false,
+            mouse: None,
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_ondragover: ctx.link().callback(Msg::DragOver),
             object_onexpandtoggle: ctx.link().callback(Msg::ToggleExpanded),
@@ -443,7 +499,7 @@ impl Component for Map {
             state,
             transform_requests: HashMap::new(),
             update_world: false,
-            updates: Updates::default(),
+            s: Inner::default(),
             look_ats: Vec::new(),
         };
 
@@ -480,11 +536,11 @@ impl Component for Map {
             }
         };
 
-        if !self.updates.transforms.is_empty() {
+        if !self.s.transforms.is_empty() {
             self.send_transform_updates(ctx);
         }
 
-        if !self.updates.look_at.is_empty() {
+        if !self.s.look_at.is_empty() {
             self.send_look_at_updates(ctx);
         }
 
@@ -493,12 +549,12 @@ impl Component for Map {
             self.update_world = false;
         }
 
-        if self.needs_redraw {
+        if self.s.redraw {
             if let Err(error) = self.redraw() {
                 self.log.error("map::redraw", error);
             }
 
-            self.needs_redraw = false;
+            self.s.redraw = false;
         }
 
         let objects = self.objects.borrow();
@@ -522,7 +578,7 @@ impl Component for Map {
 
         let pos;
 
-        if let Some(o) = objects.get(self.updates.selected)
+        if let Some(o) = objects.get(self.s.selected)
             && let Some(transform) = o.as_transform()
         {
             let p = transform.position;
@@ -539,7 +595,7 @@ impl Component for Map {
         }
 
         let object_list_header = {
-            let o = objects.get(self.updates.selected);
+            let o = objects.get(self.s.selected);
 
             let settings_classes = classes! {
                 "btn",
@@ -588,7 +644,7 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = objects.get(self.updates.selected);
+            let o = objects.get(self.s.selected);
 
             let mumble = {
                 let is_mumble = o
@@ -742,114 +798,131 @@ impl Component for Map {
             }
         };
 
+        let peers = html! {
+            <div>
+                <h2>{"Peers"}</h2>
+
+                {for self.peers.iter().map(|peer| html! {
+                    html! {
+                        <div class="peer">
+                            <div>{peer.id.to_string()}</div>
+                        </div>
+                    }
+                })}
+            </div>
+        };
+
         html! {
-            <ContextProvider<Objects> context={self.objects.clone()}>
-                <ContextProvider<Hierarchy> context={self.order.clone()}>
-                    <div class="row">
-                        <div class="col-9 rows">
-                            {toolbar}
+            <>
+                <div class="row">
+                    <div class="col-9 rows">
+                        {toolbar}
 
-                            <div class="map-sizer" ref={self.canvas_sizer.clone()}>
-                                <canvas id="map" ref={self.canvas_ref.clone()}
-                                    onpointerdown={ctx.link().callback(Msg::PointerDown)}
-                                    onpointermove={ctx.link().callback(Msg::PointerMove)}
-                                    onpointerup={ctx.link().callback(Msg::PointerUp)}
-                                    onpointerleave={ctx.link().callback(Msg::PointerLeave)}
-                                    onwheel={ctx.link().callback(Msg::Wheel)}
-                                    oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
-                                    ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
-                                    ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
-                                ></canvas>
+                        <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                            <canvas id="map" ref={self.canvas_ref.clone()}
+                                onpointerdown={ctx.link().callback(Msg::PointerDown)}
+                                onpointermove={ctx.link().callback(Msg::PointerMove)}
+                                onpointerup={ctx.link().callback(Msg::PointerUp)}
+                                onpointerleave={ctx.link().callback(Msg::PointerLeave)}
+                                onwheel={ctx.link().callback(Msg::Wheel)}
+                                oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
+                                ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
+                                ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
+                            ></canvas>
 
-                                if let Some(menu) = &self.updates.context_menu {
-                                    {self.render_context_menu(ctx, menu)}
-                                }
-                            </div>
-
-                            {pos}
+                            if let Some(menu) = &self.s.context_menu {
+                                {self.render_context_menu(ctx, menu)}
+                            }
                         </div>
 
-                        <div class="col-3 rows">
-                            {object_list_header}
-
-                            <ObjectList
-                                key={format!("{}", Id::ZERO)}
-                                group={Id::ZERO}
-                                drag_over={self.drag_over}
-                                mumble_object={*self.config.mumble_object}
-                                selected={self.updates.selected}
-                                onselect={self.object_onselect.clone()}
-                                ondragover={self.object_ondragover.clone()}
-                                ondragend={self.object_ondragend.clone()}
-                                onhiddentoggle={self.object_onhiddentoggle.clone()}
-                                onlocalhiddentoggle={self.object_onlocalhiddentoggle.clone()}
-                                onexpandtoggle={self.object_onexpandtoggle.clone()}
-                                onlockedtoggle={self.object_onlockedtoggle.clone()}
-                                onmumbletoggle={self.object_onmumbletoggle.clone()}
-                                />
-                        </div>
+                        {pos}
                     </div>
 
-                    if let Some(id) = self.updates.delete.as_non_zero() {
-                        <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                            <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                                <div class="modal-header">
-                                    <h2>{"Confirm Deletion"}</h2>
-                                    <button class="btn sm square danger" title="Cancel"
+                    <div class="col-3 rows">
+                        {object_list_header}
+                        <ContextProvider<Objects> context={self.objects.clone()}>
+                            <ContextProvider<Hierarchy> context={self.order.clone()}>
+                                <ObjectList
+                                    key={format!("{}", Id::ZERO)}
+                                    group={Id::ZERO}
+                                    drag_over={self.drag_over}
+                                    mumble_object={*self.config.mumble_object}
+                                    selected={self.s.selected}
+                                    onselect={self.object_onselect.clone()}
+                                    ondragover={self.object_ondragover.clone()}
+                                    ondragend={self.object_ondragend.clone()}
+                                    onhiddentoggle={self.object_onhiddentoggle.clone()}
+                                    onlocalhiddentoggle={self.object_onlocalhiddentoggle.clone()}
+                                    onexpandtoggle={self.object_onexpandtoggle.clone()}
+                                    onlockedtoggle={self.object_onlockedtoggle.clone()}
+                                    onmumbletoggle={self.object_onmumbletoggle.clone()}
+                                    />
+                            </ContextProvider<Hierarchy>>
+                        </ContextProvider<Objects>>
+
+                        {peers}
+                    </div>
+                </div>
+
+                if let Some(id) = self.s.delete.as_non_zero() {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Confirm Deletion"}</h2>
+                                <button class="btn sm square danger" title="Cancel"
+                                    onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body rows">
+                                <p>{format!("Remove \"{}\"?", objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
+                                <div class="btn-group">
+                                    <button class="btn danger"
+                                        onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
+                                        {"Delete"}
+                                    </button>
+                                    <button class="btn"
                                         onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                        <Icon name="x-mark" />
+                                        {"Cancel"}
                                     </button>
-                                </div>
-                                <div class="modal-body rows">
-                                    <p>{format!("Remove \"{}\"?", objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
-                                    <div class="btn-group">
-                                        <button class="btn danger"
-                                            onclick={ctx.link().callback(move |_| Msg::DeleteObject(id))}>
-                                            {"Delete"}
-                                        </button>
-                                        <button class="btn"
-                                            onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
-                                            {"Cancel"}
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
                         </div>
-                    }
+                    </div>
+                }
 
-                    if let Some(id) = self.open_settings {
-                        <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
-                            <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                                <div class="modal-header">
-                                    <h2>{"Settings"}</h2>
-                                    <button class="btn sm square danger" title="Close"
-                                        onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
-                                        <Icon name="x-mark" />
-                                    </button>
-                                </div>
-                                <div class="modal-body">
-                                    {match objects.get(id).map(|o| &o.kind).unwrap_or(&ObjectKind::Unknown) {
-                                        ObjectKind::Static(..) => {
-                                            html! { <StaticSettings {ws} {id} /> }
-                                        }
-                                        ObjectKind::Group(..) => {
-                                            html! { <GroupSettings {ws} {id} /> }
-                                        }
-                                        ObjectKind::Token(..) => {
-                                            html! { <TokenSettings {ws} {id} /> }
-                                        }
-                                        _ => html! { <p class="hint">{"Unknown object type"}</p> },
-                                    }}
-                                </div>
+                if let Some(id) = self.open_settings {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Settings"}</h2>
+                                <button class="btn sm square danger" title="Close"
+                                    onclick={ctx.link().callback(|_| Msg::CloseSettings)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                {match objects.get(id).map(|o| &o.kind).unwrap_or(&ObjectKind::Unknown) {
+                                    ObjectKind::Static(..) => {
+                                        html! { <StaticSettings {ws} {id} /> }
+                                    }
+                                    ObjectKind::Group(..) => {
+                                        html! { <GroupSettings {ws} {id} /> }
+                                    }
+                                    ObjectKind::Token(..) => {
+                                        html! { <TokenSettings {ws} {id} /> }
+                                    }
+                                    _ => html! { <p class="hint">{"Unknown object type"}</p> },
+                                }}
                             </div>
                         </div>
-                    }
+                    </div>
+                }
 
-                    if self.open_help {
-                        <HelpModal onclose={ctx.link().callback(|_| Msg::CloseHelp)} />
-                    }
-                </ContextProvider<Hierarchy>>
-            </ContextProvider<Objects>>
+                if self.open_help {
+                    <HelpModal onclose={ctx.link().callback(|_| Msg::CloseHelp)} />
+                }
+            </>
         }
     }
 }
@@ -1002,7 +1075,7 @@ impl Map {
             Msg::DragEnd(object_id) => self.drag_end(ctx, object_id),
             // Removed misplaced enum variants
             Msg::OpenObjectSettings(id) => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
                 self.open_settings = Some(id);
                 Ok(true)
             }
@@ -1019,7 +1092,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleMumbleObject(id) => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
 
                 let update = if *self.config.mumble_object == id {
                     Id::ZERO
@@ -1029,7 +1102,7 @@ impl Map {
 
                 *self.config.mumble_object = update;
 
-                self.updates._toggle_mumble_request =
+                self.s._toggle_mumble_request =
                     updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update))]);
                 Ok(true)
             }
@@ -1039,7 +1112,7 @@ impl Map {
                 Ok(false)
             }
             Msg::ToggleHidden(id) => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1055,7 +1128,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleLocalHidden(id) => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1072,7 +1145,7 @@ impl Map {
                 Ok(true)
             }
             Msg::ToggleExpanded(id) => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
 
                 let mut objects = self.objects.borrow_mut();
 
@@ -1115,11 +1188,7 @@ impl Map {
 
                     for object in peer.objects {
                         let data = ObjectData::from_remote(&object);
-                        let object = PeerObject {
-                            peer_id: new_peer.peer_id,
-                            data,
-                        };
-                        new_peer.insert(object.id, object);
+                        new_peer.insert(data.id, data);
                     }
                 }
 
@@ -1133,14 +1202,14 @@ impl Map {
                     self.images.load(ctx, image_id);
                 }
 
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(true)
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
                 let changed = self.config.update(body.key, body.value);
-                self.needs_redraw = changed;
+                self.s.redraw = changed;
                 Ok(changed)
             }
             Msg::LocalUpdate(body) => {
@@ -1163,13 +1232,9 @@ impl Map {
                                 order.remove(*o.group, o.sort().to_vec(), o.id);
                             }
 
-                            if self.updates.selected == object_id {
-                                self.updates.select_object(
-                                    ctx,
-                                    Id::ZERO,
-                                    &mut self.config,
-                                    &objects,
-                                );
+                            if self.s.selected == object_id {
+                                self.s
+                                    .select_object(ctx, Id::ZERO, &mut self.config, &objects);
                             }
 
                             self.object_requests.remove(&object_id);
@@ -1224,7 +1289,7 @@ impl Map {
                     }
                 };
 
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(update)
             }
             Msg::RemoteUpdate(body) => {
@@ -1247,7 +1312,7 @@ impl Map {
 
                         for object in objects {
                             let data = ObjectData::from_remote(&object);
-                            peer.insert(data.id, PeerObject { peer_id, data });
+                            peer.insert(data.id, data);
                         }
 
                         for id in images {
@@ -1282,7 +1347,7 @@ impl Map {
                         let data = ObjectData::from_remote(&object);
 
                         if let Some(peer) = self.peers.get_mut(peer_id) {
-                            peer.insert(data.id, PeerObject { peer_id, data });
+                            peer.insert(data.id, data);
                         }
                     }
                     RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
@@ -1296,7 +1361,7 @@ impl Map {
                     }
                 }
 
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(false)
             }
             Msg::UpdateResult(body) => {
@@ -1311,12 +1376,12 @@ impl Map {
             }
             Msg::Resized => {
                 self.resize_canvas();
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(false)
             }
             Msg::ImageMessage(msg) => {
                 self.images.update(msg);
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(false)
             }
             Msg::CanvasDragOver(ev) => {
@@ -1400,7 +1465,7 @@ impl Map {
             }
             Msg::AnimationFrame => {
                 self.interpolate_movement();
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(false)
             }
             Msg::KeyDown(ev) => self.on_key_down(ctx, ev),
@@ -1409,8 +1474,7 @@ impl Map {
                 self.cancel_action();
 
                 let objects = self.objects.borrow();
-                self.updates
-                    .select_object(ctx, id, &mut self.config, &objects);
+                self.s.select_object(ctx, id, &mut self.config, &objects);
                 Ok(true)
             }
             Msg::ToggleFollowMumbleSelection => {
@@ -1482,12 +1546,12 @@ impl Map {
                 Ok(true)
             }
             Msg::ConfirmDelete(id) => {
-                self.updates.context_menu = None;
-                self.updates.delete = id;
+                self.s.context_menu = None;
+                self.s.delete = id;
                 Ok(true)
             }
             Msg::CancelDelete => {
-                self.updates.delete = Id::ZERO;
+                self.s.delete = Id::ZERO;
                 Ok(true)
             }
             Msg::DeleteObject(id) => {
@@ -1499,7 +1563,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectDeleted))
                     .send();
 
-                self.updates.delete = Id::ZERO;
+                self.s.delete = Id::ZERO;
                 Ok(false)
             }
             Msg::ObjectDeleted(result) => {
@@ -1513,7 +1577,7 @@ impl Map {
                 Ok(true)
             }
             Msg::CloseContextMenu => {
-                self.updates.context_menu = None;
+                self.s.context_menu = None;
                 Ok(true)
             }
         }
@@ -1538,10 +1602,10 @@ impl Map {
 
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = None;
-                    self.updates.look_at.insert(r.object_id);
+                    self.s.look_at.insert(r.object_id);
                 }
 
-                self.needs_redraw = true;
+                self.s.redraw = true;
                 Ok(true)
             }
             _ => Ok(false),
@@ -1550,7 +1614,7 @@ impl Map {
 
     fn cancel_action(&mut self) -> bool {
         if self.action.take().is_some() {
-            self.needs_redraw = true;
+            self.s.redraw = true;
             return true;
         }
 
@@ -1558,11 +1622,9 @@ impl Map {
     }
 
     fn start_translate_on_hit(&mut self, ctx: &Context<Self>) {
-        let Some(m) = self.mouse_position else {
+        let Some(m) = self.mouse else {
             return;
         };
-
-        let insert_transform;
 
         let order = self.order.borrow();
         let mut objects = self.objects.borrow_mut();
@@ -1577,13 +1639,12 @@ impl Map {
 
         let hit = hit.map(|o| o.id);
 
-        self.needs_redraw = hit.is_some();
+        self.s.redraw = hit.is_some();
 
-        let object_id = match (self.updates.selected, hit) {
+        let object_id = match (self.s.selected, hit) {
             (id, _) if !id.is_zero() => id,
-            (Id::ZERO, Some(hit)) if self.updates.selected != hit => {
-                self.updates
-                    .select_object(ctx, hit, &mut self.config, &objects);
+            (Id::ZERO, Some(hit)) if self.s.selected != hit => {
+                self.s.select_object(ctx, hit, &mut self.config, &objects);
 
                 if objects.get(hit).is_some_and(|o| o.is_token()) {
                     return;
@@ -1601,8 +1662,7 @@ impl Map {
             && objects.get(hit).is_some_and(|o| o.is_token())
         {
             // Forcibly update selection if the other click is a token.
-            self.updates
-                .select_object(ctx, hit, &mut self.config, &objects);
+            self.s.select_object(ctx, hit, &mut self.config, &objects);
             return;
         };
 
@@ -1621,52 +1681,49 @@ impl Map {
         let offset = if is_static {
             // Check that we hit the thing we are currently dragging.
             if let Some(hit) = hit
-                && hit != self.updates.selected
+                && hit != self.s.selected
             {
-                self.updates
+                self.s
                     .select_object(ctx, Id::ZERO, &mut self.config, &objects);
                 return;
             }
 
-            // Keep the cursor's offset relative to the object's origin
-            // while dragging. The stored vector is applied to the world
-            // cursor position on move.
-            let offset = o
-                .as_transform()
-                .map(|t| t.position - m)
-                .unwrap_or(Vec3::ZERO);
+            let Some(transform) = o.as_transform() else {
+                return;
+            };
 
-            insert_transform = true;
-            offset
+            // Keep the cursor's offset relative to the object's origin while
+            // dragging. The stored vector is applied to the world cursor
+            // position on move.
+            transform.position - m
         } else {
             o.move_target = Some(m);
-            insert_transform = false;
             m
         };
 
-        self.action = Some(Action::Translate(Translate { object_id, offset }));
+        let action = self
+            .action
+            .insert(Action::Translate(Translate { object_id, offset }));
 
-        if insert_transform {
-            self.updates.transforms.insert(object_id);
-        }
+        self.s.apply(&mut objects, action, m);
     }
 
     fn start_scale(&mut self) -> bool {
-        let Some(m) = self.mouse_position else {
+        let Some(m) = self.mouse else {
             return false;
         };
 
-        if self.updates.selected.is_zero() {
+        if self.s.selected.is_zero() {
             return false;
         }
 
         let mut objects = self.objects.borrow_mut();
 
-        if objects.is_locked(self.updates.selected) {
+        if objects.is_locked(self.s.selected) {
             return false;
         };
 
-        let Some(o) = objects.get_mut(self.updates.selected) else {
+        let Some(o) = objects.get_mut(self.s.selected) else {
             return false;
         };
 
@@ -1678,23 +1735,14 @@ impl Map {
 
         o.move_target = None;
 
-        self.action = Some(Action::Scale(Scale {
-            object_id: self.updates.selected,
+        let action = self.action.insert(Action::Scale(Scale {
+            object_id: self.s.selected,
             scale: 1.0,
             position,
             initial_distance,
         }));
 
-        true
-    }
-
-    fn update_action(&mut self, mouse: Vec3) -> bool {
-        let Some(Action::Scale(scale)) = &mut self.action else {
-            return false;
-        };
-
-        let distance = scale.position.dist(mouse).max(0.01);
-        scale.scale = distance / scale.initial_distance;
+        self.s.apply(&mut objects, action, m);
         true
     }
 
@@ -1753,20 +1801,19 @@ impl Map {
 
         match key.as_str() {
             "Delete" => {
-                if self.updates.delete == self.updates.selected {
+                if self.s.delete == self.s.selected {
                     return Ok(false);
                 }
 
                 ev.prevent_default();
-                self.updates.context_menu = None;
-                self.updates.delete = self.updates.selected;
+                self.s.context_menu = None;
+                self.s.delete = self.s.selected;
                 Ok(true)
             }
             "Enter" => {
-                if !self.updates.delete.is_zero() {
+                if !self.s.delete.is_zero() {
                     ev.prevent_default();
-                    ctx.link()
-                        .send_message(Msg::DeleteObject(self.updates.delete));
+                    ctx.link().send_message(Msg::DeleteObject(self.s.delete));
                 }
 
                 Ok(false)
@@ -1782,12 +1829,12 @@ impl Map {
                 Ok(self.start_scale())
             }
             "t" | "T" => {
-                if self.updates.selected.is_zero() {
+                if self.s.selected.is_zero() {
                     return Ok(false);
                 }
 
                 ev.prevent_default();
-                self.toggle_locked(ctx, self.updates.selected)
+                self.toggle_locked(ctx, self.s.selected)
             }
             "r" | "R" => {
                 if self.start_rotation()? {
@@ -1806,9 +1853,9 @@ impl Map {
                 self.open_settings = None;
                 self.open_help = false;
 
-                self.updates.delete = Id::ZERO;
-                self.updates.selected = Id::ZERO;
-                self.updates.context_menu = None;
+                self.s.delete = Id::ZERO;
+                self.s.selected = Id::ZERO;
+                self.s.context_menu = None;
                 Ok(true)
             }
             "Shift" => {
@@ -1824,32 +1871,25 @@ impl Map {
     }
 
     fn start_rotation(&mut self) -> Result<bool, Error> {
-        let Some(m) = self.mouse_position else {
+        let Some(m) = self.mouse else {
             return Ok(false);
         };
 
         let mut objects = self.objects.borrow_mut();
 
-        if self.updates.selected.is_zero() {
+        if self.s.selected.is_zero() {
             return Ok(false);
         }
 
-        if objects.is_locked(self.updates.selected) {
+        if objects.is_locked(self.s.selected) {
             return Ok(false);
         }
 
-        let Some(o) = objects.get_mut(self.updates.selected) else {
+        let Some(o) = objects.get(self.s.selected) else {
             return Ok(false);
         };
 
         let object_id = o.id;
-
-        let has_look_at = if let Some(look_at) = o.as_look_at_mut() {
-            **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-            true
-        } else {
-            false
-        };
 
         let Some(transform) = o.as_transform() else {
             return Ok(false);
@@ -1864,21 +1904,14 @@ impl Map {
             0.0
         };
 
-        self.action = Some(Action::Rotate(Rotate {
+        let action = self.action.insert(Action::Rotate(Rotate {
             object_id,
             center,
             rotation_offset,
             is_static: o.is_static(),
         }));
 
-        if has_look_at {
-            self.updates.look_at(&mut objects, center, m);
-            self.updates.look_at.insert(object_id);
-        } else {
-            self.updates.look_at(&mut objects, center, m);
-        }
-
-        self.needs_redraw = true;
+        self.s.apply(&mut objects, action, m);
         Ok(true)
     }
 
@@ -1907,7 +1940,7 @@ impl Map {
                 if distance < 0.01 {
                     transform.position = *target;
                     o.move_target = None;
-                    self.updates.transforms.insert(id);
+                    self.s.transforms.insert(id);
                     break 'move_done;
                 }
 
@@ -1924,7 +1957,7 @@ impl Map {
                     transform.front = p.direction_to(*target);
                 }
 
-                self.updates.transforms.insert(id);
+                self.s.transforms.insert(id);
             };
 
             'look_done: {
@@ -1934,7 +1967,7 @@ impl Map {
 
                 o.arrow_target = Some(*t);
                 transform.front = p.direction_to(*t);
-                self.updates.transforms.insert(id);
+                self.s.transforms.insert(id);
             };
         }
 
@@ -1945,13 +1978,13 @@ impl Map {
 
     fn send_transform_updates(&mut self, ctx: &Context<Self>) {
         if !matches!(self.state, ws::State::Open) {
-            self.updates.transforms.clear();
+            self.s.transforms.clear();
             return;
         }
 
         let objects = self.objects.borrow();
 
-        for id in self.updates.transforms.drain() {
+        for id in self.s.transforms.drain() {
             let Some(o) = objects.get(id) else {
                 continue;
             };
@@ -1967,13 +2000,13 @@ impl Map {
 
     fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
         if !matches!(self.state, ws::State::Open) {
-            self.updates.look_at.clear();
+            self.s.look_at.clear();
             return;
         }
 
         let objects = self.objects.borrow();
 
-        for id in self.updates.look_at.drain() {
+        for id in self.s.look_at.drain() {
             let Some(o) = objects.get(id) else {
                 continue;
             };
@@ -2007,14 +2040,14 @@ impl Map {
             .map(|o| o.id);
 
         if let Some(object_id) = hit {
-            self.updates.selected = object_id;
-            self.updates.context_menu = Some(ContextMenu {
+            self.s.selected = object_id;
+            self.s.context_menu = Some(ContextMenu {
                 object_id,
                 x: ev.offset_x() as f64,
                 y: ev.offset_y() as f64,
             });
         } else {
-            self.updates.context_menu = None;
+            self.s.context_menu = None;
         }
 
         Ok(())
@@ -2083,7 +2116,7 @@ impl Map {
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
         ev.prevent_default();
 
-        self.updates.context_menu = None;
+        self.s.context_menu = None;
 
         match ev.button() {
             LEFT_MOUSE_BUTTON if ev.shift_key() => {
@@ -2095,7 +2128,7 @@ impl Map {
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
-                self.mouse_position = Some(e);
+                self.mouse = Some(e);
 
                 if self.start_rotation()? {
                     ev.prevent_default();
@@ -2104,7 +2137,7 @@ impl Map {
             }
             LEFT_MOUSE_BUTTON => {
                 if self.finalize_action(ctx) {
-                    self.needs_redraw = true;
+                    self.s.redraw = true;
                     return Ok(());
                 }
 
@@ -2116,7 +2149,7 @@ impl Map {
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
-                self.mouse_position = Some(e);
+                self.mouse = Some(e);
                 self.start_translate_on_hit(ctx);
             }
             MIDDLE_MOUSE_BUTTON => {
@@ -2144,72 +2177,18 @@ impl Map {
             *self.config.pan = self.config.pan.add(dx, dy);
             self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
             self.update_world = true;
-            self.needs_redraw = true;
+            self.s.redraw = true;
         }
 
         let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let m = v.to_world(m);
 
-        self.mouse_position = Some(m);
-
-        if self.update_action(m) {
-            return Ok(());
-        }
+        self.mouse = Some(m);
 
         let mut objects = self.objects.borrow_mut();
 
-        'done: {
-            match &self.action {
-                Some(Action::Rotate(r)) => {
-                    let Some(o) = objects.get_mut(r.object_id) else {
-                        break 'done;
-                    };
-
-                    let dist = r.center.dist(m);
-
-                    if dist < ARROW_THRESHOLD {
-                        break 'done;
-                    }
-
-                    if r.is_static {
-                        // Use the original cursor offset to rotate relative to the initial grab.
-                        if let Some(transform) = o.as_transform_mut() {
-                            let cursor = m - r.center;
-                            let angle = cursor.angle_xz() + r.rotation_offset;
-                            transform.front =
-                                Vec3::new(angle.cos(), transform.front.y, -angle.sin());
-                            self.updates.transforms.insert(o.id);
-                        }
-
-                        o.arrow_target = Some(m);
-                    } else if let Some(look_at) = o.as_look_at_mut() {
-                        **look_at = Some(Vec3::new(m.x, 0.0, m.z));
-                        self.updates.look_at.insert(o.id);
-                        self.updates.look_at(&mut objects, r.center, m);
-                    }
-
-                    self.needs_redraw = true;
-                }
-                Some(Action::Translate(t)) => {
-                    let Some(o) = objects.get_mut(t.object_id) else {
-                        break 'done;
-                    };
-
-                    if o.is_static() {
-                        let Some(transform) = o.as_transform_mut() else {
-                            break 'done;
-                        };
-
-                        transform.position = m + t.offset;
-                        self.updates.transforms.insert(o.id);
-                        self.needs_redraw = true;
-                    } else {
-                        o.move_target = Some(m);
-                        self.needs_redraw = true;
-                    }
-                }
-                _ => break 'done,
-            }
+        if let Some(action) = &mut self.action {
+            self.s.apply(&mut objects, action, m);
         }
 
         Ok(())
@@ -2226,9 +2205,9 @@ impl Map {
 
                 let mut objects = self.objects.borrow_mut();
 
-                if let Some(o) = objects.get_mut(self.updates.selected) {
+                if let Some(o) = objects.get_mut(self.s.selected) {
                     o.arrow_target = None;
-                    self.needs_redraw = true;
+                    self.s.redraw = true;
                 }
             }
             MIDDLE_MOUSE_BUTTON => {
@@ -2243,12 +2222,12 @@ impl Map {
     fn on_pointer_leave(&mut self, ev: PointerEvent) -> Result<bool, Error> {
         ev.prevent_default();
 
-        self.needs_redraw |= self.action.take().is_some();
+        self.s.redraw |= self.action.take().is_some();
         self.pan_anchor = None;
-        self.mouse_position = None;
+        self.mouse = None;
 
-        if let Some(o) = self.objects.borrow_mut().get_mut(self.updates.selected) {
-            self.needs_redraw |= o.arrow_target.take().is_some();
+        if let Some(o) = self.objects.borrow_mut().get_mut(self.s.selected) {
+            self.s.redraw |= o.arrow_target.take().is_some();
         }
 
         Ok(false)
@@ -2278,7 +2257,7 @@ impl Map {
         self.config.pan.y += c1.y - c2.y;
 
         self.update_world = true;
-        self.needs_redraw = true;
+        self.s.redraw = true;
         Ok(())
     }
 
@@ -2383,7 +2362,7 @@ impl Map {
         let new = !**locked;
         **locked = new;
         self._toggle_locked = object_update(ctx, id, Key::LOCKED, Value::from(new));
-        self.needs_redraw = true;
+        self.s.redraw = true;
         Ok(true)
     }
 
@@ -2406,36 +2385,37 @@ impl Map {
 
         render::draw_grid(&cx, &view, &self.config.extent, *self.config.zoom);
 
-        let selected = self.updates.selected;
+        let selected = self.s.selected;
 
         let order = self.order.borrow();
         let objects = self.objects.borrow();
 
         // Draw remote static objects.
         for peer in self.peers.iter() {
-            let Some(render) =
-                RenderObject::from_data(peer, None, |id| self.peers.visibility(peer.peer_id, id))
-            else {
-                continue;
-            };
+            for o in peer.objects() {
+                let Some(render) = RenderObject::from_data(o, None, |id| peer.visibility(id))
+                else {
+                    continue;
+                };
 
-            if render.base.visibility.is_hidden() {
-                continue;
-            }
-
-            match &render.kind {
-                RenderObjectKind::Static(this) => {
-                    render::draw_static(&cx, &view, &render.base, this, |id| {
-                        self.images.get(id).cloned()
-                    })?;
+                if render.base.visibility.is_hidden() {
+                    continue;
                 }
-                RenderObjectKind::Token(this) => {
-                    render::draw_token(&cx, &view, &render.base, this, |id| {
-                        self.images.get(id).cloned()
-                    })?;
 
-                    if let Some(look_at) = this.look_at {
-                        self.look_ats.push((*look_at, this.color));
+                match &render.kind {
+                    RenderObjectKind::Static(this) => {
+                        render::draw_static(&cx, &view, &render.base, this, |id| {
+                            self.images.get(id).cloned()
+                        })?;
+                    }
+                    RenderObjectKind::Token(this) => {
+                        render::draw_token(&cx, &view, &render.base, this, |id| {
+                            self.images.get(id).cloned()
+                        })?;
+
+                        if let Some(look_at) = this.look_at {
+                            self.look_ats.push((*look_at, this.color));
+                        }
                     }
                 }
             }
