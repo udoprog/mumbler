@@ -33,12 +33,16 @@ pub struct StaticFile(Cow<'static, str>);
 
 impl IntoResponse for StaticFile {
     fn into_response(self) -> Response {
-        match Asset::get(self.0.as_ref()) {
-            Some(content) => {
-                let mime = mime_guess::from_path(self.0.as_ref()).first_or_octet_stream();
-                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-            }
-            None => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
-        }
+        let Some(content) = Asset::get(self.0.as_ref()) else {
+            let Some(content) = Asset::get("index.html") else {
+                return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
+            };
+
+            let mime = mime_guess::from_path("index.html").first_or_octet_stream();
+            return ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response();
+        };
+
+        let mime = mime_guess::from_path(self.0.as_ref()).first_or_octet_stream();
+        ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
     }
 }

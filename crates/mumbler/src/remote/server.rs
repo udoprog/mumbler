@@ -19,6 +19,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
+use crate::crypto;
 use crate::remote::api::{
     ImageCreateBody, ImageRemoveBody, ObjectCreateBody, ObjectRemoveBody, ObjectUpdateBody,
     PeerUpdateBody, RemoteImage,
@@ -26,7 +27,7 @@ use crate::remote::api::{
 use crate::remote::{DEFAULT_PORT, DEFAULT_TLS_PORT};
 use crate::tls;
 
-use super::api::{ConnectBody, Event, PingBody};
+use super::api::{ConnectBody, Event, HelloBody, PingBody};
 use super::{Client, Peer};
 
 #[cfg(feature = "tls")]
@@ -43,12 +44,22 @@ async fn accept_tls(tls_acceptor: tls::TlsAcceptor, stream: TcpStream) -> Result
 }
 
 struct Data {
+    /// If the peer has been authenticated.
+    ///
+    /// This guarantees that for whatever peer id that was chosen, the peer has
+    /// proven that they own the private key corresponding to it. It does not
+    /// speak to the strength of that private key.
+    authenticated: bool,
     /// The socket address of the peer.
     addr: SocketAddr,
     /// The peer state.
     peer: Peer,
     /// The unique identifier of this peer.
     peer_id: PeerId,
+    /// Server-generated nonce sent as a challenge once the client sends Hello.
+    /// The client must sign this to prove ownership of its private key.
+    /// `None` until Hello is received; cleared to `None` after successful auth.
+    challenge: Option<[u8; 32]>,
     /// Objects that the peer has set.
     objects: HashMap<Id, RemoteObject>,
     /// Images that the peer has set.
@@ -96,9 +107,11 @@ impl ServerPeer {
         Box::pin(Self {
             timeout: time::sleep(Duration::from_secs(5)),
             data: Data {
+                authenticated: false,
                 addr,
                 peer,
                 peer_id: PeerId::new(rand::random()),
+                challenge: None,
                 objects: HashMap::new(),
                 images: HashMap::new(),
                 props: Properties::new(),
@@ -300,7 +313,8 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                 if remove {
                     state.remove_peer(peer, &mut peers, &mut wakers);
                 } else {
-                    peers.insert(id, peer);
+                    // peer_id may have changed during authentication (temp random → real key)
+                    peers.insert(peer.data.peer_id, peer);
                 }
             }
         }
@@ -422,13 +436,35 @@ impl State {
 
                     data.peer.pong(body.payload)?;
                 }
+                Event::Hello => {
+                    let body = body.decode::<HelloBody>()?;
+                    tracing::debug!(?message, body.version);
+
+                    if data.challenge.is_some() {
+                        anyhow::bail!("received duplicate Hello");
+                    }
+
+                    let nonce: [u8; 32] = rand::random();
+                    data.peer.challenge(&nonce)?;
+                    data.challenge = Some(nonce);
+                }
                 Event::Connect => {
                     let body = body.decode::<ConnectBody>()?;
-                    tracing::debug!(?message, body.version, connect.room = ?BStr::new(&body.room));
+                    tracing::debug!(?message, hello.room = ?BStr::new(&body.room));
 
-                    if let Some(old_room) = data.room.replace(body.room.clone()) {
-                        self.leave_room(&old_room, data.peer_id, peers);
+                    let Some(challenge) = data.challenge.take() else {
+                        anyhow::bail!("received Connect without a prior Hello");
+                    };
+
+                    crypto::verify(body.peer_id, &challenge, &body.signature)?;
+
+                    let new_peer_id = body.peer_id;
+
+                    if peers.get(&new_peer_id).is_some() {
+                        anyhow::bail!("a peer with that identity is already connected");
                     }
+
+                    data.peer_id = new_peer_id;
 
                     for object in body.objects {
                         data.objects.insert(object.id, object);
@@ -439,12 +475,17 @@ impl State {
                     }
 
                     data.props = body.props;
+                    data.room = Some(body.room);
+                    data.authenticated = true;
 
-                    // We have just connected, so send all information about other peers to
-                    // the new peer.
-                    self.join_room(data, &body.room, peers);
+                    let room = data
+                        .room
+                        .clone()
+                        .context("received Connect without a prior Hello")?;
+
+                    self.join_room(data, &room, peers);
                 }
-                Event::PeerUpdate => {
+                Event::PeerUpdate if data.authenticated => {
                     let body = body.decode::<PeerUpdateBody>()?;
                     tracing::debug!(?message, ?body.key, ?body.value);
 
@@ -459,7 +500,7 @@ impl State {
                         peers,
                     );
                 }
-                Event::ObjectCreate => {
+                Event::ObjectCreate if data.authenticated => {
                     let body = body.decode::<ObjectCreateBody>()?;
                     tracing::debug!(?message, id = ?body.object.id);
 
@@ -475,7 +516,7 @@ impl State {
                         peers,
                     );
                 }
-                Event::ObjectUpdate => {
+                Event::ObjectUpdate if data.authenticated => {
                     let body = body.decode::<ObjectUpdateBody>()?;
                     tracing::debug!(?message, ?body.key, ?body.value);
 
@@ -498,7 +539,7 @@ impl State {
                         peers,
                     );
                 }
-                Event::ObjectRemove => {
+                Event::ObjectRemove if data.authenticated => {
                     let body = body.decode::<ObjectRemoveBody>()?;
                     tracing::debug!(?message, id = ?body.object_id);
 
@@ -510,7 +551,7 @@ impl State {
                         peers,
                     );
                 }
-                Event::ImageCreate => {
+                Event::ImageCreate if data.authenticated => {
                     let body = body.decode::<ImageCreateBody>()?;
                     tracing::debug!(?message, id = ?body.image.id);
 
@@ -526,11 +567,11 @@ impl State {
                         peers,
                     );
                 }
-                Event::ImageRemove => {
+                Event::ImageRemove if data.authenticated => {
                     let body = body.decode::<ImageRemoveBody>()?;
                     tracing::debug!(?message, id = ?body.image_id);
 
-                    data.objects.remove(&body.image_id);
+                    data.images.remove(&body.image_id);
 
                     data.send_to_room(
                         |peer| peer.peer_mut().image_removed(data.peer_id, body.image_id),

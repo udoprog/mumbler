@@ -9,8 +9,9 @@ use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
 use crate::backend::BackendEvent;
+use crate::crypto::{self, Keypair};
 use crate::remote::api::{
-    Event, ImageCreatedBody, ImageRemovedBody, ObjectCreatedBody, ObjectRemovedBody,
+    ChallengeBody, Event, ImageCreatedBody, ImageRemovedBody, ObjectCreatedBody, ObjectRemovedBody,
     ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PeerUpdatedBody, PongBody, RemoteImage,
 };
 use crate::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
@@ -20,11 +21,53 @@ const COMPONENT: &str = "remote-client";
 async fn handle_peer(
     peer: &mut Peer,
     b: &Backend,
+    keypair: &Keypair,
     last_ping: &mut Option<u64>,
     mut ping_timeout: Pin<&mut Sleep>,
 ) -> Result<()> {
     while let Some((id, body)) = peer.read::<Event>()? {
         match id {
+            Event::Challenge => {
+                let body = body.decode::<ChallengeBody>()?;
+                let sig = keypair.sign(&body.nonce);
+
+                let mut objects = Vec::new();
+                let mut images = Vec::new();
+                let props;
+
+                {
+                    let state = b.client_state().await;
+
+                    for object in state.objects.values() {
+                        objects.push(RemoteObject {
+                            ty: object.ty,
+                            id: object.id,
+                            props: object.props.clone(),
+                        });
+                    }
+
+                    for image in state.images.values() {
+                        images.push(RemoteImage {
+                            id: image.id,
+                            content_type: image.content_type,
+                            bytes: Box::from(image.bytes.as_slice()),
+                            width: image.width,
+                            height: image.height,
+                        });
+                    }
+
+                    props = state.props.clone();
+                }
+
+                peer.connect(
+                    keypair.peer_id(),
+                    sig,
+                    b"default",
+                    &objects,
+                    &images,
+                    &props,
+                )?;
+            }
             Event::Pong => {
                 let body = body.decode::<PongBody>()?;
                 tracing::trace!(?id, body.payload);
@@ -224,42 +267,19 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
     let mut last_ping = None;
     let mut wait = pin!(b.client_wait());
 
-    let mut objects = Vec::new();
-    let mut images = Vec::new();
-    let props;
-
-    {
-        let state = b.client_state().await;
-
-        for object in state.objects.values() {
-            objects.push(RemoteObject {
-                ty: object.ty,
-                id: object.id,
-                props: object.props.clone(),
-            });
-        }
-
-        for image in state.images.values() {
-            images.push(RemoteImage {
-                id: image.id,
-                content_type: image.content_type,
-                bytes: Box::from(image.bytes.as_slice()),
-                width: image.width,
-                height: image.height,
-            });
-        }
-
-        props = state.props.clone();
-    }
+    let keypair = {
+        let s = b.client_state().await;
+        crypto::derive_keypair(s.client_secret.as_bytes())
+    };
 
     let mut peer = Peer::new(client);
-    peer.connect(b"default", &objects, &images, &props)?;
+    peer.hello()?;
 
     loop {
         tokio::select! {
             result = peer.ready() => {
                 result?;
-                handle_peer(&mut peer, &b, &mut last_ping, ping_timeout.as_mut()).await?;
+                handle_peer(&mut peer, &b, &keypair, &mut last_ping, ping_timeout.as_mut()).await?
             }
             () = wait.as_mut() => {
                 let mut client_state = b.client_state().await;
@@ -329,10 +349,9 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 /// Runs and automatically reconnects the remote client.
 ///
 /// Reads `remote/server` and `remote/enabled` from the database via
-/// [`Backend::remote_config`] and re-reads them whenever a restart is
-/// signalled by [`Backend::restart_client`].  The inner [`run`] loop is
-/// restarted on error after a 5-second back-off, unless the connection is
-/// disabled.
+/// [`Backend::remote_config`] and re-reads them whenever a restart is signalled
+/// by [`Backend::restart_client`]. The inner [`run`] loop is restarted on error
+/// after a 5-second back-off, unless the connection is disabled.
 pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
     let settings = async || -> Result<(Option<String>, bool, bool)> {
         let connect = b

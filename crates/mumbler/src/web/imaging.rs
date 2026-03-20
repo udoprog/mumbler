@@ -7,13 +7,13 @@ use image::{DynamicImage, ImageFormat, imageops};
 
 /// Process raw image bytes into a PNG.
 ///
-/// If `crop` is provided the image is first cropped to that region;
-/// otherwise the full image is used. The cropped (or full) image is then
-/// downscaled so its longer side equals `size`.
+/// If `crop` is provided the image is first cropped to that region; otherwise
+/// the full image is used. The cropped (or full) image is then downscaled so
+/// its longer side equals `size`.
 ///
-/// When `square` is `true` the result is composited onto a `size × size`
-/// canvas filled with the average colour of the resized image.  When
-/// `false` the resized image is returned as-is, preserving aspect ratio.
+/// When `square` is `true` the result is composited onto a `size × size` canvas
+/// filled with the average colour of the resized image. When `false` the
+/// resized image is returned as-is, preserving aspect ratio.
 pub(crate) fn process(
     data: &[u8],
     crop: CropRegion,

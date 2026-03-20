@@ -1,5 +1,7 @@
 #![allow(clippy::new_without_default)]
 
+const VERSION: u32 = 1;
+
 pub mod server;
 
 mod client;

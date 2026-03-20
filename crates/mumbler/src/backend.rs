@@ -13,6 +13,8 @@ use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::crypto;
+
 use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
@@ -73,6 +75,8 @@ pub(crate) struct PeerInfo {
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
+    /// The client's own secret, used for deriving its keypair and `PeerId`.
+    pub(crate) client_secret: String,
     /// Remote objects.
     pub(crate) peers: HashMap<PeerId, PeerInfo>,
     /// Local objects.
@@ -234,6 +238,16 @@ impl Backend {
             );
         }
 
+        let client_secret = match db.config(Key::PEER_SECRET).await? {
+            Some(secret) => secret,
+            None => {
+                let secret = crypto::random_string();
+                db.set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
+                    .await?;
+                secret
+            }
+        };
+
         let mumble_object = db.config(Key::MUMBLE_OBJECT).await?.unwrap_or_default();
 
         tracing::debug!("Loaded {} objects", objects.len());
@@ -243,6 +257,7 @@ impl Backend {
                 database: db,
                 paths,
                 client_state: Mutex::new(ClientState {
+                    client_secret,
                     peers: HashMap::new(),
                     objects,
                     objects_changed: HashSet::new(),
@@ -415,7 +430,7 @@ impl Backend {
     }
 
     /// Create a new local object, persisting it to the database and inserting
-    /// it into the in-memory client state.  Returns the new object's ID.
+    /// it into the in-memory client state. Returns the new object's ID.
     pub(crate) async fn create_object(&self, ty: Type, props: Properties) -> Result<RemoteObject> {
         let id = Id::new(rand::random());
 

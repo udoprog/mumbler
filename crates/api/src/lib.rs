@@ -73,6 +73,8 @@ crate::macros::keys! {
         EXPANDED: Boolean = 26;
         /// The name of a peer.
         PEER_NAME: String = 28;
+        /// A secret used to derive the peer's identity keypair.
+        PEER_SECRET: String = 29;
     }
 }
 

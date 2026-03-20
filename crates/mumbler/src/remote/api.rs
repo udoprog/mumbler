@@ -1,7 +1,15 @@
+use core::fmt;
+
+use base64::display::Base64Display;
+use base64::engine::GeneralPurpose;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
 use ::api::{ContentType, Id, Key, PeerId, Properties, RemoteObject, Value};
+
+/// The engine used for base64.
+static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -12,11 +20,74 @@ pub struct Header {
     pub error: u16,
 }
 
+/// A signature.
+#[derive(Clone, Copy, Encode, Decode)]
+#[musli(crate = musli_core, transparent)]
+pub struct Signature {
+    raw: [u8; 64],
+}
+
+impl Signature {
+    /// Construct a raw signature.
+    #[inline]
+    pub fn new(raw: [u8; 64]) -> Self {
+        Self { raw }
+    }
+
+    /// The raw bytes of the signature.
+    pub fn as_bytes(&self) -> &[u8; 64] {
+        &self.raw
+    }
+}
+
+impl fmt::Display for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let this = Base64Display::new(&self.raw, &ENGINE);
+        fmt::Display::fmt(&this, f)
+    }
+}
+
+impl fmt::Debug for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let this = Base64Display::new(&self.raw, &ENGINE);
+        fmt::Display::fmt(&this, f)
+    }
+}
+
+/// Sent by the server in response to [`HelloBodyRef`]; the client must sign the
+/// nonce with its private key and respond with a [`ConnectBodyRef`].
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct ChallengeBody {
+    /// Random server-generated nonce (32 bytes).
+    pub nonce: Box<[u8]>,
+}
+
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct ChallengeBodyRef<'a> {
+    /// Random server-generated nonce (32 bytes).
+    pub nonce: &'a [u8],
+}
+
+/// Sent by the client to announce its presence. Once received, the server will
+/// send a challenge to authenticate the client.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct HelloBody {
+    /// The protocol version of the client.
+    pub version: u32,
+}
+
+/// Sent by the client in response to a [`ChallengeBody`] to authenticate.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct ConnectBody {
-    /// The protocol version of the client.
-    pub version: u32,
+    /// The requested peer id.
+    pub peer_id: PeerId,
+    /// The signature over the server challenge nonce, proving ownership of peer
+    /// id.
+    pub signature: Signature,
     /// The context to connect to.
     pub room: Box<[u8]>,
     /// List of objects owned by peer.
@@ -30,8 +101,11 @@ pub struct ConnectBody {
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
 pub struct ConnectBodyRef<'a> {
-    /// The protocol version of the client.
-    pub version: u32,
+    /// The requested peer id.
+    pub peer_id: PeerId,
+    /// The signature over the server challenge nonce, proving ownership of peer
+    /// id.
+    pub signature: Signature,
     /// The context to connect to.
     pub room: &'a [u8],
     /// List of objects owned by peer.
@@ -285,6 +359,19 @@ pub struct ImageRemovedBody {
 }
 
 api::define! {
+    pub type Challenge;
+
+    impl Broadcast for Challenge {
+        impl Event for ChallengeBody;
+        impl Event for ChallengeBodyRef<'_>;
+    }
+
+    pub type Hello;
+
+    impl Broadcast for Hello {
+        impl Event for HelloBody;
+    }
+
     pub type Connect;
 
     impl Broadcast for Connect {

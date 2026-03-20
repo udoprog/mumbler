@@ -14,6 +14,7 @@ use super::into_target;
 pub(crate) enum Msg {
     StateChanged(ws::State),
     NameChanged(Event),
+    PeerSecretChanged(Event),
     ServerChanged(Event),
     TlsToggled(Event),
     UpdateConfig(Result<Packet<api::Updates>, ws::Error>),
@@ -31,6 +32,8 @@ pub(crate) struct Settings {
     state: ws::State,
     name: State<String>,
     _name_request: ws::Request,
+    peer_secret: State<String>,
+    _peer_secret_request: ws::Request,
     remote_server: State<String>,
     _remote_server_request: ws::Request,
     remote_server_tls: State<bool>,
@@ -66,6 +69,8 @@ impl Component for Settings {
             state,
             name: State::new(String::new()),
             _name_request: ws::Request::new(),
+            peer_secret: State::new(String::new()),
+            _peer_secret_request: ws::Request::new(),
             remote_server: State::new(String::new()),
             _remote_server_request: ws::Request::new(),
             remote_server_tls: State::new(false),
@@ -103,6 +108,18 @@ impl Component for Settings {
                         placeholder="Name"
                         value={(*self.name).clone()}
                         onchange={ctx.link().callback(Msg::NameChanged)}
+                        />
+                </section>
+
+                <section class="input-group">
+                    <label for="peer-secret">{"Secret Phrase:"}</label>
+
+                    <input
+                        id="peer-secret"
+                        type="password"
+                        placeholder="peer secret"
+                        value={(*self.peer_secret).clone()}
+                        onchange={ctx.link().callback(Msg::PeerSecretChanged)}
                         />
                 </section>
 
@@ -172,6 +189,32 @@ impl Settings {
                     .request()
                     .body(api::UpdatesRequest {
                         values: vec![(api::Key::PEER_NAME, value)],
+                    })
+                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
+                    .send();
+
+                Ok(false)
+            }
+            Msg::PeerSecretChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+
+                let value = input.value();
+                let value = value.trim();
+
+                let value = if value.is_empty() {
+                    *self.peer_secret = String::new();
+                    api::Value::empty()
+                } else {
+                    *self.peer_secret = value.to_owned();
+                    api::Value::from((*self.peer_secret).clone())
+                };
+
+                self._peer_secret_request = ctx
+                    .props()
+                    .ws
+                    .request()
+                    .body(api::UpdatesRequest {
+                        values: vec![(api::Key::PEER_SECRET, value)],
                     })
                     .on_packet(ctx.link().callback(Msg::UpdateConfig))
                     .send();
@@ -255,6 +298,9 @@ impl Settings {
         match key {
             Key::PEER_NAME => Ok(self
                 .name
+                .update(value.as_str().unwrap_or_default().to_string())),
+            Key::PEER_SECRET => Ok(self
+                .peer_secret
                 .update(value.as_str().unwrap_or_default().to_string())),
             Key::REMOTE_SERVER => Ok(self
                 .remote_server

@@ -13,12 +13,12 @@ use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
 use super::api::{
-    ConnectBodyRef, Header, ImageCreateBody, ImageCreatedBody, ImageRemoveBody, ImageRemovedBody,
-    ObjectCreateBody, ObjectCreatedBody, ObjectRemoveBody, ObjectRemovedBody, ObjectUpdateBodyRef,
-    ObjectUpdatedBodyRef, PeerJoinBodyRef, PeerLeaveBody, PeerUpdateBodyRef, PeerUpdatedBodyRef,
-    PingBody, PongBody, RemoteImage,
+    ChallengeBodyRef, ConnectBodyRef, Header, HelloBody, ImageCreateBody, ImageCreatedBody,
+    ImageRemoveBody, ImageRemovedBody, ObjectCreateBody, ObjectCreatedBody, ObjectRemoveBody,
+    ObjectRemovedBody, ObjectUpdateBodyRef, ObjectUpdatedBodyRef, PeerJoinBodyRef, PeerLeaveBody,
+    PeerUpdateBodyRef, PeerUpdatedBodyRef, PingBody, PongBody, RemoteImage, Signature,
 };
-use super::{Buf, Client, Scratch};
+use super::{Buf, Client, Scratch, VERSION};
 
 const MAX_MESSAGE: usize = 1024 * 1024;
 
@@ -117,22 +117,40 @@ impl Peer {
         }
     }
 
-    /// Connects the peer by sending a connect request.
+    /// Sends a challenge nonce to the peer. The client must respond with a
+    /// signed `Connect` message.
+    pub fn challenge(&mut self, nonce: &[u8]) -> Result<()> {
+        self.scratch.send(ChallengeBodyRef { nonce })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Sends a hello to the server, announcing the desired room and initial
+    /// state. The server responds with a [`ChallengeBody`].
+    pub fn hello(&mut self) -> Result<()> {
+        self.scratch.send(HelloBody { version: VERSION })?;
+        self.write.write_message(&mut self.scratch);
+        Ok(())
+    }
+
+    /// Connect to the remote server, registering a peer id and providing a challenge response.
     pub fn connect(
         &mut self,
+        peer_id: PeerId,
+        signature: Signature,
         room: &[u8],
         objects: &[RemoteObject],
         images: &[RemoteImage],
         props: &Properties,
     ) -> Result<()> {
         self.scratch.send(ConnectBodyRef {
-            version: 1,
+            peer_id,
+            signature,
             room,
             objects,
             images,
             props,
         })?;
-
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

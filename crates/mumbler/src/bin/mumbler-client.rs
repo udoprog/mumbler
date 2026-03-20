@@ -6,7 +6,10 @@ use core::pin::pin;
 use anyhow::{Context, Result, bail};
 use api::Properties;
 use clap::Parser;
-use mumbler::remote::api::{Event, ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PongBody};
+use mumbler::crypto;
+use mumbler::remote::api::{
+    ChallengeBody, Event, ObjectUpdatedBody, PeerJoinBody, PeerLeaveBody, PongBody,
+};
 use mumbler::remote::{Client, DEFAULT_PORT, DEFAULT_TLS_PORT, Peer};
 use tokio::net::TcpStream;
 use tokio::time::{self, Duration, Instant};
@@ -29,6 +32,9 @@ struct Opts {
     /// Override the TLS server name to expect.
     #[clap(long)]
     tls_name: Option<String>,
+    /// The secret to derive a keypair from for the connected client.
+    #[clap(long)]
+    peer_secret: Option<String>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -72,12 +78,14 @@ async fn main() -> Result<()> {
 
     tracing::info!(tls = opts.tls, ?addr, "connected");
 
-    let objects = Vec::new();
-    let images = Vec::new();
-    let props = Properties::new();
+    let secret = match opts.peer_secret {
+        Some(s) => s,
+        None => crypto::random_string(),
+    };
 
+    let keypair = crypto::derive_keypair(secret.as_bytes());
     let mut peer = Peer::new(client);
-    peer.connect(opts.room.as_bytes(), &objects, &images, &props)?;
+    peer.hello()?;
 
     let mut ping_timeout = pin!(time::sleep(Duration::from_secs(1)));
     let mut pong_timeout = pin!(time::sleep(Duration::from_secs(0)));
@@ -100,6 +108,16 @@ async fn main() -> Result<()> {
                                 ping_timeout.as_mut().reset(Instant::now() + Duration::from_secs(1));
                             }
                         },
+                        Event::Challenge => {
+                            let body = body.decode::<ChallengeBody>()?;
+                            let sig = keypair.sign(&body.nonce);
+
+                            let objects = Vec::new();
+                            let images = Vec::new();
+                            let props = Properties::new();
+
+                            peer.connect(keypair.peer_id(), sig, opts.room.as_bytes(), &objects, &images, &props)?;
+                        }
                         Event::PeerJoin => {
                             let event = body.decode::<PeerJoinBody>()?;
                             tracing::debug!(?event, "Join");
