@@ -1,7 +1,7 @@
 mod dictionary;
 
 use anyhow::{Context, Result};
-use api::PeerId;
+use api::PublicKey;
 use ed25519_dalek::{Signature as DalekSig, Signer, Verifier, VerifyingKey};
 use sha2::{Digest, Sha512};
 
@@ -15,9 +15,9 @@ pub struct Keypair {
 }
 
 impl Keypair {
-    /// Get the `PeerId` corresponding to this keypair's public key.
-    pub fn peer_id(&self) -> PeerId {
-        PeerId::new(self.signing_key.verifying_key().to_bytes())
+    /// Get the `PublicKey` corresponding to this keypair's public key.
+    pub fn public_key(&self) -> PublicKey {
+        PublicKey::new(self.signing_key.verifying_key().to_bytes())
     }
 
     /// Get the raw 32-byte public key bytes.
@@ -33,10 +33,12 @@ impl Keypair {
 
 /// Verify that `signature` is a valid ed25519 signature over `message` made
 /// with the private key corresponding to `public_key`.
-pub fn verify(peer_id: PeerId, message: &[u8], signature: &Signature) -> Result<()> {
-    let vk = VerifyingKey::from_bytes(peer_id.as_bytes()).context("invalid public key")?;
-    let sig = DalekSig::from_bytes(signature.as_bytes());
-    vk.verify(message, &sig)
+pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> Result<()> {
+    let verifying_key =
+        VerifyingKey::from_bytes(public_key.as_bytes()).context("invalid public key")?;
+    let signature = DalekSig::from_bytes(signature.as_bytes());
+    verifying_key
+        .verify(message, &signature)
         .context("signature verification failed")
 }
 
@@ -44,7 +46,7 @@ pub fn verify(peer_id: PeerId, message: &[u8], signature: &Signature) -> Result<
 ///
 /// The secret is hashed with SHA-512 and the first 32 bytes are used as the
 /// SigningKey seed. This is intentionally deterministic so the same secret
-/// always produces the same `PeerId`.
+/// always produces the same `PublicKey`.
 pub fn derive_keypair(secret: &[u8]) -> Keypair {
     let hash = Sha512::digest(secret);
     let seed: [u8; 32] = hash[..32]

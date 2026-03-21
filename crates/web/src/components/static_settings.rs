@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, LocalUpdateBody, PeerId, RemoteId, UpdateBody, Value};
+use api::{Color, Id, Key, LocalUpdateBody, PublicKey, StableId, UpdateBody, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -20,7 +20,7 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     CropCancelled,
     CropConfirmed(api::CropRegion),
-    DeleteImage(RemoteId),
+    DeleteImage(Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     FixedRatioChanged(Event),
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
@@ -35,7 +35,7 @@ pub(crate) enum Msg {
     OpenGallery,
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    SelectImage(RemoteId),
+    SelectImage(Id),
     SetLog(log::Log),
     StateChanged(ws::State),
     UpdateName(Option<String>),
@@ -68,9 +68,9 @@ pub(crate) struct StaticSettings {
     gallery_open: bool,
     height: State<f32>,
     image_uploading: bool,
-    image: State<RemoteId>,
+    image: State<StableId>,
     images: Vec<api::Image>,
-    peer_id: PeerId,
+    public_key: PublicKey,
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
@@ -132,9 +132,9 @@ impl Component for StaticSettings {
             gallery_open: false,
             height: State::new(1.0),
             image_uploading: false,
-            image: State::new(RemoteId::ZERO),
+            image: State::new(StableId::ZERO),
             images: Vec::new(),
-            peer_id: PeerId::ZERO,
+            public_key: PublicKey::ZERO,
             log,
             name: State::new(None),
             preview_canvas: NodeRef::default(),
@@ -280,7 +280,7 @@ impl Component for StaticSettings {
             if self.gallery_open {
                 <ImageGalleryModal
                     images={self.images.clone()}
-                    selected={*self.image}
+                    selected={self.image.id}
                     onselect={ctx.link().callback(Msg::SelectImage)}
                     ondelete={ctx.link().callback(Msg::DeleteImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
@@ -325,7 +325,7 @@ impl StaticSettings {
                 }
 
                 self.images = body.images;
-                self.peer_id = body.peer_id;
+                self.public_key = body.public_key;
                 Ok(true)
             }
             Msg::StateChanged(state) => {
@@ -422,7 +422,7 @@ impl StaticSettings {
                 Ok(false)
             }
             Msg::SelectImage(id) => {
-                *self.image = id;
+                *self.image = StableId::new(self.public_key, id);
                 self.load_preview_image(ctx);
                 self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
@@ -570,8 +570,8 @@ impl StaticSettings {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::PeerId { peer_id } => {
-                        self.peer_id = peer_id;
+                    UpdateBody::PublicKey { public_key } => {
+                        self.public_key = public_key;
                         Ok(true)
                     }
                     _ => Ok(false),
@@ -591,7 +591,7 @@ impl StaticSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(*value.as_remote_id()) {
+                if self.image.update(*value.as_stable_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {

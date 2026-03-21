@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Key, Pan, PeerId, RemoteId, Transform, Type, Value, ValueKind,
+    Color, ContentType, Extent, Id, Key, Pan, PeerId, StableId, Transform, Type, Value, ValueKind,
     ValueType, Vec3,
 };
 use jiff::Timestamp;
@@ -45,7 +45,7 @@ macro_rules! value_kind_switch {
                     $self.$add($($args),*, value).await?;
                 }
             }
-            ValueKind::RemoteId(value) => {
+            ValueKind::StableId(value) => {
                 if value.id.is_zero() {
                     $self.$delete($($args),*).await?;
                 } else {
@@ -475,7 +475,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
         ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
         ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
         ValueType::PeerId => Value::from(descriptive::from_slice::<PeerId>(blog)?),
-        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
+        ValueType::StableId => Value::from(descriptive::from_slice::<StableId>(blog)?),
         ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
         ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
         ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(blog)?),

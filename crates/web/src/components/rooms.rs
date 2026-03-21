@@ -1,6 +1,9 @@
 use core::cmp::Ordering;
+use std::collections::HashMap;
 
-use api::{Id, Key, LocalUpdateBody, PeerId, RemoteId, Type, UpdateBody, Value};
+use api::{
+    Id, Key, LocalUpdateBody, PeerId, PublicKey, RemoteId, StableId, Type, UpdateBody, Value,
+};
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -22,7 +25,7 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     Disconnect,
-    Connect(RemoteId),
+    Connect(StableId),
     ConnectResult(Result<Packet<api::Updates>, ws::Error>),
     CreateRoom,
     CreateRoomResult(Result<Packet<api::CreateObject>, ws::Error>),
@@ -38,8 +41,7 @@ pub(crate) struct Props {
 }
 
 struct Room {
-    id: RemoteId,
-    local: bool,
+    id: StableId,
     name: String,
 }
 
@@ -51,7 +53,7 @@ impl Room {
         }
     }
 
-    fn from_remote(id: RemoteId, object: &RemoteObject, local: bool) -> Option<Self> {
+    fn from_remote(id: StableId, object: &RemoteObject) -> Option<Self> {
         if object.ty != Type::ROOM {
             return None;
         }
@@ -63,7 +65,7 @@ impl Room {
             .unwrap_or_default()
             .to_owned();
 
-        Some(Self { id, local, name })
+        Some(Self { id, name })
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
@@ -79,9 +81,10 @@ impl Room {
 
 pub(crate) struct Rooms {
     state: ws::State,
+    peers: HashMap<PeerId, PublicKey>,
     rooms: Vec<Room>,
-    peer_id: PeerId,
-    active_room: RemoteId,
+    public_key: PublicKey,
+    active_room: StableId,
     new_room_name: String,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
@@ -127,9 +130,10 @@ impl Component for Rooms {
 
         let mut this = Self {
             state,
+            peers: HashMap::new(),
             rooms: Vec::new(),
-            peer_id: PeerId::ZERO,
-            active_room: RemoteId::ZERO,
+            public_key: PublicKey::ZERO,
+            active_room: StableId::ZERO,
             new_room_name: String::new(),
             log,
             _log_handle,
@@ -190,8 +194,9 @@ impl Component for Rooms {
 impl Rooms {
     fn view_room(&self, ctx: &Context<Self>, room: &Room) -> Html {
         let is_active = self.active_room == room.id;
+        let is_local = room.id.public_key == self.public_key;
 
-        let delete_button = room.local.then(|| {
+        let delete_button = is_local.then(|| {
             let id = room.id.id;
             let onclick = ctx.link().callback(move |_| Msg::DeleteRoom(id));
 
@@ -224,7 +229,7 @@ impl Rooms {
             </button>
         };
 
-        let room_icon = if room.local { "home" } else { "home-modern" };
+        let room_icon = if is_local { "home" } else { "home-modern" };
 
         html! {
             <div class="list-content" key={room.id}>
@@ -246,10 +251,18 @@ impl Rooms {
                 .on_packet(ctx.link().callback(Msg::Initialized))
                 .send();
         } else {
-            self.peer_id = PeerId::ZERO;
-            self.active_room = RemoteId::ZERO;
+            self.public_key = PublicKey::ZERO;
+            self.active_room = StableId::ZERO;
             self.rooms.clear();
         }
+    }
+
+    fn to_stable_id(&self, id: RemoteId) -> StableId {
+        let Some(public_key) = self.peers.get(&id.peer_id) else {
+            return StableId::ZERO;
+        };
+
+        StableId::new(*public_key, id.id)
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
@@ -264,23 +277,25 @@ impl Rooms {
                 let body = body?;
                 let body = body.decode()?;
 
-                self.peer_id = body.peer_id;
-                self.active_room = *body.props.get(Key::ROOM).as_remote_id();
+                self.public_key = body.public_key;
+                self.active_room = *body.props.get(Key::ROOM).as_stable_id();
                 self.rooms.clear();
 
                 for object in body.local {
-                    let id = RemoteId::new(self.peer_id, object.id);
+                    let id = StableId::new(self.public_key, object.id);
 
-                    if let Some(room) = Room::from_remote(id, &object, true) {
+                    if let Some(room) = Room::from_remote(id, &object) {
                         self.rooms.push(room);
                     }
                 }
 
                 for peer in body.peers {
-                    for object in peer.objects {
-                        let id = RemoteId::new(peer.peer_id, object.id);
+                    self.peers.insert(peer.peer_id, peer.public_key);
 
-                        if let Some(room) = Room::from_remote(id, &object, false) {
+                    for object in peer.objects {
+                        let id = StableId::new(peer.public_key, object.id);
+
+                        if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
                         }
                     }
@@ -295,9 +310,9 @@ impl Rooms {
 
                 match body {
                     LocalUpdateBody::ObjectCreated { object } => {
-                        let id = RemoteId::new(self.peer_id, object.id);
+                        let id = StableId::new(self.public_key, object.id);
 
-                        if let Some(room) = Room::from_remote(id, &object, true) {
+                        if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
                             self.rooms.sort_by(Room::cmp);
                             return Ok(true);
@@ -305,21 +320,17 @@ impl Rooms {
 
                         Ok(true)
                     }
-                    LocalUpdateBody::ObjectRemoved { id: object_id } => {
+                    LocalUpdateBody::ObjectRemoved { id } => {
+                        let id = StableId::new(self.public_key, id);
+
                         let prev = self.rooms.len();
-                        self.rooms.retain(|r| !r.local || r.id.id != object_id);
+                        self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
-                    LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        let Some(room) = self
-                            .rooms
-                            .iter_mut()
-                            .find(|r| r.local && r.id.id == object_id)
-                        else {
+                    LocalUpdateBody::ObjectUpdated { id, key, value } => {
+                        let id = StableId::new(self.public_key, id);
+
+                        let Some(room) = self.rooms.iter_mut().find(|r| r.id == id) else {
                             return Ok(false);
                         };
 
@@ -340,16 +351,21 @@ impl Rooms {
 
                 match body {
                     RemoteUpdateBody::RemoteLost => {
-                        self.rooms.retain(|r| r.local);
+                        self.rooms.retain(|r| r.id.public_key != self.public_key);
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerConnected {
-                        peer_id, objects, ..
+                        peer_id,
+                        public_key,
+                        objects,
+                        ..
                     } => {
-                        for object in objects {
-                            let id = RemoteId::new(peer_id, object.id);
+                        self.peers.insert(peer_id, public_key);
 
-                            if let Some(room) = Room::from_remote(id, &object, false) {
+                        for object in objects {
+                            let id = StableId::new(public_key, object.id);
+
+                            if let Some(room) = Room::from_remote(id, &object) {
                                 self.rooms.push(room);
                                 self.rooms.sort_by(Room::cmp);
                             }
@@ -358,11 +374,17 @@ impl Rooms {
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => {
-                        self.rooms.retain(|r| r.id.peer_id != peer_id);
+                        let Some(public_key) = self.peers.remove(&peer_id) else {
+                            return Ok(false);
+                        };
+
+                        self.rooms.retain(|r| r.id.public_key != public_key);
                         Ok(true)
                     }
                     RemoteUpdateBody::ObjectCreated { id, object } => {
-                        if let Some(room) = Room::from_remote(id, &object, false) {
+                        let id = self.to_stable_id(id);
+
+                        if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
                             self.rooms.sort_by(Room::cmp);
                             Ok(true)
@@ -371,11 +393,15 @@ impl Rooms {
                         }
                     }
                     RemoteUpdateBody::ObjectRemoved { id } => {
+                        let id = self.to_stable_id(id);
+
                         let prev = self.rooms.len();
                         self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
                     RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                        let id = self.to_stable_id(id);
+
                         let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
                             return Ok(false);
                         };
@@ -398,13 +424,13 @@ impl Rooms {
                 match body {
                     UpdateBody::Config { key, value } => match key {
                         Key::ROOM => {
-                            self.active_room = *value.as_remote_id();
+                            self.active_room = *value.as_stable_id();
                             Ok(true)
                         }
                         _ => Ok(false),
                     },
-                    UpdateBody::PeerId { peer_id } => {
-                        self.peer_id = peer_id;
+                    UpdateBody::PublicKey { public_key } => {
+                        self.public_key = public_key;
                         Ok(true)
                     }
                 }

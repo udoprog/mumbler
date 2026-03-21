@@ -1,11 +1,11 @@
-use api::{Image, RemoteId};
+use api::{Id, Image};
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
 use super::Icon;
 
 pub(crate) enum Msg {
-    Select(RemoteId),
+    Select(Id),
     Close,
 }
 
@@ -15,11 +15,11 @@ pub(crate) struct Props {
     pub(crate) images: Vec<Image>,
     /// Currently selected image, if any.
     #[prop_or_default]
-    pub(crate) selected: RemoteId,
+    pub(crate) selected: Id,
     /// Callback fired when an image is selected.
-    pub(crate) onselect: Callback<RemoteId>,
+    pub(crate) onselect: Callback<Id>,
     /// Callback fired when an image should be deleted.
-    pub(crate) ondelete: Callback<RemoteId>,
+    pub(crate) ondelete: Callback<Id>,
     /// Callback fired to close the modal.
     pub(crate) onclose: Callback<()>,
 }

@@ -6,7 +6,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{ContentType, Id, Key, PeerId, Properties, RemoteObject, Value};
+use ::api::{ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Value};
 
 /// The engine used for base64.
 static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
@@ -83,10 +83,10 @@ pub struct HelloBody {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct ConnectBody {
-    /// The requested peer id.
-    pub peer_id: PeerId,
-    /// The signature over the server challenge nonce, proving ownership of peer
-    /// id.
+    /// The requested public key.
+    pub public_key: PublicKey,
+    /// The signature over the server challenge nonce to prove that the peer
+    /// controls the private component of the provided public key.
     pub signature: Signature,
     /// List of objects owned by peer.
     pub objects: Vec<RemoteObject>,
@@ -96,13 +96,14 @@ pub struct ConnectBody {
     pub props: Properties,
 }
 
+/// Sent by the client in response to a [`ChallengeBody`] to authenticate.
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
 pub struct ConnectBodyRef<'a> {
-    /// The requested peer id.
-    pub peer_id: PeerId,
-    /// The signature over the server challenge nonce, proving ownership of peer
-    /// id.
+    /// The requested public key.
+    pub public_key: PublicKey,
+    /// The signature over the server challenge nonce to prove that the peer
+    /// controls the private component of the provided public key.
     pub signature: Signature,
     /// List of objects owned by peer.
     pub objects: &'a [RemoteObject],
@@ -152,6 +153,8 @@ pub struct RemoteImage {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct PeerConnectedBody {
+    /// The public key of the peer that connected.
+    pub public_key: PublicKey,
     /// The peer that connected.
     pub peer_id: PeerId,
     /// The global key-value pairs that were immediately set for the peer.
@@ -163,6 +166,8 @@ pub struct PeerConnectedBody {
 #[derive(Debug, Encode)]
 #[musli(crate = musli_core)]
 pub struct PeerConnectedBodyRef<'a> {
+    /// The public key of the peer that connected.
+    pub public_key: PublicKey,
     /// The peer that connected.
     pub peer_id: PeerId,
     /// The objects that are associated with the peer.

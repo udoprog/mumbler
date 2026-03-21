@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Color, Extent, Id, RemoteId, Vec3};
+use api::{Color, Extent, Id, StableId, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
@@ -97,7 +97,7 @@ impl<'a> RenderObject<'a> {
 pub(crate) struct RenderToken<'a> {
     pub(crate) transform: &'a api::Transform,
     pub(crate) look_at: Option<&'a Vec3>,
-    pub(crate) image: &'a RemoteId,
+    pub(crate) image: &'a StableId,
     pub(crate) color: Color,
     pub(crate) token_radius: f32,
     pub(crate) arrow_target: Option<&'a Vec3>,
@@ -105,7 +105,7 @@ pub(crate) struct RenderToken<'a> {
 
 pub(crate) struct RenderStatic<'a> {
     pub(crate) transform: &'a api::Transform,
-    pub(crate) image: &'a RemoteId,
+    pub(crate) image: &'a StableId,
     pub(crate) color: Color,
     pub(crate) width: f32,
     pub(crate) height: f32,
@@ -322,7 +322,7 @@ pub(crate) fn draw_token(
     view: &ViewTransform,
     base: &RenderBase<'_>,
     render: &RenderToken<'_>,
-    get_image: impl Fn(&RemoteId) -> Option<HtmlImageElement>,
+    get_image: impl Fn(&StableId) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
     let pos = view.to_canvas(render.transform.position);
 
@@ -422,7 +422,7 @@ pub(crate) fn draw_static(
     view: &ViewTransform,
     base: &RenderBase<'_>,
     render: &RenderStatic<'_>,
-    get_image: impl Fn(&RemoteId) -> Option<HtmlImageElement>,
+    get_image: impl Fn(&StableId) -> Option<HtmlImageElement>,
 ) -> Result<(), Error> {
     let pos = view.to_canvas(render.transform.position);
 

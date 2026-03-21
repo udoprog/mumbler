@@ -2,74 +2,76 @@ use core::error::Error;
 use core::fmt;
 use core::str::FromStr;
 
-use base64::DecodeSliceError;
 use base64::display::Base64Display;
-use base64::engine::Engine as _;
+use base64::{DecodeSliceError, Engine as _};
 use musli_core::{Decode, Encode};
-use serde_core::de;
+use serde_core::{Deserialize, Deserializer, de};
 
 /// The engine used for base64.
 static ENGINE: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-/// The session identifier of a peer.
+/// The identifier and public key for a peer.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(crate = musli_core, transparent)]
 #[repr(transparent)]
-pub struct PeerId {
-    repr: u32,
+pub struct PublicKey {
+    repr: [u8; 32],
 }
 
-impl PeerId {
-    /// The zero peer identifier, this is equivalent to the identifier being
-    /// unset.
-    pub const ZERO: Self = Self { repr: 0 };
+impl PublicKey {
+    /// The zero peer ID, which is invalid and should not be used.
+    pub const ZERO: Self = Self { repr: [0u8; 32] };
 
-    /// Construct a `PeerId` from the raw 32-bit representation.
+    /// Construct a `PublicKey` from the raw 32-byte representation.
     #[inline]
-    pub const fn new(repr: u32) -> Self {
+    pub const fn new(repr: [u8; 32]) -> Self {
         Self { repr }
     }
 
-    /// Return the raw 32-bit representation.
+    /// Return the raw 32-byte public key bytes.
     #[inline]
-    pub const fn as_bytes(&self) -> [u8; 4] {
-        self.repr.to_le_bytes()
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.repr
     }
 
     #[inline]
     pub const fn is_zero(&self) -> bool {
-        self.repr == 0
+        matches!(
+            self.repr,
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
+        )
     }
 }
 
-impl fmt::Display for PeerId {
+impl fmt::Display for PublicKey {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.as_bytes();
-        let this = Base64Display::new(&bytes, &ENGINE);
+        let this = Base64Display::new(&self.repr, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
 
-impl fmt::Debug for PeerId {
+impl fmt::Debug for PublicKey {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.as_bytes();
-        let this = Base64Display::new(&bytes, &ENGINE);
+        let this = Base64Display::new(&self.repr, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
 }
 
-impl<'de> de::Deserialize<'de> for PeerId {
+impl<'de> Deserialize<'de> for PublicKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: de::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct Visitor;
 
         impl<'de> de::Visitor<'de> for Visitor {
-            type Value = PeerId;
+            type Value = PublicKey;
 
             #[inline]
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -90,78 +92,78 @@ impl<'de> de::Deserialize<'de> for PeerId {
 }
 
 /// An error raised by parsing an Id as a string.
-pub struct ParsePeerIdError {
-    kind: ParsePeerIdErrorKind,
+pub struct ParsePublicKeyError {
+    kind: ParsePublicKeyErrorKind,
 }
 
 #[derive(Debug)]
-enum ParsePeerIdErrorKind {
+enum ParsePublicKeyErrorKind {
     DecodeSliceError(DecodeSliceError),
     InvalidLength(usize),
 }
 
-impl fmt::Display for ParsePeerIdError {
+impl fmt::Display for ParsePublicKeyError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
     }
 }
 
-impl fmt::Display for ParsePeerIdErrorKind {
+impl fmt::Display for ParsePublicKeyErrorKind {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParsePeerIdErrorKind::DecodeSliceError(error) => {
+            ParsePublicKeyErrorKind::DecodeSliceError(error) => {
                 write!(f, "base64 decode error: {error}")
             }
-            ParsePeerIdErrorKind::InvalidLength(len) => {
-                write!(f, "invalid length: expected 4 bytes, got {len}")
+            ParsePublicKeyErrorKind::InvalidLength(len) => {
+                write!(f, "invalid length: expected 32 bytes, got {len}")
             }
         }
     }
 }
 
-impl fmt::Debug for ParsePeerIdError {
+impl fmt::Debug for ParsePublicKeyError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
     }
 }
 
-impl Error for ParsePeerIdError {
+impl Error for ParsePublicKeyError {
     #[inline]
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match &self.kind {
-            ParsePeerIdErrorKind::DecodeSliceError(error) => Some(error),
+            ParsePublicKeyErrorKind::DecodeSliceError(error) => Some(error),
             _ => None,
         }
     }
 }
 
-impl From<DecodeSliceError> for ParsePeerIdError {
+impl From<DecodeSliceError> for ParsePublicKeyError {
     #[inline]
     fn from(error: DecodeSliceError) -> Self {
         Self {
-            kind: ParsePeerIdErrorKind::DecodeSliceError(error),
+            kind: ParsePublicKeyErrorKind::DecodeSliceError(error),
         }
     }
 }
 
-impl FromStr for PeerId {
-    type Err = ParsePeerIdError;
+impl FromStr for PublicKey {
+    type Err = ParsePublicKeyError;
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut dest = [0u8; 4];
+        let mut dest = [0u8; 32];
 
         let len = ENGINE.decode_slice(s, &mut dest[..])?;
 
-        if len != 4 {
-            return Err(ParsePeerIdError {
-                kind: ParsePeerIdErrorKind::InvalidLength(len),
+        if len != 32 {
+            return Err(ParsePublicKeyError {
+                kind: ParsePublicKeyErrorKind::InvalidLength(len),
             });
         }
 
-        Ok(PeerId::new(u32::from_le_bytes(dest)))
+        Ok(PublicKey::new(dest))
     }
 }

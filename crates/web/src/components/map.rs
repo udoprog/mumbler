@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteId, RemoteUpdateBody, UpdateBody,
-    Value, Vec3,
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PublicKey, RemoteUpdateBody, StableId,
+    UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -180,7 +180,7 @@ pub(crate) struct Config {
     pub(crate) extent: State<Extent>,
     pub(crate) mumble_object: State<Id>,
     pub(crate) mumble_follow: State<bool>,
-    pub(crate) room: State<RemoteId>,
+    pub(crate) room: State<StableId>,
     pub(crate) name: State<String>,
 }
 
@@ -212,7 +212,7 @@ impl Config {
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(value.as_id()),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool().unwrap_or(false)),
-            Key::ROOM => self.room.update(*value.as_remote_id()),
+            Key::ROOM => self.room.update(*value.as_stable_id()),
             Key::PEER_NAME => self
                 .name
                 .update(value.as_str().unwrap_or_default().to_owned()),
@@ -237,7 +237,7 @@ impl Default for Config {
             extent: State::new(Extent::arena()),
             mumble_object: State::new(Id::ZERO),
             mumble_follow: State::new(false),
-            room: State::new(RemoteId::ZERO),
+            room: State::new(StableId::ZERO),
             name: State::new(String::new()),
         }
     }
@@ -357,7 +357,7 @@ pub(crate) struct Map {
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
     look_ats: Vec<(Vec3, Color)>,
-    peer_id: PeerId,
+    public_key: PublicKey,
     s: Inner,
 }
 
@@ -518,7 +518,7 @@ impl Component for Map {
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
-            peer_id: PeerId::ZERO,
+            public_key: PublicKey::ZERO,
             peers: Peers::default(),
             s: Inner::default(),
             state,
@@ -1208,7 +1208,7 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.peer_id = body.peer_id;
+                self.public_key = body.public_key;
                 self.config = Config::from_config(body.props);
 
                 self.objects = body
@@ -1223,17 +1223,17 @@ impl Map {
 
                 self.peers.clear();
 
-                for peer in body.peers {
-                    let new_peer = self
-                        .peers
-                        .create(peer.peer_id, peer.props, &self.config.room);
+                for p in body.peers {
+                    let peer =
+                        self.peers
+                            .create(p.peer_id, p.public_key, p.props, &self.config.room);
 
-                    for object in peer.objects {
+                    for object in p.objects {
                         let Some(data) = ObjectData::from_remote(&object) else {
                             continue;
                         };
 
-                        new_peer.insert(data.id, data);
+                        peer.insert(data.id, data);
                     }
                 }
 
@@ -1263,8 +1263,8 @@ impl Map {
                         self.s.redraw = changed;
                         Ok(changed)
                     }
-                    UpdateBody::PeerId { peer_id } => {
-                        self.peer_id = peer_id;
+                    UpdateBody::PublicKey { public_key } => {
+                        self.public_key = public_key;
                         Ok(true)
                     }
                 }
@@ -1333,10 +1333,12 @@ impl Map {
                             o.update(key, value) || update
                         }
                         LocalUpdateBody::ImageAdded { id, .. } => {
+                            let id = StableId::new(self.public_key, id);
                             self.images.load(ctx, &id);
                             false
                         }
                         LocalUpdateBody::ImageRemoved { id } => {
+                            let id = StableId::new(self.public_key, id);
                             self.images.remove(&id);
                             false
                         }
@@ -1359,10 +1361,13 @@ impl Map {
                     }
                     RemoteUpdateBody::PeerConnected {
                         peer_id,
+                        public_key,
                         objects,
                         props,
                     } => {
-                        let peer = self.peers.create(peer_id, props, &self.config.room);
+                        let peer = self
+                            .peers
+                            .create(peer_id, public_key, props, &self.config.room);
 
                         for object in objects {
                             let Some(data) = ObjectData::from_remote(&object) else {
@@ -1392,7 +1397,7 @@ impl Map {
                         }
 
                         for id in images {
-                            let id = RemoteId::new(peer_id, id);
+                            let id = StableId::new(peer.public_key, id);
                             self.images.load(ctx, &id);
                         }
 
@@ -1443,10 +1448,12 @@ impl Map {
                         true
                     }
                     RemoteUpdateBody::ImageAdded { id } => {
+                        let id = self.peers.to_stable_id(id.peer_id, id.id);
                         self.images.load(ctx, &id);
                         true
                     }
                     RemoteUpdateBody::ImageRemoved { id } => {
+                        let id = self.peers.to_stable_id(id.peer_id, id.id);
                         self.images.remove(&id);
                         true
                     }

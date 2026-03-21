@@ -10,8 +10,8 @@ use std::net::SocketAddr;
 use anyhow::{Context as _, Result};
 use api::{
     GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeMapResponse,
-    InitializeRoomsResponse, Key, Properties, RemoteId, RemoteObject, RemotePeer, Type, UpdateBody,
-    UploadImageRequest, Value,
+    InitializeRoomsResponse, Key, Properties, PublicKey, RemoteObject, RemotePeer, StableId, Type,
+    UpdateBody, UploadImageRequest, Value,
 };
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
@@ -121,15 +121,17 @@ pub(crate) fn setup(
 #[allow(clippy::let_and_return)]
 fn common_routes(router: Router) -> Router {
     let router = router.route("/ws", get(ws::entry));
-    let router = router.route("/api/image/{id}", get(image));
+    let router = router.route("/api/image/{public_key}/{id}", get(image));
     router
 }
 
 async fn image(
     Extension(backend): Extension<Backend>,
-    Path(id): Path<RemoteId>,
+    Path((public_key, id)): Path<(PublicKey, Id)>,
 ) -> Result<impl IntoResponse, WebError> {
     const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;
+
+    let id = StableId::new(public_key, id);
 
     let images = backend.read_images().await;
 
@@ -146,7 +148,6 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     let mut peers = Vec::new();
 
     let state = b.client_state().await;
-    let peer_id = state.keypair.peer_id();
 
     for (id, object) in state.objects.iter() {
         objects.push(RemoteObject {
@@ -157,12 +158,13 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     }
 
     for id in state.images.keys() {
-        images.push(RemoteId::new(peer_id, *id));
+        images.push(StableId::new(state.keypair.public_key(), *id));
     }
 
     for (peer_id, peer) in state.peers.iter() {
         let mut new_peer = RemotePeer {
             peer_id: *peer_id,
+            public_key: peer.public_key,
             props: peer.props.clone(),
             objects: Vec::new(),
         };
@@ -175,15 +177,15 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
             });
         }
 
-        for image_id in peer.images.iter() {
-            images.push(RemoteId::new(*peer_id, *image_id));
+        for id in peer.images.iter() {
+            images.push(StableId::new(peer.public_key, *id));
         }
 
         peers.push(new_peer);
     }
 
     let res = InitializeMapResponse {
-        peer_id: state.keypair.peer_id(),
+        public_key: state.keypair.public_key(),
         props: state.props.clone(),
         objects,
         images,
@@ -228,13 +230,14 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
 
         peers.push(RemotePeer {
             peer_id: *peer_id,
+            public_key: peer.public_key,
             props: peer.props.clone(),
             objects,
         });
     }
 
     let res = InitializeRoomsResponse {
-        peer_id: state.keypair.peer_id(),
+        public_key: state.keypair.public_key(),
         props: state.props.clone(),
         local,
         peers,
@@ -243,7 +246,7 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
     Ok(res)
 }
 
-async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<RemoteId> {
+async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<Id> {
     tracing::info!(?request.content_type, size = request.data.len(), "received image upload request");
 
     let task = task::spawn_blocking(move || {
@@ -259,7 +262,7 @@ async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<
     Ok(id)
 }
 
-async fn delete_image(backend: &Backend, id: RemoteId) -> Result<()> {
+async fn delete_image(backend: &Backend, id: Id) -> Result<()> {
     backend.delete_image(id).await?;
     Ok(())
 }
@@ -280,7 +283,7 @@ async fn get_object_settings(
 ) -> Result<GetObjectSettingsResponse> {
     let state = backend.client_state().await;
 
-    let peer_id = state.keypair.peer_id();
+    let public_key = state.keypair.public_key();
 
     let object = state.objects.get(&request.id).context("object not found")?;
 
@@ -294,7 +297,7 @@ async fn get_object_settings(
 
     for image in state.images.values() {
         images.push(Image {
-            id: RemoteId::new(peer_id, image.id),
+            id: image.id,
             content_type: image.content_type,
             width: image.width,
             height: image.height,
@@ -304,7 +307,7 @@ async fn get_object_settings(
     Ok(GetObjectSettingsResponse {
         object,
         images,
-        peer_id,
+        public_key,
     })
 }
 

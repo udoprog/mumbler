@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use std::collections::HashMap;
 
-use api::RemoteId;
+use api::StableId;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::HtmlImageElement;
@@ -10,8 +10,8 @@ use yew::{Component, Context};
 use crate::error::Error;
 
 pub(crate) enum ImageMessage {
-    Loaded(RemoteId),
-    Errored(RemoteId, Error),
+    Loaded(StableId),
+    Errored(StableId, Error),
 }
 
 struct ImageState {
@@ -23,7 +23,7 @@ struct ImageState {
 
 /// Collection of images loaded for rendering.
 pub(crate) struct Images<M> {
-    inner: HashMap<RemoteId, ImageState>,
+    inner: HashMap<StableId, ImageState>,
     _marker: PhantomData<M>,
 }
 
@@ -55,7 +55,7 @@ where
     }
 
     /// Remove a loaded image.
-    pub(crate) fn remove(&mut self, id: &RemoteId) {
+    pub(crate) fn remove(&mut self, id: &StableId) {
         if id.is_zero() {
             return;
         }
@@ -74,7 +74,7 @@ where
         self.inner.clear();
     }
 
-    pub(crate) fn load(&mut self, ctx: &Context<M>, id: &RemoteId) {
+    pub(crate) fn load(&mut self, ctx: &Context<M>, id: &StableId) {
         if id.is_zero() {
             return;
         }
@@ -96,7 +96,7 @@ where
     }
 
     /// Get an image by id.
-    pub(crate) fn get(&self, id: &RemoteId) -> Option<&HtmlImageElement> {
+    pub(crate) fn get(&self, id: &StableId) -> Option<&HtmlImageElement> {
         let state = self.inner.get(id)?;
 
         // Still loading.
@@ -112,7 +112,7 @@ where
         Some(&state.image)
     }
 
-    fn load_image(ctx: &Context<M>, id: &RemoteId) -> Result<ImageState, Error> {
+    fn load_image(ctx: &Context<M>, id: &StableId) -> Result<ImageState, Error> {
         let img = HtmlImageElement::new()?;
 
         let load = Closure::<dyn FnMut()>::new({

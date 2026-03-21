@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
                             let images = Vec::new();
                             let props = Properties::new();
 
-                            peer.connect(keypair.peer_id(), sig, &objects, &images, &props)?;
+                            peer.connect(keypair.public_key(), sig, &objects, &images, &props)?;
                         }
                         Event::PeerJoin => {
                             let event = body.decode::<PeerJoinBody>()?;

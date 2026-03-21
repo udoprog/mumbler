@@ -4,7 +4,7 @@ use core::time::Duration;
 use std::collections::HashSet;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, Properties, RemoteId, RemoteObject, RemoteUpdateBody, Value};
+use api::{Key, Properties, RemoteId, RemoteObject, RemoteUpdateBody, StableId, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
@@ -32,8 +32,8 @@ async fn handle_peer(
             Event::Challenge => {
                 let body = body.decode::<ChallengeBody>()?;
 
-                let peer_id;
-                let sig;
+                let public_key;
+                let signature;
 
                 let mut objects = Vec::new();
                 let mut images = Vec::new();
@@ -42,8 +42,8 @@ async fn handle_peer(
                 {
                     let state = b.client_state().await;
 
-                    peer_id = state.keypair.peer_id();
-                    sig = state.keypair.sign(&body.nonce);
+                    public_key = state.keypair.public_key();
+                    signature = state.keypair.sign(&body.nonce);
 
                     for object in state.objects.values() {
                         objects.push(RemoteObject {
@@ -70,7 +70,7 @@ async fn handle_peer(
                     }
                 }
 
-                peer.connect(peer_id, sig, &objects, &images, &props)?;
+                peer.connect(public_key, signature, &objects, &images, &props)?;
                 *authenticated = true;
             }
             Event::Pong => {
@@ -91,6 +91,7 @@ async fn handle_peer(
                 let mut state = b.client_state().await;
 
                 let peer = PeerInfo {
+                    public_key: body.public_key,
                     objects: body.objects.iter().map(|o| (o.id, o.clone())).collect(),
                     images: HashSet::new(),
                     props: body.props.clone(),
@@ -100,6 +101,7 @@ async fn handle_peer(
 
                 b.broadcast(RemoteUpdateBody::PeerConnected {
                     peer_id: body.peer_id,
+                    public_key: body.public_key,
                     objects: body.objects,
                     props: body.props.clone(),
                 });
@@ -118,7 +120,7 @@ async fn handle_peer(
                     let mut images = b.write_images().await;
 
                     for image in body.images {
-                        let id = RemoteId::new(body.peer_id, image.id);
+                        let id = StableId::new(peer.public_key, image.id);
                         images.store(id, image.bytes);
                         peer.images.insert(image.id);
                     }
@@ -219,12 +221,17 @@ async fn handle_peer(
                 let body = body.decode::<ImageCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, image_id = ?body.image.id, "ImageAdded");
 
-                let mut images = b.write_images().await;
+                let id = {
+                    let state = b.client_state().await;
+                    state.to_stable_id(body.peer_id, body.image.id)
+                };
 
-                let id = RemoteId::new(body.peer_id, body.image.id);
+                let mut images = b.write_images().await;
                 images.store(id, body.image.bytes.clone());
 
-                b.broadcast(RemoteUpdateBody::ImageAdded { id });
+                b.broadcast(RemoteUpdateBody::ImageAdded {
+                    id: RemoteId::new(body.peer_id, body.image.id),
+                });
             }
             Event::ObjectRemoved => {
                 let body = body.decode::<ObjectRemovedBody>()?;
@@ -234,9 +241,9 @@ async fn handle_peer(
 
                 let removed = 'found: {
                     let mut state = b.client_state().await;
+                    let id = state.to_stable_id(body.peer_id, body.object_id);
 
-                    remove_room = *state.props.get(Key::ROOM).as_remote_id()
-                        == RemoteId::new(body.peer_id, body.object_id);
+                    remove_room = *state.props.get(Key::ROOM).as_stable_id() == id;
 
                     if let Some(peer) = state.peers.get_mut(&body.peer_id) {
                         break 'found peer.objects.remove(&body.object_id).is_some();
@@ -259,11 +266,16 @@ async fn handle_peer(
                 let body = body.decode::<ImageRemovedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.image_id, "ImageRemoved");
 
-                let id = RemoteId::new(body.peer_id, body.image_id);
+                let id = {
+                    let state = b.client_state().await;
+                    state.to_stable_id(body.peer_id, body.image_id)
+                };
 
                 b.write_images().await.remove(&id);
 
-                b.broadcast(RemoteUpdateBody::ImageRemoved { id });
+                b.broadcast(RemoteUpdateBody::ImageRemoved {
+                    id: RemoteId::new(body.peer_id, body.image_id),
+                });
             }
             id => {
                 tracing::debug!(?id, body = body.len(), "Unknown event");

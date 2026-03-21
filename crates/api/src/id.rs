@@ -20,16 +20,16 @@ static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 #[musli(crate = musli_core, transparent)]
 #[repr(transparent)]
 pub struct Id {
-    repr: u64,
+    repr: u32,
 }
 
 impl Id {
     /// The zero id.
     pub const ZERO: Self = Self { repr: 0 };
 
-    /// Create a new identifier from a u64.
+    /// Construct a new identifier.
     #[inline]
-    pub const fn new(repr: u64) -> Self {
+    pub const fn new(repr: u32) -> Self {
         Self { repr }
     }
 
@@ -46,7 +46,7 @@ impl Id {
 
     /// Get the inner u64 value of the identifier.
     #[inline]
-    pub const fn get(self) -> u64 {
+    pub const fn get(self) -> u32 {
         self.repr
     }
 
@@ -107,7 +107,7 @@ impl fmt::Display for ParseIdErrorKind {
         match self {
             ParseIdErrorKind::DecodeSliceError(err) => write!(f, "base64 decode error: {err}"),
             ParseIdErrorKind::InvalidLength(len) => {
-                write!(f, "invalid length: expected 8 bytes, got {len}")
+                write!(f, "invalid length: expected 4 bytes, got {len}")
             }
         }
     }
@@ -136,17 +136,17 @@ impl FromStr for Id {
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut dest = [0u8; 8];
+        let mut dest = [0u8; 4];
 
         let len = ENGINE.decode_slice(s, &mut dest[..])?;
 
-        if len != 8 {
+        if len != 4 {
             return Err(ParseIdError {
                 kind: ParseIdErrorKind::InvalidLength(len),
             });
         }
 
-        let id = u64::from_le_bytes(dest);
+        let id = u32::from_le_bytes(dest);
         Ok(Id::new(id))
     }
 }
@@ -183,7 +183,7 @@ impl<'de> Deserialize<'de> for Id {
 impl BindValue for Id {
     #[inline]
     fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.get().cast_signed().bind_value(stmt, index)
+        self.repr.bind_value(stmt, index)
     }
 }
 
@@ -201,7 +201,7 @@ impl FromColumn<'_> for Id {
 
     #[inline]
     fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
-        let repr = i64::from_column(stmt, index)?.cast_unsigned();
+        let repr = u32::from_column(stmt, index)?;
         Ok(Id::new(repr))
     }
 }

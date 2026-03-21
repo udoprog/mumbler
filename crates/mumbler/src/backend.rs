@@ -1,16 +1,16 @@
 use core::fmt;
 use core::sync::atomic::Ordering;
 
-use core::sync::atomic::AtomicU64;
+use core::sync::atomic::AtomicU32;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::ContentType;
-use api::Properties;
-use api::RemoteId;
-use api::UpdateBody;
-use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
+use anyhow::bail;
+use api::{
+    ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, StableId, Transform, Type,
+    UpdateBody, Value,
+};
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -82,6 +82,8 @@ pub(crate) struct LocalImage {
 
 #[derive(Default)]
 pub(crate) struct PeerInfo {
+    /// The public key of the peer.
+    pub(crate) public_key: PublicKey,
     /// Objects associated with the peer.
     pub(crate) objects: HashMap<Id, RemoteObject>,
     /// Images associated with the peer.
@@ -92,7 +94,9 @@ pub(crate) struct PeerInfo {
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
-    /// The keypair assocaited with this client.
+    /// Helper to generate unique identifiers.
+    pub(crate) ids: HashSet<Id>,
+    /// The keypair associated with this client.
     pub(crate) keypair: Keypair,
     /// Remote objects.
     pub(crate) peers: HashMap<PeerId, PeerInfo>,
@@ -116,6 +120,17 @@ pub(crate) struct ClientState {
     pub(crate) props_changed: HashSet<Key>,
 }
 
+impl ClientState {
+    #[inline]
+    pub(crate) fn to_stable_id(&self, peer_id: PeerId, id: Id) -> StableId {
+        let Some(peer) = self.peers.get(&peer_id) else {
+            return StableId::ZERO;
+        };
+
+        StableId::new(peer.public_key, id)
+    }
+}
+
 struct Data {
     bytes: Box<[u8]>,
 }
@@ -123,22 +138,22 @@ struct Data {
 /// Temporary images.
 #[derive(Default)]
 pub(crate) struct ImageCache {
-    images: HashMap<RemoteId, Data>,
+    images: HashMap<StableId, Data>,
 }
 
 impl ImageCache {
     /// Store an image.
-    pub(crate) fn store(&mut self, id: RemoteId, bytes: Box<[u8]>) {
+    pub(crate) fn store(&mut self, id: StableId, bytes: Box<[u8]>) {
         self.images.insert(id, Data { bytes });
     }
 
     /// Remove an image.
-    pub(crate) fn remove(&mut self, id: &RemoteId) {
+    pub(crate) fn remove(&mut self, id: &StableId) {
         self.images.remove(id);
     }
 
     /// Get an image.
-    pub(crate) fn get(&self, id: &RemoteId) -> Option<&[u8]> {
+    pub(crate) fn get(&self, id: &StableId) -> Option<&[u8]> {
         Some(self.images.get(id)?.bytes.as_ref())
     }
 }
@@ -177,6 +192,7 @@ impl Backend {
 
         tracing::debug!("Loading objects from database");
 
+        let mut ids = HashSet::new();
         let mut objects = HashMap::new();
         let mut images = HashMap::new();
         let mut hidden = HashSet::new();
@@ -214,6 +230,7 @@ impl Backend {
             }
 
             objects.insert(id, object);
+            ids.insert(id);
         }
 
         let mut props = Properties::new();
@@ -235,7 +252,6 @@ impl Backend {
         };
 
         let keypair = crypto::derive_keypair(client_secret.as_bytes());
-        let peer_id = keypair.peer_id();
 
         let mumble_object = database
             .config(Key::MUMBLE_OBJECT)
@@ -255,7 +271,7 @@ impl Backend {
             };
 
             image_cache.store(
-                RemoteId::new(peer_id, image.id),
+                StableId::new(keypair.public_key(), image.id),
                 Box::from(image.bytes.as_slice()),
             );
 
@@ -269,6 +285,8 @@ impl Backend {
                     height: image.height,
                 },
             );
+
+            ids.insert(image.id);
         }
 
         tracing::debug!("Loaded {} objects", objects.len());
@@ -278,6 +296,7 @@ impl Backend {
                 database,
                 paths,
                 client_state: Mutex::new(ClientState {
+                    ids,
                     keypair,
                     peers: HashMap::new(),
                     objects,
@@ -301,6 +320,25 @@ impl Backend {
                 hidden: BlockingRwLock::new(hidden),
             }),
         })
+    }
+
+    /// Generate a new unique identifier.
+    async fn new_id(&self) -> Result<Id> {
+        let mut state = self.inner.client_state.lock().await;
+
+        let mut attempts = 0usize;
+
+        while attempts < 10 {
+            let id = Id::new(rand::random());
+
+            if state.ids.insert(id) {
+                return Ok(id);
+            }
+
+            attempts += 1;
+        }
+
+        bail!("failed to generate a unique identifier")
     }
 
     /// Get a reference to the database.
@@ -398,8 +436,10 @@ impl Backend {
                 state.keypair = keypair;
                 restart_client = true;
 
-                let peer_id = state.keypair.peer_id();
-                self.broadcast(UpdateBody::PeerId { peer_id });
+                let peer_id = state.keypair.public_key();
+                self.broadcast(UpdateBody::PublicKey {
+                    public_key: peer_id,
+                });
             }
             _ => {}
         }
@@ -468,7 +508,7 @@ impl Backend {
     /// Create a new local object, persisting it to the database and inserting
     /// it into the in-memory client state. Returns the new object's ID.
     pub(crate) async fn create_object(&self, ty: Type, props: Properties) -> Result<RemoteObject> {
-        let id = Id::new(rand::random());
+        let id = self.new_id().await?;
 
         self.db().insert_object(id, ty).await?;
 
@@ -525,7 +565,8 @@ impl Backend {
 
         let mut state = self.inner.client_state.lock().await;
 
-        if *state.props.get(Key::ROOM).as_remote_id() == RemoteId::new(state.keypair.peer_id(), id)
+        if *state.props.get(Key::ROOM).as_stable_id()
+            == StableId::new(state.keypair.public_key(), id)
         {
             self.db().delete_config(Key::ROOM).await?;
             state.props.remove(Key::ROOM);
@@ -546,8 +587,8 @@ impl Backend {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-    ) -> Result<RemoteId> {
-        let id = Id::new(rand::random());
+    ) -> Result<Id> {
+        let id = self.new_id().await?;
 
         let image = LocalImage {
             id,
@@ -567,17 +608,16 @@ impl Backend {
             )
             .await?;
 
-        let peer_id = {
+        let public_key = {
             let mut state = self.inner.client_state.lock().await;
             state.images.insert(id, image.clone());
             state.images_added.insert(id);
             self.inner.client_notify.notify_one();
-            state.keypair.peer_id()
+            state.keypair.public_key()
         };
 
-        let id = RemoteId::new(peer_id, id);
-
         {
+            let id = StableId::new(public_key, id);
             let mut images = self.inner.image_cache.write().await;
             images.store(id, Box::from(image.bytes.as_slice()));
         }
@@ -586,18 +626,14 @@ impl Backend {
     }
 
     /// Delete a local image.
-    pub(crate) async fn delete_image(&self, id: RemoteId) -> Result<()> {
+    pub(crate) async fn delete_image(&self, id: Id) -> Result<()> {
         let mut state = self.inner.client_state.lock().await;
 
-        if state.keypair.peer_id() != id.peer_id {
-            return Ok(());
-        }
+        self.db().delete_image(id).await?;
 
-        self.db().delete_image(id.id).await?;
-
-        state.images.remove(&id.id);
-        state.images_added.remove(&id.id);
-        state.images_deleted.insert(id.id);
+        state.images.remove(&id);
+        state.images_added.remove(&id);
+        state.images_deleted.insert(id);
         self.inner.client_notify.notify_one();
         Ok(())
     }
@@ -605,13 +641,13 @@ impl Backend {
 
 /// An optional and atomically stored identifier.
 pub struct AtomicId {
-    raw: AtomicU64,
+    raw: AtomicU32,
 }
 
 impl AtomicId {
     fn new(value: Id) -> Self {
         Self {
-            raw: AtomicU64::new(value.get()),
+            raw: AtomicU32::new(value.get()),
         }
     }
 

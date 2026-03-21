@@ -4,7 +4,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::Result;
-use api::{Id, Key, PeerId, Properties, RemoteObject, Value};
+use api::{Id, Key, PeerId, Properties, PublicKey, RemoteObject, Value};
 use musli::alloc::Global;
 use musli::mode::Binary;
 use musli::reader::SliceReader;
@@ -137,14 +137,14 @@ impl Peer {
     /// Connect to the remote server, registering a peer id and providing a challenge response.
     pub fn connect(
         &mut self,
-        peer_id: PeerId,
+        public_key: PublicKey,
         signature: Signature,
         objects: &[RemoteObject],
         images: &[RemoteImage],
         props: &Properties,
     ) -> Result<()> {
         self.scratch.send(ConnectBodyRef {
-            peer_id,
+            public_key,
             signature,
             objects,
             images,
@@ -171,11 +171,13 @@ impl Peer {
     /// Mark the given peer as having connected.
     pub fn peer_connected(
         &mut self,
+        public_key: PublicKey,
         peer_id: PeerId,
         objects: &[RemoteObject],
         props: &Properties,
     ) -> Result<()> {
         self.scratch.send(PeerConnectedBodyRef {
+            public_key,
             peer_id,
             objects,
             props,

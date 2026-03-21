@@ -6,8 +6,14 @@ pub use id::Id;
 mod peer_id;
 pub use peer_id::PeerId;
 
+mod public_key;
+pub use public_key::PublicKey;
+
 mod remote_id;
 pub use remote_id::RemoteId;
+
+mod stable_id;
+pub use stable_id::StableId;
 
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
@@ -44,7 +50,7 @@ impl Type {
 
 crate::macros::keys! {
     pub struct Key {
-        IMAGE_ID: RemoteId = 0;
+        IMAGE_ID: StableId = 0;
         COLOR: Color = 1;
         TRANSFORM: Transform = 2;
         LOOK_AT: Vec3 = 3;
@@ -90,7 +96,7 @@ crate::macros::keys! {
         /// A secret used to derive the peer's identity keypair.
         PEER_SECRET: String = 29;
         /// The name of the room to connect to on the remote server.
-        ROOM: RemoteId = 30;
+        ROOM: StableId = 30;
     }
 }
 
@@ -261,7 +267,7 @@ impl CropRegion {
 #[musli(crate = musli_core)]
 pub struct UploadImageResponse {
     /// The unique identifier of the uploaded image.
-    pub id: RemoteId,
+    pub id: Id,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
@@ -584,6 +590,7 @@ impl Transform {
 #[musli(crate = musli_core)]
 pub struct RemotePeer {
     pub peer_id: PeerId,
+    pub public_key: PublicKey,
     pub props: Properties,
     pub objects: Vec<RemoteObject>,
 }
@@ -608,10 +615,10 @@ pub struct InitializeMapRequest;
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeMapResponse {
-    pub peer_id: PeerId,
+    pub public_key: PublicKey,
     pub props: Properties,
     pub objects: Vec<RemoteObject>,
-    pub images: Vec<RemoteId>,
+    pub images: Vec<StableId>,
     pub peers: Vec<RemotePeer>,
 }
 
@@ -623,8 +630,8 @@ pub struct InitializeRoomsRequest;
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeRoomsResponse {
-    /// The local peer id.
-    pub peer_id: PeerId,
+    /// The public key associated with the local peer.
+    pub public_key: PublicKey,
     /// List of image identifiers currently stored in the database.
     pub props: Properties,
     /// List of local rooms on the server.
@@ -641,7 +648,7 @@ pub struct GetConfigRequest;
 #[musli(crate = musli_core)]
 pub struct Image {
     /// The unique identifier of the image.
-    pub id: RemoteId,
+    pub id: Id,
     /// The content type of the image.
     pub content_type: ContentType,
     /// The width of the image in pixels.
@@ -654,7 +661,7 @@ pub struct Image {
 #[musli(crate = musli_core)]
 pub struct ImageWithData {
     /// The unique identifier of the image.
-    pub id: RemoteId,
+    pub id: Id,
     /// The content type of the image.
     pub content_type: ContentType,
     /// The raw bytes of the image file.
@@ -680,8 +687,8 @@ pub struct GetObjectSettingsResponse {
     pub object: RemoteObject,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
-    /// The local peer id.
-    pub peer_id: PeerId,
+    /// The public key associated with the local peer.
+    pub public_key: PublicKey,
 }
 
 /// Request to create a new local object.
@@ -705,7 +712,7 @@ pub struct RemoveObjectRequest {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct DeleteImageRequest {
-    pub id: RemoteId,
+    pub id: Id,
 }
 
 /// Request to update config.
@@ -763,7 +770,7 @@ pub enum UpdateBody {
     Config { key: Key, value: Value },
     /// The local peer id has been updated, likely because of a configuration
     /// change.
-    PeerId { peer_id: PeerId },
+    PublicKey { public_key: PublicKey },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -772,8 +779,8 @@ pub enum LocalUpdateBody {
     ObjectCreated { object: RemoteObject },
     ObjectRemoved { id: Id },
     ObjectUpdated { id: Id, key: Key, value: Value },
-    ImageAdded { id: RemoteId },
-    ImageRemoved { id: RemoteId },
+    ImageAdded { id: Id },
+    ImageRemoved { id: Id },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -785,6 +792,7 @@ pub enum RemoteUpdateBody {
     /// Indicates that a new peer has connected.
     PeerConnected {
         peer_id: PeerId,
+        public_key: PublicKey,
         objects: Vec<RemoteObject>,
         props: Properties,
     },

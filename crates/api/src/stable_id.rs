@@ -6,68 +6,65 @@ use musli_core::{Decode, Encode};
 use serde_core::{Deserialize, Deserializer, de};
 
 use crate::id::ParseIdError;
-use crate::peer_id::ParsePeerIdError;
-use crate::{Id, PeerId};
+use crate::public_key::ParsePublicKeyError;
+use crate::{Id, PublicKey};
 
 /// Globally identifies a room.
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct RemoteId {
-    /// The peer that defined the room.
-    pub peer_id: PeerId,
+pub struct StableId {
+    /// The public key that owns the stable identifier.
+    pub public_key: PublicKey,
     /// The identifier of the room.
     pub id: Id,
 }
 
-impl RemoteId {
-    /// The zero remote identifier.
+impl StableId {
+    /// The zero stable identifier.
     pub const ZERO: Self = Self {
-        peer_id: PeerId::ZERO,
+        public_key: PublicKey::ZERO,
         id: Id::ZERO,
     };
 
-    /// A local identifier.
-    pub fn local(id: Id) -> Self {
-        Self {
-            peer_id: PeerId::ZERO,
-            id,
-        }
-    }
-
     /// Construct a new room.
-    pub fn new(peer_id: PeerId, id: Id) -> Self {
-        Self { peer_id, id }
+    pub fn new(public_key: PublicKey, id: Id) -> Self {
+        Self { public_key, id }
     }
 
     /// Check if the remote identifier is zero.
     pub fn is_zero(&self) -> bool {
-        self.peer_id.is_zero() && self.id.is_zero()
+        self.public_key.is_zero() && self.id.is_zero()
+    }
+
+    /// Return the stable identifier if it is non-zero.
+    pub fn as_non_zero(&self) -> Option<&Self> {
+        if self.is_zero() { None } else { Some(self) }
     }
 }
 
-impl fmt::Debug for RemoteId {
+impl fmt::Debug for StableId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.peer_id, self.id)
+        write!(f, "{}/{}", self.public_key, self.id)
     }
 }
 
-impl fmt::Display for RemoteId {
+impl fmt::Display for StableId {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.peer_id, self.id)
+        write!(f, "{}/{}", self.public_key, self.id)
     }
 }
 
 #[cfg(feature = "yew")]
-impl From<RemoteId> for yew::virtual_dom::Key {
+impl From<StableId> for yew::virtual_dom::Key {
     #[inline]
-    fn from(id: RemoteId) -> Self {
+    fn from(id: StableId) -> Self {
         yew::virtual_dom::Key::from(id.to_string())
     }
 }
 
-impl<'de> Deserialize<'de> for RemoteId {
+impl<'de> Deserialize<'de> for StableId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -75,7 +72,7 @@ impl<'de> Deserialize<'de> for RemoteId {
         struct Visitor;
 
         impl<'de> de::Visitor<'de> for Visitor {
-            type Value = RemoteId;
+            type Value = StableId;
 
             #[inline]
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -95,73 +92,75 @@ impl<'de> Deserialize<'de> for RemoteId {
     }
 }
 
-pub struct ParseRemoteIdError {
-    kind: ParseRemoteIdErrorKind,
+pub struct ParseStableIdError {
+    kind: ParseStableIdErrorKind,
 }
 
 #[derive(Debug)]
-enum ParseRemoteIdErrorKind {
+enum ParseStableIdErrorKind {
     MissingSeparator,
-    PeerId(ParsePeerIdError),
+    PublicKey(ParsePublicKeyError),
     Id(ParseIdError),
 }
 
-impl fmt::Display for ParseRemoteIdErrorKind {
+impl fmt::Display for ParseStableIdErrorKind {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingSeparator => write!(f, "missing separator"),
-            Self::PeerId(..) => write!(f, "invalid peer id"),
+            Self::PublicKey(..) => write!(f, "invalid public key"),
             Self::Id(..) => write!(f, "invalid id"),
         }
     }
 }
 
-impl fmt::Display for ParseRemoteIdError {
+impl fmt::Display for ParseStableIdError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
     }
 }
 
-impl fmt::Debug for ParseRemoteIdError {
+impl fmt::Debug for ParseStableIdError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
     }
 }
 
-impl Error for ParseRemoteIdError {
+impl Error for ParseStableIdError {
     #[inline]
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match &self.kind {
-            ParseRemoteIdErrorKind::PeerId(err) => Some(err),
-            ParseRemoteIdErrorKind::Id(err) => Some(err),
+            ParseStableIdErrorKind::PublicKey(err) => Some(err),
+            ParseStableIdErrorKind::Id(err) => Some(err),
             _ => None,
         }
     }
 }
 
-impl From<ParseRemoteIdErrorKind> for ParseRemoteIdError {
+impl From<ParseStableIdErrorKind> for ParseStableIdError {
     #[inline]
-    fn from(kind: ParseRemoteIdErrorKind) -> Self {
+    fn from(kind: ParseStableIdErrorKind) -> Self {
         Self { kind }
     }
 }
 
-impl FromStr for RemoteId {
-    type Err = ParseRemoteIdError;
+impl FromStr for StableId {
+    type Err = ParseStableIdError;
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let Some((peer_id, id)) = s.split_once("::") else {
-            return Err(ParseRemoteIdError::from(
-                ParseRemoteIdErrorKind::MissingSeparator,
+        let Some((public_key, id)) = s.split_once("::") else {
+            return Err(ParseStableIdError::from(
+                ParseStableIdErrorKind::MissingSeparator,
             ));
         };
 
-        let peer_id = peer_id.parse().map_err(ParseRemoteIdErrorKind::PeerId)?;
-        let id = id.parse().map_err(ParseRemoteIdErrorKind::Id)?;
-        Ok(Self { peer_id, id })
+        let public_key = public_key
+            .parse()
+            .map_err(ParseStableIdErrorKind::PublicKey)?;
+        let id = id.parse().map_err(ParseStableIdErrorKind::Id)?;
+        Ok(Self { public_key, id })
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use api::{Id, Key, PeerId, Properties, RemoteId, Value};
+use api::{Id, Key, PeerId, Properties, PublicKey, StableId, Value};
 
 use crate::components::render::Visibility;
 use crate::objects::ObjectData;
@@ -9,6 +9,7 @@ use crate::objects::ObjectData;
 #[derive(Default)]
 pub(crate) struct Peer {
     pub(crate) id: PeerId,
+    pub(crate) public_key: PublicKey,
     pub(crate) props: Properties,
     objects: HashMap<Id, ObjectData>,
     pub(crate) in_room: bool,
@@ -16,10 +17,10 @@ pub(crate) struct Peer {
 
 impl Peer {
     /// Update a peer property.
-    pub(crate) fn update(&mut self, key: Key, value: Value, room: &RemoteId) {
+    pub(crate) fn update(&mut self, key: Key, value: Value, room: &StableId) {
         match key {
             Key::ROOM => {
-                self.in_room = *value.as_remote_id() == *room;
+                self.in_room = *value.as_stable_id() == *room;
             }
             _ => {}
         }
@@ -28,8 +29,8 @@ impl Peer {
     }
 
     /// Update peer based on configuration.
-    pub(crate) fn update_config(&mut self, room: &RemoteId) {
-        self.in_room = *self.props.get(Key::ROOM).as_remote_id() == *room;
+    pub(crate) fn update_config(&mut self, room: &StableId) {
+        self.in_room = *self.props.get(Key::ROOM).as_stable_id() == *room;
     }
 
     /// Insert a new object.
@@ -127,14 +128,30 @@ impl Peers {
     }
 
     /// Insert a new peer.
-    pub(crate) fn create(&mut self, id: PeerId, props: Properties, room: &RemoteId) -> &mut Peer {
-        let in_room = *props.get(Key::ROOM).as_remote_id() == *room;
+    pub(crate) fn create(
+        &mut self,
+        id: PeerId,
+        public_key: PublicKey,
+        props: Properties,
+        room: &StableId,
+    ) -> &mut Peer {
+        let in_room = *props.get(Key::ROOM).as_stable_id() == *room;
 
         let peer = self.peers.entry(id).or_default();
         peer.id = id;
+        peer.public_key = public_key;
         peer.props = props;
         peer.objects.clear();
         peer.in_room = in_room;
         peer
+    }
+
+    /// Coerce into a stable identifier.
+    pub(crate) fn to_stable_id(&self, peer_id: PeerId, object_id: Id) -> StableId {
+        let Some(peer) = self.peers.get(&peer_id) else {
+            return StableId::ZERO;
+        };
+
+        StableId::new(peer.public_key, object_id)
     }
 }

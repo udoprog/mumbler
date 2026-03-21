@@ -1,4 +1,4 @@
-use api::{Color, Id, Image, Key, PeerId, RemoteId, Value};
+use api::{Color, Id, Image, Key, PublicKey, StableId, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -24,7 +24,7 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     CropCancelled,
     CropConfirmed(api::CropRegion),
-    DeleteImage(RemoteId),
+    DeleteImage(Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
@@ -34,7 +34,7 @@ pub(crate) enum Msg {
     OpenGallery,
     RadiusChanged(Event),
     SelectColor(api::Color),
-    SelectImage(RemoteId),
+    SelectImage(Id),
     SetLog(log::Log),
     SpeedChanged(Event),
     StateChanged(ws::State),
@@ -64,9 +64,9 @@ pub(crate) struct TokenSettings {
     crop_source_url: Option<String>,
     gallery_open: bool,
     image_uploading: bool,
-    image: State<RemoteId>,
+    image: State<StableId>,
     images: Vec<Image>,
-    peer_id: PeerId,
+    public_key: PublicKey,
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
@@ -120,9 +120,9 @@ impl Component for TokenSettings {
             crop_source_url: None,
             gallery_open: false,
             image_uploading: false,
-            image: State::new(RemoteId::ZERO),
+            image: State::new(StableId::ZERO),
             images: Vec::new(),
-            peer_id: PeerId::ZERO,
+            public_key: PublicKey::ZERO,
             log,
             name: State::new(None),
             preview_canvas: NodeRef::default(),
@@ -247,7 +247,7 @@ impl Component for TokenSettings {
             if self.gallery_open {
                 <ImageGalleryModal
                     images={self.images.clone()}
-                    selected={*self.image}
+                    selected={self.image.id}
                     onselect={ctx.link().callback(Msg::SelectImage)}
                     ondelete={ctx.link().callback(Msg::DeleteImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
@@ -296,7 +296,7 @@ impl TokenSettings {
                 }
 
                 self.images = body.images;
-                self.peer_id = body.peer_id;
+                self.public_key = body.public_key;
                 Ok(true)
             }
             Msg::AvatarImageSelected(e) => {
@@ -375,9 +375,9 @@ impl TokenSettings {
                 Ok(false)
             }
             Msg::SelectImage(id) => {
-                *self.image = id;
+                *self.image = StableId::new(self.public_key, id);
                 self.load_preview_image(ctx);
-                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = send_update(ctx, Key::IMAGE_ID, *self.image);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -502,7 +502,7 @@ impl TokenSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(*value.as_remote_id()) {
+                if self.image.update(*value.as_stable_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {

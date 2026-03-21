@@ -2,7 +2,7 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Extent, Id, Pan, PeerId, RemoteId, Transform, Vec3};
+use crate::{Color, Extent, Id, Pan, PeerId, StableId, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
@@ -16,7 +16,7 @@ pub enum ValueType {
     Integer,
     Pan,
     PeerId,
-    RemoteId,
+    StableId,
     String,
     Transform,
     Vec3,
@@ -64,10 +64,10 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_remote_id(&self) -> &RemoteId {
+    pub fn as_stable_id(&self) -> &StableId {
         match &self.kind {
-            ValueKind::RemoteId(remote_id) => remote_id,
-            _ => &RemoteId::ZERO,
+            ValueKind::StableId(stable_id) => stable_id,
+            _ => &StableId::ZERO,
         }
     }
 
@@ -239,7 +239,7 @@ pub enum ValueKind {
     Integer(i64),
     Pan(Pan),
     PeerId(PeerId),
-    RemoteId(RemoteId),
+    StableId(StableId),
     String(String),
     Transform(Transform),
     Vec3(Vec3),
@@ -357,11 +357,11 @@ impl From<Extent> for Value {
     }
 }
 
-impl From<RemoteId> for Value {
+impl From<StableId> for Value {
     #[inline]
-    fn from(value: RemoteId) -> Self {
+    fn from(value: StableId) -> Self {
         Self {
-            kind: ValueKind::RemoteId(value),
+            kind: ValueKind::StableId(value),
         }
     }
 }
