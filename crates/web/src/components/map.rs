@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use api::{Color, Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
+use api::{
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteId, RemoteUpdateBody, Value, Vec3,
+};
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
@@ -337,6 +339,7 @@ pub(crate) struct Map {
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
     look_ats: Vec<(Vec3, Color)>,
+    peer_id: PeerId,
     s: Inner,
 }
 
@@ -363,7 +366,7 @@ pub(crate) enum Msg {
     DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
     DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ImageMessage(ImageMessage),
-    InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
+    Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
@@ -470,6 +473,7 @@ impl Component for Map {
             _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
             _upload_image: ws::Request::new(),
+            action: None,
             animation_interval: None,
             canvas_ref: NodeRef::default(),
             canvas_sizer: NodeRef::default(),
@@ -479,6 +483,7 @@ impl Component for Map {
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
+            look_ats: Vec::new(),
             mouse: None,
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_ondragover: ctx.link().callback(Msg::DragOver),
@@ -494,13 +499,12 @@ impl Component for Map {
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
+            peer_id: PeerId::ZERO,
             peers: Peers::default(),
-            action: None,
+            s: Inner::default(),
             state,
             transform_requests: HashMap::new(),
             update_world: false,
-            s: Inner::default(),
-            look_ats: Vec::new(),
         };
 
         this.refresh(ctx);
@@ -943,7 +947,7 @@ impl Map {
                 .ws
                 .request()
                 .body(api::InitializeMapRequest)
-                .on_packet(ctx.link().callback(Msg::InitializeMap))
+                .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
     }
@@ -1176,12 +1180,13 @@ impl Map {
                 self.log = log;
                 Ok(false)
             }
-            Msg::InitializeMap(result) => {
-                let body = result?;
+            Msg::Initialize(body) => {
+                let body = body?;
                 let body = body.decode()?;
 
                 tracing::debug!(?body, "Initialize");
 
+                self.peer_id = *body.config.get(Key::PEER_ID).as_peer_id();
                 self.config = Config::from_config(body.config);
 
                 self.objects = body.objects.iter().map(LocalObject::from_remote).collect();
@@ -1202,12 +1207,8 @@ impl Map {
 
                 self.images.clear();
 
-                for image_id in body.images {
-                    self.images.load(ctx, image_id);
-                }
-
-                for image_id in body.remote_images {
-                    self.images.load(ctx, image_id);
+                for id in body.images {
+                    self.images.load(ctx, &id);
                 }
 
                 self.s.redraw = true;
@@ -1235,7 +1236,7 @@ impl Map {
                             objects.insert(o.id, o);
                             true
                         }
-                        LocalUpdateBody::ObjectRemoved { object_id } => {
+                        LocalUpdateBody::ObjectRemoved { id: object_id } => {
                             if let Some(o) = objects.remove(object_id) {
                                 order.remove(*o.group, o.sort().to_vec(), o.id);
                             }
@@ -1249,7 +1250,7 @@ impl Map {
                             true
                         }
                         LocalUpdateBody::ObjectUpdated {
-                            object_id,
+                            id: object_id,
                             key,
                             value,
                         } => {
@@ -1286,12 +1287,14 @@ impl Map {
                                 o.update(key, value) || update
                             }
                         }
-                        LocalUpdateBody::ImageAdded { image_id, .. } => {
-                            self.images.load(ctx, image_id);
+                        LocalUpdateBody::ImageAdded { id, .. } => {
+                            let id = RemoteId::new(self.peer_id, id);
+                            self.images.load(ctx, &id);
                             false
                         }
-                        LocalUpdateBody::ImageRemoved { image_id, .. } => {
-                            self.images.remove(image_id);
+                        LocalUpdateBody::ImageRemoved { id } => {
+                            let id = RemoteId::new(self.peer_id, id);
+                            self.images.remove(&id);
                             false
                         }
                     }
@@ -1344,7 +1347,8 @@ impl Map {
                         }
 
                         for id in images {
-                            self.images.load(ctx, id);
+                            let id = RemoteId::new(peer_id, id);
+                            self.images.load(ctx, &id);
                         }
 
                         true
@@ -1369,21 +1373,16 @@ impl Map {
                         peer.update(key, value);
                         true
                     }
-                    RemoteUpdateBody::ObjectUpdated {
-                        object_id,
-                        peer_id,
-                        key,
-                        value,
-                    } => 'done: {
-                        let Some(a) = self.peers.get_object_mut(peer_id, object_id) else {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value } => 'done: {
+                        let Some(a) = self.peers.get_object_mut(id.peer_id, id.id) else {
                             break 'done false;
                         };
 
                         a.update(key, value);
                         true
                     }
-                    RemoteUpdateBody::ObjectCreated { peer_id, object } => 'done: {
-                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                    RemoteUpdateBody::ObjectCreated { id, object } => 'done: {
+                        let Some(peer) = self.peers.get_mut(id.peer_id) else {
                             break 'done false;
                         };
 
@@ -1391,16 +1390,16 @@ impl Map {
                         peer.insert(data.id, data);
                         true
                     }
-                    RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        self.peers.remove(peer_id, object_id);
+                    RemoteUpdateBody::ObjectRemoved { id } => {
+                        self.peers.remove(id.peer_id, id.id);
                         true
                     }
-                    RemoteUpdateBody::ImageAdded { image_id, .. } => {
-                        self.images.load(ctx, image_id);
+                    RemoteUpdateBody::ImageAdded { id } => {
+                        self.images.load(ctx, &id);
                         true
                     }
-                    RemoteUpdateBody::ImageRemoved { image_id, .. } => {
-                        self.images.remove(image_id);
+                    RemoteUpdateBody::ImageRemoved { id } => {
+                        self.images.remove(&id);
                         true
                     }
                 };
@@ -2532,7 +2531,7 @@ fn object_update(
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            object_id,
+            id: object_id,
             key,
             value: value.into(),
         })

@@ -102,33 +102,28 @@ pub(crate) struct ClientState {
 }
 
 struct Data {
-    peer_id: PeerId,
     bytes: Box<[u8]>,
 }
 
 /// Temporary images.
-pub(crate) struct Images {
-    images: HashMap<Id, Data>,
+#[derive(Default)]
+pub(crate) struct ImageCache {
+    images: HashMap<RemoteId, Data>,
 }
 
-impl Images {
+impl ImageCache {
     /// Store an image and return its ID.
-    pub(crate) fn store(&mut self, peer_id: PeerId, id: Id, bytes: Box<[u8]>) -> Id {
-        self.images.insert(id, Data { peer_id, bytes });
-        id
+    pub(crate) fn store(&mut self, id: RemoteId, bytes: Box<[u8]>) {
+        self.images.insert(id, Data { bytes });
     }
 
     /// Remove an image by ID.
-    pub(crate) fn remove(&mut self, peer_id: PeerId, id: Id) {
-        if let Some(data) = self.images.get(&id)
-            && data.peer_id == peer_id
-        {
-            self.images.remove(&id);
-        }
+    pub(crate) fn remove(&mut self, id: RemoteId) {
+        self.images.remove(&id);
     }
 
     /// Get an image by ID.
-    pub(crate) fn get(&self, id: &Id) -> Option<&[u8]> {
+    pub(crate) fn get(&self, id: &RemoteId) -> Option<&[u8]> {
         Some(self.images.get(id)?.bytes.as_ref())
     }
 }
@@ -148,7 +143,7 @@ struct Inner {
     mumblelink_state: Mutex<MumblelinkState>,
     mumblelink_notify: Notify,
     mumblelink_restart_notify: Notify,
-    images: RwLock<Images>,
+    image_cache: RwLock<ImageCache>,
     broadcast: Sender<BackendEvent>,
     mumble_object: AtomicId,
     hidden: BlockingRwLock<HashSet<Id>>,
@@ -162,7 +157,7 @@ pub struct Backend {
 
 impl Backend {
     /// Construct a new backend.
-    pub async fn new(db: Database, paths: Paths) -> Result<Self> {
+    pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
         tracing::debug!("Loading objects from database");
@@ -171,14 +166,14 @@ impl Backend {
         let mut images = HashMap::new();
         let mut hidden = HashSet::new();
 
-        for (id, ty, group_id) in db.objects().await? {
+        for (id, ty, group_id) in database.objects().await? {
             tracing::debug!(?id, ?ty, "Loading object");
 
             let mut props = Properties::new();
 
             props.insert(Key::GROUP, Value::from(group_id));
 
-            for (key, value) in db.properties(id).await? {
+            for (key, value) in database.properties(id).await? {
                 tracing::debug!(?id, ?key, ?value, "Loading property");
 
                 match key {
@@ -212,13 +207,46 @@ impl Backend {
 
         let mut props = Properties::new();
 
-        for (key, value) in db.configs().await? {
+        for (key, value) in database.configs().await? {
             if key.is_remote() {
                 props.insert(key, value);
             }
         }
 
-        for image in db.images_with_data().await? {
+        let client_secret = match props.get(Key::PEER_SECRET).as_str() {
+            Some(secret) => secret.to_owned(),
+            None => {
+                let secret = crypto::random_string();
+                database
+                    .set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
+                    .await?;
+                props.insert(Key::PEER_SECRET, Value::from(secret.clone()));
+                secret
+            }
+        };
+
+        let keypair = crypto::derive_keypair(client_secret.as_bytes());
+
+        let peer_id = match props.get(Key::PEER_ID).as_peer_id() {
+            peer_id if !peer_id.is_zero() => *peer_id,
+            _ => {
+                let peer_id = keypair.peer_id();
+                database
+                    .set_config_value(Key::PEER_ID, Value::from(peer_id))
+                    .await?;
+                props.insert(Key::PEER_ID, Value::from(peer_id));
+                peer_id
+            }
+        };
+
+        let mumble_object = database
+            .config(Key::MUMBLE_OBJECT)
+            .await?
+            .unwrap_or_default();
+
+        let mut image_cache = ImageCache::default();
+
+        for image in database.images_with_data().await? {
             tracing::debug! {
                 ?image.id,
                 ?image.content_type,
@@ -227,6 +255,11 @@ impl Backend {
                 image.height,
                 "loading image",
             };
+
+            image_cache.store(
+                RemoteId::new(peer_id, image.id),
+                Box::from(image.bytes.as_slice()),
+            );
 
             images.insert(
                 image.id,
@@ -240,25 +273,11 @@ impl Backend {
             );
         }
 
-        let client_secret = match props.get(Key::PEER_SECRET).as_str() {
-            Some(secret) => secret.to_owned(),
-            None => {
-                let secret = crypto::random_string();
-                db.set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
-                    .await?;
-                secret
-            }
-        };
-
-        let keypair = crypto::derive_keypair(client_secret.as_bytes());
-
-        let mumble_object = db.config(Key::MUMBLE_OBJECT).await?.unwrap_or_default();
-
         tracing::debug!("Loaded {} objects", objects.len());
 
         Ok(Self {
             inner: Arc::new(Inner {
-                database: db,
+                database,
                 paths,
                 client_state: Mutex::new(ClientState {
                     keypair,
@@ -273,9 +292,7 @@ impl Backend {
                     props,
                     props_changed: HashSet::new(),
                 }),
-                images: RwLock::new(Images {
-                    images: HashMap::new(),
-                }),
+                image_cache: RwLock::new(image_cache),
                 client_notify: Notify::new(),
                 client_restart_notify: Notify::new(),
                 mumblelink_state: Mutex::new(MumblelinkState { transform: None }),
@@ -328,13 +345,13 @@ impl Backend {
     }
 
     /// Write temporary images.
-    pub(crate) async fn images(&self) -> RwLockWriteGuard<'_, Images> {
-        self.inner.images.write().await
+    pub(crate) async fn write_images(&self) -> RwLockWriteGuard<'_, ImageCache> {
+        self.inner.image_cache.write().await
     }
 
     /// Read temporary images.
-    pub(crate) async fn images_read(&self) -> RwLockReadGuard<'_, Images> {
-        self.inner.images.read().await
+    pub(crate) async fn read_images(&self) -> RwLockReadGuard<'_, ImageCache> {
+        self.inner.image_cache.read().await
     }
 
     /// Broadcast an event to all peers.
@@ -510,7 +527,7 @@ impl Backend {
 
         let mut state = self.inner.client_state.lock().await;
 
-        if state.props.get(Key::ROOM).as_room() == Some(&RemoteId::new(state.keypair.peer_id(), id))
+        if *state.props.get(Key::ROOM).as_remote_id() == RemoteId::new(state.keypair.peer_id(), id)
         {
             self.db().delete_config(Key::ROOM).await?;
             state.props.remove(Key::ROOM);

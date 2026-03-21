@@ -63,8 +63,8 @@ struct ServerPeerState {
 
 impl ServerPeerState {
     /// Get the room that this peer is currently in, if any.
-    fn room(&self) -> Option<&RemoteId> {
-        self.props.get(Key::ROOM).as_room()
+    fn room(&self) -> &RemoteId {
+        self.props.get(Key::ROOM).as_remote_id()
     }
 }
 
@@ -484,7 +484,10 @@ impl State {
 
                     self.connected(this);
 
-                    if let Some(room) = this.room().cloned() {
+                    let room = this.room();
+
+                    if !room.is_zero() {
+                        let room = room.clone();
                         self.join_room(this, &room);
                     }
                 }
@@ -501,12 +504,15 @@ impl State {
 
                     match body.key {
                         Key::ROOM => {
-                            if let Some(room) = old.as_room() {
-                                self.leave_room(this, room, this.peer_id);
+                            let old_room = old.as_remote_id();
+                            let new_room = body.value.as_remote_id();
+
+                            if !old_room.is_zero() {
+                                self.leave_room(this, old_room, this.peer_id);
                             }
 
-                            if let Some(room) = body.value.as_room() {
-                                self.join_room(this, room);
+                            if !new_room.is_zero() {
+                                self.join_room(this, new_room);
                             }
                         }
                         _ => {}
@@ -633,13 +639,13 @@ impl State {
         // When a new room is created, make sure we add all
         // existing members to it.
         for (id, peer) in self.peers.iter() {
-            if peer.state.room() == Some(&room) {
+            if peer.state.room() == &room {
                 r.members.push(id);
             }
         }
 
         // If the room creator has it as its room.
-        if this.room() == Some(&room) {
+        if this.room() == &room {
             r.members.push(this.peer_id);
         }
     }
@@ -782,7 +788,7 @@ impl State {
     where
         F: FnMut(&mut ServerPeerState, Pin<&mut ServerPeer>) -> Result<()>,
     {
-        let Some(room) = this.room().and_then(|key| self.rooms.get(key)) else {
+        let Some(room) = self.rooms.get(this.room()) else {
             return;
         };
 

@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use anyhow::{Context as _, Result};
 use api::{
     GetObjectSettingsRequest, GetObjectSettingsResponse, Id, InitializeMapResponse,
-    InitializeRoomsResponse, Key, Properties, RemoteObject, RemotePeer, Type, UpdateBody,
+    InitializeRoomsResponse, Key, Properties, RemoteId, RemoteObject, RemotePeer, Type, UpdateBody,
     UploadImageRequest, Value,
 };
 use axum::extract::Path;
@@ -127,35 +127,28 @@ fn common_routes(router: Router) -> Router {
 
 async fn image(
     Extension(backend): Extension<Backend>,
-    Path(id): Path<Id>,
+    Path(id): Path<RemoteId>,
 ) -> Result<impl IntoResponse, WebError> {
     const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;
 
-    {
-        let images = backend.images_read().await;
+    let images = backend.read_images().await;
 
-        if let Some(data) = images.get(&id) {
-            return Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data.to_vec()));
-        }
-    }
-
-    let data = backend.db().get_image_data(id).await?;
-
-    let Some(data) = data else {
+    let Some(data) = images.get(&id) else {
         return Err(WebError::not_found());
     };
 
-    Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data))
+    return Ok(([(header::CONTENT_TYPE, MIME.as_ref())], data.to_vec()));
 }
 
 async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     let mut objects = Vec::new();
     let mut images = Vec::new();
     let mut peers = Vec::new();
-    let mut remote_images = Vec::new();
 
     {
         let state = b.client_state().await;
+
+        let peer_id = *state.props.get(Key::PEER_ID).as_peer_id();
 
         for (id, object) in state.objects.iter() {
             objects.push(RemoteObject {
@@ -165,8 +158,8 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
             });
         }
 
-        for image_id in state.images.keys() {
-            images.push(*image_id);
+        for id in state.images.keys() {
+            images.push(RemoteId::new(peer_id, *id));
         }
 
         for (peer_id, peer) in state.peers.iter() {
@@ -185,7 +178,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
             }
 
             for image_id in peer.images.iter() {
-                remote_images.push(*image_id);
+                images.push(RemoteId::new(*peer_id, *image_id));
             }
 
             peers.push(new_peer);
@@ -202,7 +195,6 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
         objects,
         images,
         peers,
-        remote_images,
         config,
     };
 
@@ -212,7 +204,6 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
 async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
     let mut local = Vec::new();
     let mut peers = Vec::new();
-    let peer_id;
 
     {
         let state = b.client_state().await;
@@ -250,8 +241,6 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
                 objects,
             });
         }
-
-        peer_id = state.keypair.peer_id();
     }
 
     let mut config = Properties::new();
@@ -264,7 +253,6 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
         local,
         peers,
         config,
-        peer_id,
     };
 
     Ok(res)
@@ -307,19 +295,24 @@ async fn get_object_settings(
     backend: &Backend,
     request: GetObjectSettingsRequest,
 ) -> Result<GetObjectSettingsResponse> {
-    let object = {
-        let state = backend.client_state().await;
-        let object = state.objects.get(&request.id).context("object not found")?;
+    let state = backend.client_state().await;
 
-        RemoteObject {
-            ty: object.ty,
-            id: request.id,
-            props: object.props.clone(),
-        }
+    let peer_id = *state.props.get(Key::PEER_ID).as_peer_id();
+
+    let object = state.objects.get(&request.id).context("object not found")?;
+
+    let object = RemoteObject {
+        ty: object.ty,
+        id: object.id,
+        props: object.props.clone(),
     };
 
     let images = backend.db().images().await?;
-    Ok(GetObjectSettingsResponse { object, images })
+    Ok(GetObjectSettingsResponse {
+        object,
+        images,
+        peer_id,
+    })
 }
 
 async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {

@@ -44,7 +44,7 @@ impl Type {
 
 crate::macros::keys! {
     pub struct Key {
-        IMAGE_ID: Id = 0;
+        IMAGE_ID: RemoteId = 0;
         COLOR: Color = 1;
         TRANSFORM: Transform = 2;
         LOOK_AT: Vec3 = 3;
@@ -91,6 +91,8 @@ crate::macros::keys! {
         PEER_SECRET: String = 29;
         /// The name of the room to connect to on the remote server.
         ROOM: RemoteId = 30;
+        /// The unique identifier of the peer.
+        PEER_ID: PeerId = 31;
     }
 }
 
@@ -195,7 +197,7 @@ impl fmt::Debug for Color {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct ObjectUpdateBody {
-    pub object_id: Id,
+    pub id: Id,
     pub key: Key,
     pub value: Value,
 }
@@ -609,9 +611,8 @@ pub struct InitializeMapRequest;
 #[musli(crate = musli_core)]
 pub struct InitializeMapResponse {
     pub objects: Vec<RemoteObject>,
-    pub images: Vec<Id>,
+    pub images: Vec<RemoteId>,
     pub peers: Vec<RemotePeer>,
-    pub remote_images: Vec<Id>,
     pub config: Properties,
 }
 
@@ -623,8 +624,6 @@ pub struct InitializeRoomsRequest;
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeRoomsResponse {
-    /// This peer identifier.
-    pub peer_id: PeerId,
     /// List of local rooms on the server.
     pub local: Vec<RemoteObject>,
     /// List of remote rooms associated with peers.
@@ -682,6 +681,8 @@ pub struct GetObjectSettingsResponse {
     pub object: RemoteObject,
     /// List of image identifiers currently stored in the database.
     pub images: Vec<Image>,
+    /// The local peer id.
+    pub peer_id: PeerId,
 }
 
 /// Request to create a new local object.
@@ -766,23 +767,11 @@ pub struct UpdateBody {
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum LocalUpdateBody {
-    ObjectCreated {
-        object: RemoteObject,
-    },
-    ObjectRemoved {
-        object_id: Id,
-    },
-    ObjectUpdated {
-        object_id: Id,
-        key: Key,
-        value: Value,
-    },
-    ImageAdded {
-        image_id: Id,
-    },
-    ImageRemoved {
-        image_id: Id,
-    },
+    ObjectCreated { object: RemoteObject },
+    ObjectRemoved { id: Id },
+    ObjectUpdated { id: Id, key: Key, value: Value },
+    ImageAdded { id: Id },
+    ImageRemoved { id: Id },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -818,26 +807,22 @@ pub enum RemoteUpdateBody {
         peer_id: PeerId,
     },
     ObjectUpdated {
-        peer_id: PeerId,
-        object_id: Id,
+        id: RemoteId,
         key: Key,
         value: Value,
     },
     ObjectCreated {
-        peer_id: PeerId,
+        id: RemoteId,
         object: RemoteObject,
     },
     ObjectRemoved {
-        peer_id: PeerId,
-        object_id: Id,
+        id: RemoteId,
     },
     ImageAdded {
-        peer_id: PeerId,
-        image_id: Id,
+        id: RemoteId,
     },
     ImageRemoved {
-        peer_id: PeerId,
-        image_id: Id,
+        id: RemoteId,
     },
 }
 

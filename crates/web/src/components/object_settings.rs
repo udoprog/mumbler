@@ -1,4 +1,4 @@
-use api::{Color, Id, Image, Key, Value};
+use api::{Color, Id, Image, Key, PeerId, RemoteId, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -26,7 +26,7 @@ pub(crate) enum Msg {
     CropConfirmed(api::CropRegion),
     DeleteImage(Id),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
-    GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
+    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
@@ -64,8 +64,9 @@ pub(crate) struct TokenSettings {
     crop_source_url: Option<String>,
     gallery_open: bool,
     image_uploading: bool,
-    image: State<Id>,
+    image: State<RemoteId>,
     images: Vec<Image>,
+    peer_id: PeerId,
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
@@ -119,8 +120,9 @@ impl Component for TokenSettings {
             crop_source_url: None,
             gallery_open: false,
             image_uploading: false,
-            image: State::new(Id::ZERO),
+            image: State::new(RemoteId::ZERO),
             images: Vec::new(),
+            peer_id: PeerId::ZERO,
             log,
             name: State::new(None),
             preview_canvas: NodeRef::default(),
@@ -245,10 +247,10 @@ impl Component for TokenSettings {
             if self.gallery_open {
                 <ImageGalleryModal
                     images={self.images.clone()}
-                    selected={*self.image}
-                    on_select={ctx.link().callback(Msg::SelectImage)}
-                    on_delete={ctx.link().callback(Msg::DeleteImage)}
-                    on_close={ctx.link().callback(|_| Msg::CloseGallery)}
+                    selected={self.image.id}
+                    onselect={ctx.link().callback(Msg::SelectImage)}
+                    ondelete={ctx.link().callback(Msg::DeleteImage)}
+                    onclose={ctx.link().callback(|_| Msg::CloseGallery)}
                 />
             }
 
@@ -273,7 +275,7 @@ impl TokenSettings {
                 .ws
                 .request()
                 .body(api::GetObjectSettingsRequest { id: ctx.props().id })
-                .on_packet(ctx.link().callback(Msg::GetObjectSettings))
+                .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
     }
@@ -283,6 +285,18 @@ impl TokenSettings {
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
+                Ok(true)
+            }
+            Msg::Initialize(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
+                for (key, value) in body.object.props {
+                    self.update_property(ctx, key, value);
+                }
+
+                self.images = body.images;
+                self.peer_id = body.peer_id;
                 Ok(true)
             }
             Msg::AvatarImageSelected(e) => {
@@ -360,19 +374,8 @@ impl TokenSettings {
                 self.refresh(ctx);
                 Ok(false)
             }
-            Msg::GetObjectSettings(result) => {
-                let result = result?;
-                let response = result.decode()?;
-
-                for (key, value) in response.object.props {
-                    self.update_property(ctx, key, value);
-                }
-
-                self.images = response.images;
-                Ok(true)
-            }
             Msg::SelectImage(id) => {
-                *self.image = id;
+                *self.image = RemoteId::new(self.peer_id, id);
                 self.load_preview_image(ctx);
                 self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
@@ -470,7 +473,7 @@ impl TokenSettings {
 
                 let changed = match body {
                     api::LocalUpdateBody::ObjectUpdated {
-                        object_id,
+                        id: object_id,
                         key,
                         value,
                     } => {
@@ -499,7 +502,7 @@ impl TokenSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(value.as_id()) {
+                if self.image.update(*value.as_remote_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {
@@ -516,7 +519,7 @@ impl TokenSettings {
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
-        self.preview_images.load(ctx, *self.image);
+        self.preview_images.load(ctx, &*self.image);
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
@@ -542,7 +545,7 @@ impl TokenSettings {
         let render = render::RenderToken {
             transform: &api::Transform::origin(),
             look_at: None,
-            image: *self.image,
+            image: &*self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             token_radius: 1.0,
             arrow_target: None,
@@ -565,7 +568,7 @@ fn send_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) 
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            object_id: ctx.props().id,
+            id: ctx.props().id,
             key,
             value: value.into(),
         })

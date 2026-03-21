@@ -203,7 +203,7 @@ impl GroupSettings {
 
                 let changed = match body {
                     api::LocalUpdateBody::ObjectUpdated {
-                        object_id,
+                        id: object_id,
                         key,
                         value,
                     } => {
@@ -235,7 +235,7 @@ fn send_update(ctx: &Context<GroupSettings>, key: Key, value: impl Into<Value>) 
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            object_id: ctx.props().id,
+            id: ctx.props().id,
             key,
             value: value.into(),
         })

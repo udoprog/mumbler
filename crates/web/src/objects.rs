@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, RemoteObject, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -232,7 +232,7 @@ pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
-    pub(crate) image: State<Id>,
+    pub(crate) image: State<RemoteId>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
@@ -250,7 +250,7 @@ impl TokenObject {
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            image: State::new(*o.props.get(Key::IMAGE_ID).as_remote_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             token_radius: State::new(
                 o.props
@@ -276,7 +276,7 @@ impl TokenObject {
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::IMAGE_ID => self.image.update(*value.as_remote_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::TOKEN_RADIUS => self
                 .token_radius
@@ -293,7 +293,7 @@ impl TokenObject {
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
-    pub(crate) image: State<Id>,
+    pub(crate) image: State<RemoteId>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
@@ -312,7 +312,7 @@ impl StaticObject {
                     .unwrap_or_else(Transform::origin),
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            image: State::new(*o.props.get(Key::IMAGE_ID).as_remote_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
@@ -344,7 +344,7 @@ impl StaticObject {
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::IMAGE_ID => self.image.update(*value.as_remote_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),

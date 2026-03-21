@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, RemoteId, Transform, Type,
-    Value, ValueKind, ValueType, Vec3,
+    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, PeerId, RemoteId, Transform,
+    Type, Value, ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
 use musli::alloc::Global;
@@ -67,6 +67,9 @@ macro_rules! value_kind_switch {
             ValueKind::Pan(pan) => {
                 $self.$add($($args),*, pan).await?;
             }
+            ValueKind::PeerId(peer_id) => {
+                $self.$add($($args),*, peer_id).await?;
+            }
             ValueKind::Empty => {
                 $self.$delete($($args),*).await?;
             }
@@ -85,7 +88,6 @@ struct Inner {
     insert_image: SendStatement,
     select_images: SendStatement,
     select_images_with_data: SendStatement,
-    select_image_data: SendStatement,
     delete_image: SendStatement,
     get_property: SendStatement,
     list_properties: SendStatement,
@@ -184,7 +186,6 @@ impl Database {
                 insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
                 select_images: c.prepare("SELECT id, content_type, width, height FROM images")?.into_send()?,
                 select_images_with_data: c.prepare("SELECT id, content_type, data, width, height FROM images")?.into_send()?,
-                select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 get_property: c.prepare("SELECT value FROM properties WHERE id = ? AND key = ?")?.into_send()?,
                 list_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
@@ -204,23 +205,6 @@ impl Database {
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
         })
-    }
-
-    /// Get an image by its unique identifier.
-    pub(crate) async fn get_image_data(&self, id: Id) -> Result<Option<Vec<u8>>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_image_data.bind((id,))?;
-
-            if let Some(data) = inner.select_image_data.next::<Vec<u8>>()? {
-                return Ok(Some(data));
-            }
-
-            Ok(None)
-        });
-
-        task.await?
     }
 
     /// List all images in the database.
@@ -561,18 +545,19 @@ impl Database {
 
 fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
     let value = match ty {
-        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
-        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
+        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
+        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
+        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
+        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
         ValueType::Float => Value::from(descriptive::from_slice::<f64>(blog)?),
+        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
         ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
-        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
+        ValueType::PeerId => Value::from(descriptive::from_slice::<PeerId>(blog)?),
+        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
+        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
         ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
         ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(blog)?),
-        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
-        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
-        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
-        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
     };
 
     Ok(value)

@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use std::collections::HashMap;
 
-use api::Id;
+use api::RemoteId;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::HtmlImageElement;
@@ -10,8 +10,8 @@ use yew::{Component, Context};
 use crate::error::Error;
 
 pub(crate) enum ImageMessage {
-    Loaded(Id),
-    Errored(Id, Error),
+    Loaded(RemoteId),
+    Errored(RemoteId, Error),
 }
 
 struct ImageState {
@@ -23,7 +23,7 @@ struct ImageState {
 
 /// Collection of images loaded for rendering.
 pub(crate) struct Images<M> {
-    inner: HashMap<Id, ImageState>,
+    inner: HashMap<RemoteId, ImageState>,
     _marker: PhantomData<M>,
 }
 
@@ -55,16 +55,16 @@ where
     }
 
     /// Remove a loaded image.
-    pub(crate) fn remove(&mut self, id: Id) {
+    pub(crate) fn remove(&mut self, id: &RemoteId) {
         if id.is_zero() {
             return;
         }
 
-        if let Some(state) = self.inner.get_mut(&id) {
+        if let Some(state) = self.inner.get_mut(id) {
             state.users = state.users.saturating_sub(1);
 
             if state.users == 0 {
-                self.inner.remove(&id);
+                self.inner.remove(id);
             }
         }
     }
@@ -74,30 +74,30 @@ where
         self.inner.clear();
     }
 
-    pub(crate) fn load(&mut self, ctx: &Context<M>, id: Id) {
+    pub(crate) fn load(&mut self, ctx: &Context<M>, id: &RemoteId) {
         if id.is_zero() {
             return;
         }
 
-        if let Some(state) = self.inner.get_mut(&id) {
+        if let Some(state) = self.inner.get_mut(id) {
             state.users = state.users.saturating_add(1);
             return;
         }
 
         match Self::load_image(ctx, id) {
             Ok(state) => {
-                self.inner.insert(id, state);
+                self.inner.insert(*id, state);
             }
             Err(error) => {
                 ctx.link()
-                    .send_message(M::Message::from(ImageMessage::Errored(id, error)));
+                    .send_message(M::Message::from(ImageMessage::Errored(*id, error)));
             }
         }
     }
 
     /// Get an image by id.
-    pub(crate) fn get(&self, id: Id) -> Option<&HtmlImageElement> {
-        let state = self.inner.get(&id)?;
+    pub(crate) fn get(&self, id: &RemoteId) -> Option<&HtmlImageElement> {
+        let state = self.inner.get(id)?;
 
         // Still loading.
         if state.load.is_some() {
@@ -112,11 +112,12 @@ where
         Some(&state.image)
     }
 
-    fn load_image(ctx: &Context<M>, id: Id) -> Result<ImageState, Error> {
+    fn load_image(ctx: &Context<M>, id: &RemoteId) -> Result<ImageState, Error> {
         let img = HtmlImageElement::new()?;
 
         let load = Closure::<dyn FnMut()>::new({
             let link = ctx.link().clone();
+            let id = *id;
 
             move || {
                 link.send_message(M::Message::from(ImageMessage::Loaded(id)));
@@ -125,6 +126,7 @@ where
 
         let error = Closure::<dyn FnMut()>::new({
             let link = ctx.link().clone();
+            let id = *id;
 
             move || {
                 link.send_message(M::Message::from(ImageMessage::Errored(

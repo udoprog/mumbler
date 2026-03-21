@@ -113,10 +113,10 @@ async fn handle_peer(
                 };
 
                 if !body.images.is_empty() {
-                    let mut images = b.images().await;
+                    let mut images = b.write_images().await;
 
                     for image in body.images {
-                        images.store(body.peer_id, image.id, image.bytes);
+                        images.store(RemoteId::new(body.peer_id, image.id), image.bytes);
                         peer.images.insert(image.id);
                     }
                 }
@@ -195,8 +195,7 @@ async fn handle_peer(
 
                 b.broadcast(BackendEvent::RemoteUpdate(
                     RemoteUpdateBody::ObjectUpdated {
-                        peer_id: body.peer_id,
-                        object_id: body.object_id,
+                        id: RemoteId::new(body.peer_id, body.object_id),
                         key: body.key,
                         value: body.value,
                     },
@@ -216,7 +215,7 @@ async fn handle_peer(
 
                 b.broadcast(BackendEvent::RemoteUpdate(
                     RemoteUpdateBody::ObjectCreated {
-                        peer_id: body.peer_id,
+                        id: RemoteId::new(body.peer_id, body.object.id),
                         object: body.object,
                     },
                 ));
@@ -225,12 +224,13 @@ async fn handle_peer(
                 let body = body.decode::<ImageCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, image_id = ?body.image.id, "ImageAdded");
 
-                let mut images = b.images().await;
-                images.store(body.peer_id, body.image.id, body.image.bytes.clone());
+                let id = RemoteId::new(body.peer_id, body.image.id);
+
+                let mut images = b.write_images().await;
+                images.store(id, body.image.bytes.clone());
 
                 b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ImageAdded {
-                    peer_id: body.peer_id,
-                    image_id: body.image.id,
+                    id: RemoteId::new(body.peer_id, body.image.id),
                 }));
             }
             Event::ObjectRemoved => {
@@ -242,8 +242,8 @@ async fn handle_peer(
                 let removed = 'found: {
                     let mut state = b.client_state().await;
 
-                    remove_room = state.props.get(Key::ROOM).as_room()
-                        == Some(&RemoteId::new(body.peer_id, body.object_id));
+                    remove_room = *state.props.get(Key::ROOM).as_remote_id()
+                        == RemoteId::new(body.peer_id, body.object_id);
 
                     if let Some(peer) = state.peers.get_mut(&body.peer_id) {
                         break 'found peer.objects.remove(&body.object_id).is_some();
@@ -255,8 +255,7 @@ async fn handle_peer(
                 if removed {
                     b.broadcast(BackendEvent::RemoteUpdate(
                         RemoteUpdateBody::ObjectRemoved {
-                            peer_id: body.peer_id,
-                            object_id: body.object_id,
+                            id: RemoteId::new(body.peer_id, body.object_id),
                         },
                     ));
                 }
@@ -269,11 +268,12 @@ async fn handle_peer(
                 let body = body.decode::<ImageRemovedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.image_id, "ImageRemoved");
 
-                b.images().await.remove(body.peer_id, body.image_id);
+                b.write_images()
+                    .await
+                    .remove(RemoteId::new(body.peer_id, body.image_id));
 
                 b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ImageRemoved {
-                    peer_id: body.peer_id,
-                    image_id: body.image_id,
+                    id: RemoteId::new(body.peer_id, body.image_id),
                 }));
             }
             id => {

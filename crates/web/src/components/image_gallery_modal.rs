@@ -15,13 +15,13 @@ pub(crate) struct Props {
     pub(crate) images: Vec<api::Image>,
     /// Currently selected image, if any.
     #[prop_or_default]
-    pub(crate) selected: Option<Id>,
+    pub(crate) selected: Id,
     /// Callback fired when an image is selected.
-    pub(crate) on_select: Callback<Id>,
+    pub(crate) onselect: Callback<Id>,
     /// Callback fired when an image should be deleted.
-    pub(crate) on_delete: Callback<Id>,
+    pub(crate) ondelete: Callback<Id>,
     /// Callback fired to close the modal.
-    pub(crate) on_close: Callback<()>,
+    pub(crate) onclose: Callback<()>,
 }
 
 pub(crate) struct ImageGalleryModal;
@@ -37,12 +37,12 @@ impl Component for ImageGalleryModal {
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Select(id) => {
-                ctx.props().on_select.emit(id);
-                ctx.props().on_close.emit(());
+                ctx.props().onselect.emit(id);
+                ctx.props().onclose.emit(());
                 false
             }
             Msg::Close => {
-                ctx.props().on_close.emit(());
+                ctx.props().onclose.emit(());
                 false
             }
         }
@@ -52,16 +52,15 @@ impl Component for ImageGalleryModal {
         let images = ctx.props().images.iter().map(|image| {
             let id = image.id;
             let on_select = ctx.link().callback(move |_| Msg::Select(id));
-            let on_delete = {
-                let on_delete = ctx.props().on_delete.clone();
-                Callback::from(move |e: MouseEvent| {
-                    e.stop_propagation();
-                    on_delete.emit(id);
-                })
-            };
+
+            let on_delete = ctx.props().ondelete.reform(move |e: MouseEvent| {
+                e.stop_propagation();
+                id
+            });
+
             let classes = classes!(
                 "token",
-                (ctx.props().selected == Some(id)).then_some("selected"),
+                (ctx.props().selected == image.id).then_some("selected"),
                 "clickable"
             );
 
