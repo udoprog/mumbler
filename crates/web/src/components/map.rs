@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use api::{Color, Extent, Id, Key, LocalUpdateBody, Pan, RemoteUpdateBody, Value, Vec3};
+use api::{
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteId, RemoteUpdateBody, Value, Vec3,
+};
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
@@ -177,9 +179,19 @@ pub(crate) struct Config {
     pub(crate) extent: State<Extent>,
     pub(crate) mumble_object: State<Id>,
     pub(crate) mumble_follow: State<bool>,
+    pub(crate) room: State<RemoteId>,
+    pub(crate) name: State<String>,
 }
 
 impl Config {
+    fn display(&self) -> String {
+        if self.name.is_empty() {
+            String::from("You")
+        } else {
+            self.name.to_string()
+        }
+    }
+
     fn from_config(props: api::Properties) -> Self {
         let mut this = Self::default();
 
@@ -199,6 +211,10 @@ impl Config {
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(value.as_id()),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool().unwrap_or(false)),
+            Key::ROOM => self.room.update(*value.as_remote_id()),
+            Key::PEER_NAME => self
+                .name
+                .update(value.as_str().unwrap_or_default().to_owned()),
             _ => false,
         }
     }
@@ -220,6 +236,8 @@ impl Default for Config {
             extent: State::new(Extent::arena()),
             mumble_object: State::new(Id::ZERO),
             mumble_follow: State::new(false),
+            room: State::new(RemoteId::ZERO),
+            name: State::new(String::new()),
         }
     }
 }
@@ -296,6 +314,7 @@ pub(crate) struct Map {
     _initialize: ws::Request,
     _keydown_listener: EventListener,
     _keyup_listener: EventListener,
+    _config_update_listener: ws::Listener,
     _local_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _remote_update_listener: ws::Listener,
@@ -337,6 +356,7 @@ pub(crate) struct Map {
     transform_requests: HashMap<Id, ws::Request>,
     update_world: bool,
     look_ats: Vec<(Vec3, Color)>,
+    peer_id: PeerId,
     s: Inner,
 }
 
@@ -363,7 +383,7 @@ pub(crate) enum Msg {
     DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
     DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ImageMessage(ImageMessage),
-    InitializeMap(Result<Packet<api::InitializeMap>, ws::Error>),
+    Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
@@ -459,6 +479,7 @@ impl Component for Map {
             _initialize: ws::Request::new(),
             _keydown_listener,
             _keyup_listener,
+            _config_update_listener,
             _local_update_listener,
             _log_handle,
             _remote_update_listener,
@@ -470,6 +491,7 @@ impl Component for Map {
             _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
             _upload_image: ws::Request::new(),
+            action: None,
             animation_interval: None,
             canvas_ref: NodeRef::default(),
             canvas_sizer: NodeRef::default(),
@@ -479,6 +501,7 @@ impl Component for Map {
             images: Images::new(),
             log,
             look_at_requests: HashMap::new(),
+            look_ats: Vec::new(),
             mouse: None,
             object_ondragend: ctx.link().callback(Msg::DragEnd),
             object_ondragover: ctx.link().callback(Msg::DragOver),
@@ -494,13 +517,12 @@ impl Component for Map {
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
+            peer_id: PeerId::ZERO,
             peers: Peers::default(),
-            action: None,
+            s: Inner::default(),
             state,
             transform_requests: HashMap::new(),
             update_world: false,
-            s: Inner::default(),
-            look_ats: Vec::new(),
         };
 
         this.refresh(ctx);
@@ -798,25 +820,28 @@ impl Component for Map {
             }
         };
 
-        let players = self.peers.iter().any(|p| p.in_room).then(|| {
-            html! {
-                <div class="list">
-                    <div class="list-title">
-                        <Icon name="remote" invert={true} />
-                        <span>{"Players"}</span>
-                    </div>
-
-                    {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
-                        html! {
-                            <section class="list-content">
-                                <Icon name="user" invert={true} />
-                                <span class="list-label">{peer.display()}</span>
-                            </section>
-                        }
-                    })}
+        let players = html! {
+            <div class="list" key="players">
+                <div class="list-title">
+                    <Icon name="remote" invert={true} />
+                    <span>{"Players"}</span>
                 </div>
-            }
-        });
+
+                <section class="list-content">
+                    <Icon name="user" invert={true} />
+                    <span class="list-label">{self.config.display()}</span>
+                </section>
+
+                {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
+                    html! {
+                        <section class="list-content">
+                            <Icon name="user" invert={true} />
+                            <span class="list-label">{peer.display()}</span>
+                        </section>
+                    }
+                })}
+            </div>
+        };
 
         html! {
             <>
@@ -866,9 +891,9 @@ impl Component for Map {
                             </ContextProvider<Hierarchy>>
                         </ContextProvider<Objects>>
 
-                        {players}
+                        <Rooms ws={&ctx.props().ws} key="rooms" />
 
-                        <Rooms ws={&ctx.props().ws} />
+                        {players}
                     </div>
                 </div>
 
@@ -910,14 +935,14 @@ impl Component for Map {
                                 </button>
                             </div>
                             <div class="modal-body">
-                                {match objects.get(id).map(|o| &o.kind).unwrap_or(&ObjectKind::Unknown) {
-                                    ObjectKind::Static(..) => {
+                                {match objects.get(id).map(|o| &o.kind) {
+                                    Some(ObjectKind::Static(..)) => {
                                         html! { <StaticSettings {ws} {id} /> }
                                     }
-                                    ObjectKind::Group(..) => {
+                                    Some(ObjectKind::Group(..)) => {
                                         html! { <GroupSettings {ws} {id} /> }
                                     }
-                                    ObjectKind::Token(..) => {
+                                    Some(ObjectKind::Token(..)) => {
                                         html! { <TokenSettings {ws} {id} /> }
                                     }
                                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
@@ -943,7 +968,7 @@ impl Map {
                 .ws
                 .request()
                 .body(api::InitializeMapRequest)
-                .on_packet(ctx.link().callback(Msg::InitializeMap))
+                .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
     }
@@ -1176,15 +1201,21 @@ impl Map {
                 self.log = log;
                 Ok(false)
             }
-            Msg::InitializeMap(result) => {
-                let body = result?;
+            Msg::Initialize(body) => {
+                let body = body?;
                 let body = body.decode()?;
 
                 tracing::debug!(?body, "Initialize");
 
-                self.config = Config::from_config(body.config);
+                self.peer_id = body.peer_id;
+                self.config = Config::from_config(body.props);
 
-                self.objects = body.objects.iter().map(LocalObject::from_remote).collect();
+                self.objects = body
+                    .objects
+                    .iter()
+                    .filter_map(LocalObject::from_remote)
+                    .collect();
+
                 self.order
                     .borrow_mut()
                     .extend(self.objects.borrow().values());
@@ -1192,22 +1223,23 @@ impl Map {
                 self.peers.clear();
 
                 for peer in body.peers {
-                    let new_peer = self.peers.create(peer.peer_id, peer.props);
+                    let new_peer = self
+                        .peers
+                        .create(peer.peer_id, peer.props, &self.config.room);
 
                     for object in peer.objects {
-                        let data = ObjectData::from_remote(&object);
+                        let Some(data) = ObjectData::from_remote(&object) else {
+                            continue;
+                        };
+
                         new_peer.insert(data.id, data);
                     }
                 }
 
                 self.images.clear();
 
-                for image_id in body.images {
-                    self.images.load(ctx, image_id);
-                }
-
-                for image_id in body.remote_images {
-                    self.images.load(ctx, image_id);
+                for id in body.images {
+                    self.images.load(ctx, &id);
                 }
 
                 self.s.redraw = true;
@@ -1216,7 +1248,15 @@ impl Map {
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
+
                 let changed = self.config.update(body.key, body.value);
+
+                if changed {
+                    for peer in self.peers.iter_mut() {
+                        peer.update_config(&self.config.room);
+                    }
+                }
+
                 self.s.redraw = changed;
                 Ok(changed)
             }
@@ -1229,69 +1269,66 @@ impl Map {
                     let mut order = self.order.borrow_mut();
 
                     match body {
-                        LocalUpdateBody::ObjectCreated { object } => {
-                            let o = LocalObject::from_remote(&object);
-                            order.insert(*o.group, o.sort().to_vec(), o.id);
-                            objects.insert(o.id, o);
+                        LocalUpdateBody::ObjectCreated { object } => 'done: {
+                            let Some(object) = LocalObject::from_remote(&object) else {
+                                break 'done false;
+                            };
+
+                            order.insert(*object.group, object.sort().to_vec(), object.id);
+                            objects.insert(object.id, object);
                             true
                         }
-                        LocalUpdateBody::ObjectRemoved { object_id } => {
-                            if let Some(o) = objects.remove(object_id) {
+                        LocalUpdateBody::ObjectRemoved { id } => {
+                            if let Some(o) = objects.remove(id) {
                                 order.remove(*o.group, o.sort().to_vec(), o.id);
                             }
 
-                            if self.s.selected == object_id {
+                            if self.s.selected == id {
                                 self.s
                                     .select_object(ctx, Id::ZERO, &mut self.config, &objects);
                             }
 
-                            self.object_requests.remove(&object_id);
+                            self.object_requests.remove(&id);
                             true
                         }
-                        LocalUpdateBody::ObjectUpdated {
-                            object_id,
-                            key,
-                            value,
-                        } => {
-                            'done: {
-                                let Some(o) = objects.get_mut(object_id) else {
+                        LocalUpdateBody::ObjectUpdated { id, key, value } => 'done: {
+                            let Some(o) = objects.get_mut(id) else {
+                                break 'done false;
+                            };
+
+                            let update = match key {
+                                // Don't support local updates of transform and
+                                // look at because they cause feedback loops
+                                // which are laggy.
+                                Key::TRANSFORM | Key::LOOK_AT => {
                                     break 'done false;
-                                };
-
-                                let update = match key {
-                                    // Don't support local updates of transform and
-                                    // look at because they cause feedback loops
-                                    // which are laggy.
-                                    Key::TRANSFORM | Key::LOOK_AT => {
+                                }
+                                Key::SORT => {
+                                    let Some((_, sort)) = o.sort_mut() else {
                                         break 'done false;
-                                    }
-                                    Key::SORT => {
-                                        let Some((_, sort)) = o.sort_mut() else {
-                                            break 'done false;
-                                        };
+                                    };
 
-                                        let new = value.as_bytes().unwrap_or_default().to_vec();
+                                    let new = value.as_bytes().unwrap_or_default().to_vec();
 
-                                        let Some(old) = sort.replace(new) else {
-                                            break 'done false;
-                                        };
+                                    let Some(old) = sort.replace(new) else {
+                                        break 'done false;
+                                    };
 
-                                        order.remove(*o.group, old, o.id);
-                                        order.insert(*o.group, o.sort().to_vec(), o.id);
-                                        true
-                                    }
-                                    _ => false,
-                                };
+                                    order.remove(*o.group, old, o.id);
+                                    order.insert(*o.group, o.sort().to_vec(), o.id);
+                                    true
+                                }
+                                _ => false,
+                            };
 
-                                o.update(key, value) || update
-                            }
+                            o.update(key, value) || update
                         }
-                        LocalUpdateBody::ImageAdded { image_id, .. } => {
-                            self.images.load(ctx, image_id);
+                        LocalUpdateBody::ImageAdded { id, .. } => {
+                            self.images.load(ctx, &id);
                             false
                         }
-                        LocalUpdateBody::ImageRemoved { image_id, .. } => {
-                            self.images.remove(image_id);
+                        LocalUpdateBody::ImageRemoved { id } => {
+                            self.images.remove(&id);
                             false
                         }
                     }
@@ -1316,10 +1353,13 @@ impl Map {
                         objects,
                         props,
                     } => {
-                        let peer = self.peers.create(peer_id, props);
+                        let peer = self.peers.create(peer_id, props, &self.config.room);
 
                         for object in objects {
-                            let data = ObjectData::from_remote(&object);
+                            let Some(data) = ObjectData::from_remote(&object) else {
+                                continue;
+                            };
+
                             peer.insert(object.id, data);
                         }
 
@@ -1334,17 +1374,17 @@ impl Map {
                             break 'done false;
                         };
 
-                        tracing::warn!("IN ROOM");
-
-                        peer.in_room = true;
-
                         for object in objects {
-                            let data = ObjectData::from_remote(&object);
+                            let Some(data) = ObjectData::from_remote(&object) else {
+                                continue;
+                            };
+
                             peer.insert(object.id, data);
                         }
 
                         for id in images {
-                            self.images.load(ctx, id);
+                            let id = RemoteId::new(peer_id, id);
+                            self.images.load(ctx, &id);
                         }
 
                         true
@@ -1366,41 +1406,39 @@ impl Map {
                             break 'done false;
                         };
 
-                        peer.update(key, value);
+                        peer.update(key, value, &self.config.room);
                         true
                     }
-                    RemoteUpdateBody::ObjectUpdated {
-                        object_id,
-                        peer_id,
-                        key,
-                        value,
-                    } => 'done: {
-                        let Some(a) = self.peers.get_object_mut(peer_id, object_id) else {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value } => 'done: {
+                        let Some(a) = self.peers.get_object_mut(id.peer_id, id.id) else {
                             break 'done false;
                         };
 
                         a.update(key, value);
                         true
                     }
-                    RemoteUpdateBody::ObjectCreated { peer_id, object } => 'done: {
-                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                    RemoteUpdateBody::ObjectCreated { id, object } => 'done: {
+                        let Some(peer) = self.peers.get_mut(id.peer_id) else {
                             break 'done false;
                         };
 
-                        let data = ObjectData::from_remote(&object);
-                        peer.insert(data.id, data);
+                        if let Some(data) = ObjectData::from_remote(&object) {
+                            peer.insert(data.id, data);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    RemoteUpdateBody::ObjectRemoved { id } => {
+                        self.peers.remove(id.peer_id, id.id);
                         true
                     }
-                    RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        self.peers.remove(peer_id, object_id);
+                    RemoteUpdateBody::ImageAdded { id } => {
+                        self.images.load(ctx, &id);
                         true
                     }
-                    RemoteUpdateBody::ImageAdded { image_id, .. } => {
-                        self.images.load(ctx, image_id);
-                        true
-                    }
-                    RemoteUpdateBody::ImageRemoved { image_id, .. } => {
-                        self.images.remove(image_id);
+                    RemoteUpdateBody::ImageRemoved { id } => {
+                        self.images.remove(&id);
                         true
                     }
                 };
@@ -2532,7 +2570,7 @@ fn object_update(
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            object_id,
+            id: object_id,
             key,
             value: value.into(),
         })

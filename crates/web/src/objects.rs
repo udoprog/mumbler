@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, RemoteObject, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -53,12 +53,12 @@ pub(crate) struct LocalObject {
 }
 
 impl LocalObject {
-    pub(crate) fn from_remote(remote: &RemoteObject) -> Self {
-        Self {
-            data: ObjectData::from_remote(remote),
+    pub(crate) fn from_remote(remote: &RemoteObject) -> Option<Self> {
+        Some(Self {
+            data: ObjectData::from_remote(remote)?,
             move_target: None,
             arrow_target: None,
-        }
+        })
     }
 }
 
@@ -232,7 +232,7 @@ pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
-    pub(crate) image: State<Id>,
+    pub(crate) image: State<RemoteId>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
@@ -250,7 +250,7 @@ impl TokenObject {
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            image: State::new(*o.props.get(Key::IMAGE_ID).as_remote_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             token_radius: State::new(
                 o.props
@@ -276,7 +276,7 @@ impl TokenObject {
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::IMAGE_ID => self.image.update(*value.as_remote_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::TOKEN_RADIUS => self
                 .token_radius
@@ -293,7 +293,7 @@ impl TokenObject {
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
-    pub(crate) image: State<Id>,
+    pub(crate) image: State<RemoteId>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
@@ -312,7 +312,7 @@ impl StaticObject {
                     .unwrap_or_else(Transform::origin),
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
+            image: State::new(*o.props.get(Key::IMAGE_ID).as_remote_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
@@ -344,7 +344,7 @@ impl StaticObject {
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
+            Key::IMAGE_ID => self.image.update(*value.as_remote_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
@@ -404,7 +404,6 @@ pub(crate) enum ObjectKind {
     Token(TokenObject),
     Static(StaticObject),
     Group(GroupObject),
-    Unknown,
 }
 
 pub(crate) struct ObjectData {
@@ -418,22 +417,22 @@ pub(crate) struct ObjectData {
 
 impl ObjectData {
     #[inline]
-    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+    pub(crate) fn from_remote(o: &RemoteObject) -> Option<Self> {
         let kind = match o.ty {
             Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
             Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
             Type::GROUP => ObjectKind::Group(GroupObject::from_remote(o)),
-            _ => ObjectKind::Unknown,
+            _ => return None,
         };
 
-        Self {
+        Some(Self {
             id: o.id,
             kind,
             group: State::new(o.props.get(Key::GROUP).as_id()),
             name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),
-        }
+        })
     }
 
     #[inline]
@@ -445,7 +444,6 @@ impl ObjectData {
                 ObjectKind::Token(this) => this.update(key, value),
                 ObjectKind::Static(this) => this.update(key, value),
                 ObjectKind::Group(this) => this.update(key, value),
-                ObjectKind::Unknown => false,
             },
         }
     }
@@ -476,7 +474,6 @@ impl ObjectData {
             ObjectKind::Token(..) => "user",
             ObjectKind::Static(..) => "squares-2x2",
             ObjectKind::Group(..) => "folder",
-            _ => "question-mark-circle",
         }
     }
 
@@ -486,7 +483,6 @@ impl ObjectData {
             ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Group(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Unknown => None,
         }
     }
 
@@ -496,7 +492,6 @@ impl ObjectData {
             ObjectKind::Token(this) => &this.sort,
             ObjectKind::Static(this) => &this.sort,
             ObjectKind::Group(this) => &this.sort,
-            ObjectKind::Unknown => &[],
         }
     }
 
@@ -625,7 +620,6 @@ impl ObjectData {
             ObjectKind::Token(this) => Some(&mut this.locked),
             ObjectKind::Static(this) => Some(&mut this.locked),
             ObjectKind::Group(this) => Some(&mut this.locked),
-            ObjectKind::Unknown => None,
         }
     }
 
@@ -635,7 +629,6 @@ impl ObjectData {
             ObjectKind::Token(this) => *this.locked,
             ObjectKind::Static(this) => *this.locked,
             ObjectKind::Group(this) => *this.locked,
-            ObjectKind::Unknown => false,
         }
     }
 }

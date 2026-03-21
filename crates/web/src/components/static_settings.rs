@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, Value};
+use api::{Color, Id, Key, PeerId, RemoteId, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -20,10 +20,10 @@ pub(crate) enum Msg {
     ColorChanged(Event),
     CropCancelled,
     CropConfirmed(api::CropRegion),
-    DeleteImage(Id),
+    DeleteImage(RemoteId),
     DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     FixedRatioChanged(Event),
-    GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
+    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     HeightChanged(Event),
     ImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     ImageLoaded(ImageMessage),
@@ -34,7 +34,7 @@ pub(crate) enum Msg {
     OpenGallery,
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    SelectImage(Id),
+    SelectImage(RemoteId),
     SetLog(log::Log),
     StateChanged(ws::State),
     UpdateName(Option<String>),
@@ -66,8 +66,9 @@ pub(crate) struct StaticSettings {
     gallery_open: bool,
     height: State<f32>,
     image_uploading: bool,
-    image: State<Id>,
+    image: State<RemoteId>,
     images: Vec<api::Image>,
+    peer_id: PeerId,
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
@@ -123,8 +124,9 @@ impl Component for StaticSettings {
             gallery_open: false,
             height: State::new(1.0),
             image_uploading: false,
-            image: State::new(Id::ZERO),
+            image: State::new(RemoteId::ZERO),
             images: Vec::new(),
+            peer_id: PeerId::ZERO,
             log,
             name: State::new(None),
             preview_canvas: NodeRef::default(),
@@ -271,9 +273,9 @@ impl Component for StaticSettings {
                 <ImageGalleryModal
                     images={self.images.clone()}
                     selected={*self.image}
-                    on_select={ctx.link().callback(Msg::SelectImage)}
-                    on_delete={ctx.link().callback(Msg::DeleteImage)}
-                    on_close={ctx.link().callback(|_| Msg::CloseGallery)}
+                    onselect={ctx.link().callback(Msg::SelectImage)}
+                    ondelete={ctx.link().callback(Msg::DeleteImage)}
+                    onclose={ctx.link().callback(|_| Msg::CloseGallery)}
                 />
             }
 
@@ -299,13 +301,25 @@ impl StaticSettings {
                 .ws
                 .request()
                 .body(api::GetObjectSettingsRequest { id: ctx.props().id })
-                .on_packet(ctx.link().callback(Msg::GetObjectSettings))
+                .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::Initialize(result) => {
+                let body = result?;
+                let body = body.decode()?;
+
+                for (key, value) in body.object.props {
+                    self.update_property(ctx, key, value);
+                }
+
+                self.images = body.images;
+                self.peer_id = body.peer_id;
+                Ok(true)
+            }
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
@@ -398,17 +412,6 @@ impl StaticSettings {
                 ctx.link().send_message(Msg::SelectImage(body.id));
                 self.refresh(ctx);
                 Ok(false)
-            }
-            Msg::GetObjectSettings(result) => {
-                let result = result?;
-                let response = result.decode()?;
-
-                for (key, value) in response.object.props {
-                    self.update_property(ctx, key, value);
-                }
-
-                self.images = response.images;
-                Ok(true)
             }
             Msg::SelectImage(id) => {
                 *self.image = id;
@@ -539,7 +542,7 @@ impl StaticSettings {
 
                 let changed = match body {
                     api::LocalUpdateBody::ObjectUpdated {
-                        object_id,
+                        id: object_id,
                         key,
                         value,
                     } => {
@@ -568,7 +571,7 @@ impl StaticSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(value.as_id()) {
+                if self.image.update(*value.as_remote_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {
@@ -588,7 +591,7 @@ impl StaticSettings {
         self.preview_images.clear();
 
         if !self.image.is_zero() {
-            self.preview_images.load(ctx, *self.image);
+            self.preview_images.load(ctx, &self.image);
         }
     }
 
@@ -614,7 +617,7 @@ impl StaticSettings {
 
         let render = render::RenderStatic {
             transform: &api::Transform::origin(),
-            image: *self.image,
+            image: &self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             width: (*self.width).min(*self.height * 3.0),
             height: (*self.height).min(*self.width * 3.0),
@@ -636,7 +639,7 @@ fn send_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>)
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            object_id: ctx.props().id,
+            id: ctx.props().id,
             key,
             value: value.into(),
         })

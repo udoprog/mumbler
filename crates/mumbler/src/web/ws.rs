@@ -74,23 +74,18 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::ObjectUpdateBody>()
                     .context("missing request")?;
 
-                super::object_update(
-                    &self.backend,
-                    request.object_id,
-                    request.key,
-                    &request.value,
-                )
-                .await?;
+                super::object_update(&self.backend, request.id, request.key, &request.value)
+                    .await?;
 
                 self.database_updates
-                    .insert((request.object_id, request.key), request.value.clone());
+                    .insert((request.id, request.key), request.value.clone());
 
                 self.database_updates_notify.notify_one();
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
                         body: LocalUpdateBody::ObjectUpdated {
-                            object_id: request.object_id,
+                            id: request.id,
                             key: request.key,
                             value: request.value,
                         },
@@ -136,9 +131,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ObjectRemoved {
-                            object_id: request.id,
-                        },
+                        body: LocalUpdateBody::ObjectRemoved { id: request.id },
                     }));
 
                 outgoing.write(api::Empty);
@@ -154,7 +147,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ImageAdded { image_id: id },
+                        body: LocalUpdateBody::ImageAdded { id },
                     }));
             }
             api::Request::DeleteImage => {
@@ -168,9 +161,7 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend
                     .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ImageRemoved {
-                            image_id: request.id,
-                        },
+                        body: LocalUpdateBody::ImageRemoved { id: request.id },
                     }));
             }
             api::Request::MumbleRestart => {

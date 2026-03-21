@@ -7,7 +7,7 @@ publish = false
 musli-web = { workspace = true, features = ["api"] }
 musli-core = { version = "0.1.4", default-features = false, features = ["alloc", "std"] }
 serde_core = { version = "1.0.228", default-features = false }
-base64 = { version = "0.22.1", default-features = false }
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 
 sqll = { workspace = true, optional = true }
 yew = { version = "0.23.0", default-features = false, optional = true }

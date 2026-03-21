@@ -83,49 +83,56 @@ impl From<Id> for yew::virtual_dom::Key {
     }
 }
 
+/// An error raised by parsing an Id as a string.
+pub struct ParseIdError {
+    kind: ParseIdErrorKind,
+}
+
 #[derive(Debug)]
-enum IdParseErrorKind {
+enum ParseIdErrorKind {
     DecodeSliceError(DecodeSliceError),
     InvalidLength(usize),
 }
 
-/// An error raised by parsing an Id as a string.
-pub struct IdParseError {
-    kind: IdParseErrorKind,
-}
-
-impl fmt::Display for IdParseError {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            IdParseErrorKind::DecodeSliceError(err) => write!(f, "base64 decode error: {err}"),
-            IdParseErrorKind::InvalidLength(len) => {
-                write!(f, "invalid length: expected 8 bytes, got {len}")
-            }
-        }
-    }
-}
-
-impl fmt::Debug for IdParseError {
+impl fmt::Display for ParseIdError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
     }
 }
 
-impl Error for IdParseError {}
+impl fmt::Display for ParseIdErrorKind {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseIdErrorKind::DecodeSliceError(err) => write!(f, "base64 decode error: {err}"),
+            ParseIdErrorKind::InvalidLength(len) => {
+                write!(f, "invalid length: expected 8 bytes, got {len}")
+            }
+        }
+    }
+}
 
-impl From<DecodeSliceError> for IdParseError {
+impl fmt::Debug for ParseIdError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl Error for ParseIdError {}
+
+impl From<DecodeSliceError> for ParseIdError {
     #[inline]
     fn from(err: DecodeSliceError) -> Self {
         Self {
-            kind: IdParseErrorKind::DecodeSliceError(err),
+            kind: ParseIdErrorKind::DecodeSliceError(err),
         }
     }
 }
 
 impl FromStr for Id {
-    type Err = IdParseError;
+    type Err = ParseIdError;
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -134,8 +141,8 @@ impl FromStr for Id {
         let len = ENGINE.decode_slice(s, &mut dest[..])?;
 
         if len != 8 {
-            return Err(IdParseError {
-                kind: IdParseErrorKind::InvalidLength(len),
+            return Err(ParseIdError {
+                kind: ParseIdErrorKind::InvalidLength(len),
             });
         }
 
@@ -155,8 +162,8 @@ impl<'de> Deserialize<'de> for Id {
             type Value = Id;
 
             #[inline]
-            fn expecting(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
-                write!(f, "a base64-encoded u64")
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "an opaque identifier")
             }
 
             #[inline]

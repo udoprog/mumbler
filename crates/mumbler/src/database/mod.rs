@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Image, ImageWithData, Key, Pan, RemoteId, Transform, Type,
-    Value, ValueKind, ValueType, Vec3,
+    Color, ContentType, Extent, Id, Key, Pan, PeerId, RemoteId, Transform, Type, Value, ValueKind,
+    ValueType, Vec3,
 };
 use jiff::Timestamp;
 use musli::alloc::Global;
@@ -67,11 +67,23 @@ macro_rules! value_kind_switch {
             ValueKind::Pan(pan) => {
                 $self.$add($($args),*, pan).await?;
             }
+            ValueKind::PeerId(peer_id) => {
+                $self.$add($($args),*, peer_id).await?;
+            }
             ValueKind::Empty => {
                 $self.$delete($($args),*).await?;
             }
         }
     };
+}
+
+#[derive(sqll::Row)]
+pub(crate) struct Image {
+    pub(crate) id: Id,
+    pub(crate) content_type: ContentType,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 use crate::Paths;
@@ -84,10 +96,7 @@ struct Inner {
     scratch: Vec<u8>,
     insert_image: SendStatement,
     select_images: SendStatement,
-    select_images_with_data: SendStatement,
-    select_image_data: SendStatement,
     delete_image: SendStatement,
-    get_property: SendStatement,
     list_properties: SendStatement,
     set_property: SendStatement,
     delete_property: SendStatement,
@@ -98,7 +107,6 @@ struct Inner {
     insert_object: SendStatement,
     delete_object: SendStatement,
     list_objects: SendStatement,
-    list_members: SendStatement,
 }
 
 /// A database connection.
@@ -182,11 +190,8 @@ impl Database {
             Inner {
                 scratch: Vec::new(),
                 insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
-                select_images: c.prepare("SELECT id, content_type, width, height FROM images")?.into_send()?,
-                select_images_with_data: c.prepare("SELECT id, content_type, data, width, height FROM images")?.into_send()?,
-                select_image_data: c.prepare("SELECT data FROM images WHERE id = ?")?.into_send()?,
+                select_images: c.prepare("SELECT id, content_type, data, width, height FROM images")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
-                get_property: c.prepare("SELECT value FROM properties WHERE id = ? AND key = ?")?.into_send()?,
                 list_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
                 set_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
                 delete_property: c.prepare("DELETE FROM properties WHERE id = ? AND key = ?")?.into_send()?,
@@ -197,7 +202,6 @@ impl Database {
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 delete_object: c.prepare("DELETE FROM objects WHERE id = ?")?.into_send()?,
                 list_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
-                list_members: c.prepare("SELECT id FROM objects WHERE group_id = ?")?.into_send()?,
             }
         };
 
@@ -206,25 +210,8 @@ impl Database {
         })
     }
 
-    /// Get an image by its unique identifier.
-    pub(crate) async fn get_image_data(&self, id: Id) -> Result<Option<Vec<u8>>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_image_data.bind((id,))?;
-
-            if let Some(data) = inner.select_image_data.next::<Vec<u8>>()? {
-                return Ok(Some(data));
-            }
-
-            Ok(None)
-        });
-
-        task.await?
-    }
-
     /// List all images in the database.
-    pub(crate) async fn images(&self) -> Result<Vec<Image>> {
+    pub(crate) async fn images_with_data(&self) -> Result<Vec<Image>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -233,25 +220,6 @@ impl Database {
             let mut images = Vec::new();
 
             while let Some(image) = inner.select_images.next::<Image>()? {
-                images.push(image);
-            }
-
-            Ok(images)
-        });
-
-        task.await?
-    }
-
-    /// List all images in the database.
-    pub(crate) async fn images_with_data(&self) -> Result<Vec<ImageWithData>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_images_with_data.reset()?;
-
-            let mut images = Vec::new();
-
-            while let Some(image) = inner.select_images_with_data.next::<ImageWithData>()? {
                 images.push(image);
             }
 
@@ -294,7 +262,7 @@ impl Database {
         task.await?
     }
 
-    pub async fn config<T>(&self, key: Key) -> Result<Option<T>>
+    pub(crate) async fn config<T>(&self, key: Key) -> Result<Option<T>>
     where
         T: 'static + Send + DecodeOwned<Binary, Global>,
     {
@@ -314,30 +282,21 @@ impl Database {
         task.await?
     }
 
-    pub async fn set_optional_config<T>(&self, key: Key, value: Option<T>) -> Result<()>
-    where
-        T: 'static + Send + Encode<Binary>,
-    {
-        if let Some(value) = value {
-            self.set_config(key, value).await
-        } else {
-            self.delete_config(key).await
-        }
-    }
-
     /// Set the specified configuration.
-    pub async fn set_config_value(&self, key: Key, value: Value) -> Result<()> {
+    pub(crate) async fn set_config_value(&self, key: Key, value: Value) -> Result<()> {
         value_kind_switch!(self, value, (key), set_config, delete_config);
         Ok(())
     }
 
-    pub async fn set_config<T>(&self, key: Key, value: T) -> Result<()>
+    pub(crate) async fn set_config<T>(&self, key: Key, value: T) -> Result<()>
     where
         T: 'static + Send + Encode<Binary>,
     {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
+            tracing::debug!(?key, "Setting config value");
+
             descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
@@ -354,7 +313,7 @@ impl Database {
         task.await?
     }
 
-    pub async fn delete_config(&self, key: Key) -> Result<()> {
+    pub(crate) async fn delete_config(&self, key: Key) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -365,51 +324,14 @@ impl Database {
         task.await?
     }
 
-    /// Get specific property.
-    ///
-    /// Properties are values associated with a specified object identified by id.
-    pub async fn property<T>(&self, id: Id, key: Key) -> Result<Option<T>>
-    where
-        T: 'static + Send + DecodeOwned<Binary, Global>,
-    {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.get_property.bind((id, key))?;
-
-            if let Some(row) = inner.get_property.next::<&[u8]>()? {
-                let value = descriptive::from_slice::<T>(row)?;
-                return Ok(Some(value));
-            }
-
-            Ok(None)
-        });
-
-        task.await?
-    }
-
     /// Set specific configuration by key, or delete it if the value is unset.
-    pub async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
+    pub(crate) async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
         value_kind_switch!(self, value, (id, key), set_property, delete_property);
         Ok(())
     }
 
-    /// Set specific configuration by key, or delete it if the value is `None`.
-    pub async fn set_optional_property(
-        &self,
-        id: Id,
-        key: Key,
-        value: Option<impl 'static + Send + Encode<Binary>>,
-    ) -> Result<()> {
-        if let Some(value) = value {
-            self.set_property(id, key, value).await
-        } else {
-            self.delete_property(id, key).await
-        }
-    }
-
     /// Set specific configuration by key.
-    pub async fn set_property(
+    pub(crate) async fn set_property(
         &self,
         id: Id,
         key: Key,
@@ -435,7 +357,7 @@ impl Database {
     }
 
     /// Remove the specified configuration.
-    pub async fn delete_property(&self, id: Id, key: Key) -> Result<()> {
+    pub(crate) async fn delete_property(&self, id: Id, key: Key) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -447,7 +369,7 @@ impl Database {
     }
 
     /// Insert an object into the database.
-    pub async fn insert_object(&self, id: Id, ty: Type) -> Result<()> {
+    pub(crate) async fn insert_object(&self, id: Id, ty: Type) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -459,7 +381,7 @@ impl Database {
     }
 
     /// Delete an object in the database.
-    pub async fn delete_object(&self, id: Id) -> Result<()> {
+    pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -471,7 +393,7 @@ impl Database {
     }
 
     /// List all objects in the database.
-    pub async fn objects(&self) -> Result<Vec<(Id, Type, Option<Id>)>> {
+    pub(crate) async fn objects(&self) -> Result<Vec<(Id, Type, Option<Id>)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -482,6 +404,7 @@ impl Database {
             while let Some((id, ty, group_id)) =
                 inner.list_objects.next::<(Id, Type, Option<Id>)>()?
             {
+                tracing::debug!(?id, ?ty, "Loading object");
                 objects.push((id, ty, group_id));
             }
 
@@ -491,26 +414,7 @@ impl Database {
         task.await?
     }
 
-    /// List the members of a group.
-    pub async fn members(&self, group_id: Id) -> Result<Vec<Id>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.list_members.bind((group_id,))?;
-
-            let mut members = Vec::new();
-
-            while let Some(member_id) = inner.list_members.next::<Id>()? {
-                members.push(member_id);
-            }
-
-            Ok(members)
-        });
-
-        task.await?
-    }
-
-    pub async fn properties(&self, id: Id) -> Result<Vec<(Key, Value)>> {
+    pub(crate) async fn properties(&self, id: Id) -> Result<Vec<(Key, Value)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -524,7 +428,8 @@ impl Database {
                 };
 
                 tracing::debug!(?id, ?key, "Loading property");
-                let value = value_from_blob(ty, value)?;
+                let value =
+                    value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
                 props.push((key, value));
             }
 
@@ -534,7 +439,7 @@ impl Database {
         task.await?
     }
 
-    pub async fn configs(&self) -> Result<Vec<(Key, Value)>> {
+    pub(crate) async fn configs(&self) -> Result<Vec<(Key, Value)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -561,18 +466,19 @@ impl Database {
 
 fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
     let value = match ty {
-        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
-        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
+        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
+        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
+        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
+        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
         ValueType::Float => Value::from(descriptive::from_slice::<f64>(blog)?),
+        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
         ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
-        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
+        ValueType::PeerId => Value::from(descriptive::from_slice::<PeerId>(blog)?),
+        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
+        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
         ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
         ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(blog)?),
-        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
-        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
-        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
-        ValueType::RemoteId => Value::from(descriptive::from_slice::<RemoteId>(blog)?),
     };
 
     Ok(value)

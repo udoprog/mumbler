@@ -7,6 +7,7 @@ $border-radius: 4px;
 $border-radius2: 8px;
 $btn-height: 24px;
 $btn-height-sm: 20px;
+$btn-height-lg: 32px;
 $input-height: 24px;
 $icon-height: 20px;
 $icon-height-sm: 16px;
@@ -146,6 +147,12 @@ h6 {
         padding: 0.25em 0.75em;
         font-size: 0.85em;
         height: $btn-height-sm;
+    }
+
+    &.lg {
+        padding: 0.25em 0.75em;
+        font-size: 0.85em;
+        height: $btn-height-lg;
     }
 
     &.square {
@@ -385,7 +392,9 @@ canvas#map {
     // Labels are used for selection constructs, we want them to inherit the
     // style of the input-group.
     label {
+        font-weight: bold;
         cursor: pointer;
+        white-space: nowrap;
         display: flex;
         flex-direction: row;
         align-items: center;
@@ -410,11 +419,12 @@ canvas#map {
     input[type="number"],
     input[type="search"] {
         height: $input-height;
+        width: 100%;
         background-color: var(--input-color);
         color: var(--text-color);
         border: 1px solid var(--border-color);
         border-radius: $border-radius;
-        padding: 0.4em 0.6em;
+        padding: 0.25em 0.5em;
         font-size: 14px;
         outline: none;
         transition: border-color 0.15s;

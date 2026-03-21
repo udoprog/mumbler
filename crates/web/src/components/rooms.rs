@@ -38,7 +38,7 @@ pub(crate) struct Props {
 }
 
 struct Room {
-    room: RemoteId,
+    id: RemoteId,
     local: bool,
     name: String,
 }
@@ -46,12 +46,12 @@ struct Room {
 impl Room {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.name.cmp(&other.name) {
-            Ordering::Equal => self.room.cmp(&other.room),
+            Ordering::Equal => self.id.cmp(&other.id),
             other => other,
         }
     }
 
-    fn from_remote(peer_id: PeerId, object: &RemoteObject, local: bool) -> Option<Self> {
+    fn from_remote(id: RemoteId, object: &RemoteObject, local: bool) -> Option<Self> {
         if object.ty != Type::ROOM {
             return None;
         }
@@ -63,11 +63,7 @@ impl Room {
             .unwrap_or_default()
             .to_owned();
 
-        Some(Self {
-            room: RemoteId::new(peer_id, object.id),
-            local,
-            name,
-        })
+        Some(Self { id, local, name })
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
@@ -85,7 +81,7 @@ pub(crate) struct Rooms {
     state: ws::State,
     rooms: Vec<Room>,
     peer_id: PeerId,
-    active_room: Option<RemoteId>,
+    active_room: RemoteId,
     new_room_name: String,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
@@ -133,7 +129,7 @@ impl Component for Rooms {
             state,
             rooms: Vec::new(),
             peer_id: PeerId::ZERO,
-            active_room: None,
+            active_room: RemoteId::ZERO,
             new_room_name: String::new(),
             log,
             _log_handle,
@@ -168,13 +164,13 @@ impl Component for Rooms {
         html! {
             <div id="content" class="rows">
                 if !self.rooms.is_empty() {
-                    <section class="list">
+                    <section class="list" key="rooms-list">
                         <span class="list-title">{"Rooms"}</span>
                         {for self.rooms.iter().map(|room| self.view_room(ctx, room))}
                     </section>
                 }
 
-                <section class="input-group">
+                <section class="input-group" key="rooms-create">
                     <input
                         type="text"
                         placeholder="New room"
@@ -182,7 +178,7 @@ impl Component for Rooms {
                         onchange={on_name_changed}
                     />
 
-                    <button class="btn square" onclick={on_create}>
+                    <button class="btn lg square" onclick={on_create}>
                         <Icon name="plus-circle" />
                     </button>
                 </section>
@@ -193,10 +189,10 @@ impl Component for Rooms {
 
 impl Rooms {
     fn view_room(&self, ctx: &Context<Self>, room: &Room) -> Html {
-        let is_active = self.active_room == Some(room.room);
+        let is_active = self.active_room == room.id;
 
         let delete_button = room.local.then(|| {
-            let id = room.room.id;
+            let id = room.id.id;
             let onclick = ctx.link().callback(move |_| Msg::DeleteRoom(id));
 
             html! {
@@ -209,7 +205,7 @@ impl Rooms {
         let on_connect = if is_active {
             ctx.link().callback(move |_| Msg::Disconnect)
         } else {
-            let room = room.room;
+            let room = room.id;
             ctx.link().callback(move |_| Msg::Connect(room))
         };
 
@@ -231,9 +227,9 @@ impl Rooms {
         let room_icon = if room.local { "home" } else { "home-modern" };
 
         html! {
-            <div class="list-content" key={room.room}>
+            <div class="list-content" key={room.id}>
                 <Icon name={room_icon} invert={true} />
-                <span class="list-label" title={room.room.to_string()}>{&room.name}</span>
+                <span class="list-label" title={room.id.to_string()}>{&room.name}</span>
                 {connect_button}
                 {delete_button}
             </div>
@@ -251,7 +247,7 @@ impl Rooms {
                 .send();
         } else {
             self.peer_id = PeerId::ZERO;
-            self.active_room = None;
+            self.active_room = RemoteId::ZERO;
             self.rooms.clear();
         }
     }
@@ -269,18 +265,22 @@ impl Rooms {
                 let body = body.decode()?;
 
                 self.peer_id = body.peer_id;
-                self.active_room = body.config.get(Key::ROOM).as_room().cloned();
+                self.active_room = *body.props.get(Key::ROOM).as_remote_id();
                 self.rooms.clear();
 
-                for objects in body.local {
-                    if let Some(room) = Room::from_remote(self.peer_id, &objects, true) {
+                for object in body.local {
+                    let id = RemoteId::new(self.peer_id, object.id);
+
+                    if let Some(room) = Room::from_remote(id, &object, true) {
                         self.rooms.push(room);
                     }
                 }
 
                 for peer in body.peers {
                     for object in peer.objects {
-                        if let Some(room) = Room::from_remote(peer.peer_id, &object, false) {
+                        let id = RemoteId::new(peer.peer_id, object.id);
+
+                        if let Some(room) = Room::from_remote(id, &object, false) {
                             self.rooms.push(room);
                         }
                     }
@@ -295,7 +295,9 @@ impl Rooms {
 
                 match body {
                     LocalUpdateBody::ObjectCreated { object } => {
-                        if let Some(room) = Room::from_remote(self.peer_id, &object, true) {
+                        let id = RemoteId::new(self.peer_id, object.id);
+
+                        if let Some(room) = Room::from_remote(id, &object, true) {
                             self.rooms.push(room);
                             self.rooms.sort_by(Room::cmp);
                             return Ok(true);
@@ -303,20 +305,20 @@ impl Rooms {
 
                         Ok(true)
                     }
-                    LocalUpdateBody::ObjectRemoved { object_id } => {
+                    LocalUpdateBody::ObjectRemoved { id: object_id } => {
                         let prev = self.rooms.len();
-                        self.rooms.retain(|r| r.local && r.room.id != object_id);
+                        self.rooms.retain(|r| !r.local || r.id.id != object_id);
                         Ok(self.rooms.len() != prev)
                     }
                     LocalUpdateBody::ObjectUpdated {
-                        object_id,
+                        id: object_id,
                         key,
                         value,
                     } => {
                         let Some(room) = self
                             .rooms
                             .iter_mut()
-                            .find(|r| r.local && r.room.id == object_id)
+                            .find(|r| r.local && r.id.id == object_id)
                         else {
                             return Ok(false);
                         };
@@ -345,7 +347,9 @@ impl Rooms {
                         peer_id, objects, ..
                     } => {
                         for object in objects {
-                            if let Some(room) = Room::from_remote(peer_id, &object, false) {
+                            let id = RemoteId::new(peer_id, object.id);
+
+                            if let Some(room) = Room::from_remote(id, &object, false) {
                                 self.rooms.push(room);
                                 self.rooms.sort_by(Room::cmp);
                             }
@@ -354,11 +358,11 @@ impl Rooms {
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => {
-                        self.rooms.retain(|r| r.room.peer_id != peer_id);
+                        self.rooms.retain(|r| r.id.peer_id != peer_id);
                         Ok(true)
                     }
-                    RemoteUpdateBody::ObjectCreated { peer_id, object } => {
-                        if let Some(room) = Room::from_remote(peer_id, &object, false) {
+                    RemoteUpdateBody::ObjectCreated { id, object } => {
+                        if let Some(room) = Room::from_remote(id, &object, false) {
                             self.rooms.push(room);
                             self.rooms.sort_by(Room::cmp);
                             Ok(true)
@@ -366,21 +370,13 @@ impl Rooms {
                             Ok(false)
                         }
                     }
-                    RemoteUpdateBody::ObjectRemoved { peer_id, object_id } => {
-                        let room = RemoteId::new(peer_id, object_id);
+                    RemoteUpdateBody::ObjectRemoved { id } => {
                         let prev = self.rooms.len();
-                        self.rooms.retain(|r| r.room != room);
+                        self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
-                    RemoteUpdateBody::ObjectUpdated {
-                        peer_id,
-                        object_id,
-                        key,
-                        value,
-                    } => {
-                        let room = RemoteId::new(peer_id, object_id);
-
-                        let Some(entry) = self.rooms.iter_mut().find(|r| r.room == room) else {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                        let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
                             return Ok(false);
                         };
 
@@ -401,7 +397,7 @@ impl Rooms {
 
                 match body.key {
                     Key::ROOM => {
-                        self.active_room = body.value.as_room().cloned();
+                        self.active_room = *body.value.as_remote_id();
                         Ok(true)
                     }
                     _ => Ok(false),

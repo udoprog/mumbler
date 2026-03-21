@@ -1,7 +1,9 @@
+use core::error::Error;
 use core::fmt;
+use core::str::FromStr;
 
-use base64::Engine as _;
 use base64::display::Base64Display;
+use base64::{DecodeSliceError, Engine as _};
 use musli_core::{Decode, Encode};
 use serde_core::{Deserialize, Deserializer, de};
 
@@ -72,8 +74,8 @@ impl<'de> Deserialize<'de> for PeerId {
             type Value = PeerId;
 
             #[inline]
-            fn expecting(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
-                write!(f, "a base64url-encoded 32-byte ed25519 public key")
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "a peer identifier")
             }
 
             #[inline]
@@ -81,22 +83,87 @@ impl<'de> Deserialize<'de> for PeerId {
             where
                 E: de::Error,
             {
-                let mut dest = [0u8; 32];
-
-                let len = ENGINE
-                    .decode_slice(v, &mut dest[..])
-                    .map_err(de::Error::custom)?;
-
-                if len != 32 {
-                    return Err(de::Error::custom(format!(
-                        "invalid length: expected 32 bytes, got {len}"
-                    )));
-                }
-
-                Ok(PeerId::new(dest))
+                v.parse().map_err(de::Error::custom)
             }
         }
 
         deserializer.deserialize_str(Visitor)
+    }
+}
+
+/// An error raised by parsing an Id as a string.
+pub struct ParsePeerIdError {
+    kind: ParsePeerIdErrorKind,
+}
+
+#[derive(Debug)]
+enum ParsePeerIdErrorKind {
+    DecodeSliceError(DecodeSliceError),
+    InvalidLength(usize),
+}
+
+impl fmt::Display for ParsePeerIdError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl fmt::Display for ParsePeerIdErrorKind {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParsePeerIdErrorKind::DecodeSliceError(error) => {
+                write!(f, "base64 decode error: {error}")
+            }
+            ParsePeerIdErrorKind::InvalidLength(len) => {
+                write!(f, "invalid length: expected 32 bytes, got {len}")
+            }
+        }
+    }
+}
+
+impl fmt::Debug for ParsePeerIdError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl Error for ParsePeerIdError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match &self.kind {
+            ParsePeerIdErrorKind::DecodeSliceError(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<DecodeSliceError> for ParsePeerIdError {
+    #[inline]
+    fn from(error: DecodeSliceError) -> Self {
+        Self {
+            kind: ParsePeerIdErrorKind::DecodeSliceError(error),
+        }
+    }
+}
+
+impl FromStr for PeerId {
+    type Err = ParsePeerIdError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut dest = [0u8; 32];
+
+        let len = ENGINE.decode_slice(s, &mut dest[..])?;
+
+        if len != 32 {
+            return Err(ParsePeerIdError {
+                kind: ParsePeerIdErrorKind::InvalidLength(len),
+            });
+        }
+
+        Ok(PeerId::new(dest))
     }
 }

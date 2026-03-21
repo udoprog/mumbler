@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use api::{Id, Key, PeerId, Properties, Value};
+use api::{Id, Key, PeerId, Properties, RemoteId, Value};
 
 use crate::components::render::Visibility;
 use crate::objects::ObjectData;
@@ -15,14 +15,26 @@ pub(crate) struct Peer {
 }
 
 impl Peer {
+    /// Update a peer property.
+    pub(crate) fn update(&mut self, key: Key, value: Value, room: &RemoteId) {
+        match key {
+            Key::ROOM => {
+                self.in_room = *value.as_remote_id() == *room;
+            }
+            _ => {}
+        }
+
+        self.props.insert(key, value);
+    }
+
+    /// Update peer based on configuration.
+    pub(crate) fn update_config(&mut self, room: &RemoteId) {
+        self.in_room = *self.props.get(Key::ROOM).as_remote_id() == *room;
+    }
+
     /// Insert a new object.
     pub(crate) fn insert(&mut self, object_id: Id, data: ObjectData) {
         self.objects.insert(object_id, data);
-    }
-
-    /// Update a peer property.
-    pub(crate) fn update(&mut self, key: Key, value: Value) {
-        self.props.insert(key, value);
     }
 
     /// Iterate over objects.
@@ -70,6 +82,11 @@ impl Peers {
         self.peers.values()
     }
 
+    /// Iterate mutably over peers.
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Peer> {
+        self.peers.values_mut()
+    }
+
     /// Clear remote peers.
     pub(crate) fn clear(&mut self) {
         self.peers.clear();
@@ -82,7 +99,6 @@ impl Peers {
         };
 
         peer.objects.clear();
-        peer.in_room = false;
     }
 
     /// Remove all objects associated with a peer.
@@ -111,12 +127,14 @@ impl Peers {
     }
 
     /// Insert a new peer.
-    pub(crate) fn create(&mut self, id: PeerId, props: Properties) -> &mut Peer {
+    pub(crate) fn create(&mut self, id: PeerId, props: Properties, room: &RemoteId) -> &mut Peer {
+        let in_room = *props.get(Key::ROOM).as_remote_id() == *room;
+
         let peer = self.peers.entry(id).or_default();
         peer.id = id;
         peer.props = props;
         peer.objects.clear();
-        peer.in_room = false;
+        peer.in_room = in_room;
         peer
     }
 }

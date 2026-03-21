@@ -2,23 +2,24 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Extent, Id, Pan, RemoteId, Transform, Vec3};
+use crate::{Color, Extent, Id, Pan, PeerId, RemoteId, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
 pub enum ValueType {
     Boolean,
-    String,
+    Bytes,
+    Color,
+    Extent,
     Float,
     Id,
+    Integer,
     Pan,
-    Extent,
+    PeerId,
+    RemoteId,
+    String,
     Transform,
     Vec3,
-    Color,
-    Bytes,
-    Integer,
-    RemoteId,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -51,6 +52,22 @@ impl Value {
         match &self.kind {
             ValueKind::Id(id) => *id,
             _ => Id::ZERO,
+        }
+    }
+
+    #[inline]
+    pub fn as_peer_id(&self) -> &PeerId {
+        match &self.kind {
+            ValueKind::PeerId(peer_id) => peer_id,
+            _ => &PeerId::ZERO,
+        }
+    }
+
+    #[inline]
+    pub fn as_remote_id(&self) -> &RemoteId {
+        match &self.kind {
+            ValueKind::RemoteId(remote_id) => remote_id,
+            _ => &RemoteId::ZERO,
         }
     }
 
@@ -180,14 +197,6 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_room(&self) -> Option<&RemoteId> {
-        match &self.kind {
-            ValueKind::RemoteId(r) => Some(r),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn into_vec3_mut(&mut self) -> &mut Vec3 {
         if !matches!(self.kind, ValueKind::Vec3(_)) {
             self.kind = ValueKind::Vec3(Vec3::default());
@@ -220,19 +229,20 @@ impl fmt::Debug for Value {
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum ValueKind {
-    Id(Id),
-    RemoteId(RemoteId),
-    Float(f64),
-    Integer(i64),
     Boolean(bool),
-    String(String),
     Bytes(Vec<u8>),
-    Transform(Transform),
     Color(Color),
-    Vec3(Vec3),
-    Pan(Pan),
-    Extent(Extent),
     Empty,
+    Extent(Extent),
+    Float(f64),
+    Id(Id),
+    Integer(i64),
+    Pan(Pan),
+    PeerId(PeerId),
+    RemoteId(RemoteId),
+    String(String),
+    Transform(Transform),
+    Vec3(Vec3),
 }
 
 impl From<Id> for Value {
@@ -355,6 +365,16 @@ impl From<RemoteId> for Value {
         }
     }
 }
+
+impl From<PeerId> for Value {
+    #[inline]
+    fn from(value: PeerId) -> Self {
+        Self {
+            kind: ValueKind::PeerId(value),
+        }
+    }
+}
+
 impl<T> From<Option<T>> for Value
 where
     Value: From<T>,
