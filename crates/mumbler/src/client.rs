@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
 use crate::Backend;
-use crate::backend::{BackendEvent, PeerInfo};
+use crate::backend::PeerInfo;
 use crate::remote::api::{
     ChallengeBody, Event, ImageCreatedBody, ImageRemovedBody, ObjectCreatedBody, ObjectRemovedBody,
     ObjectUpdatedBody, PeerConnectedBody, PeerDisconnectBody, PeerJoinBody, PeerLeaveBody,
@@ -98,13 +98,11 @@ async fn handle_peer(
 
                 state.peers.insert(body.peer_id, peer);
 
-                b.broadcast(BackendEvent::RemoteUpdate(
-                    RemoteUpdateBody::PeerConnected {
-                        peer_id: body.peer_id,
-                        objects: body.objects,
-                        props: body.props.clone(),
-                    },
-                ));
+                b.broadcast(RemoteUpdateBody::PeerConnected {
+                    peer_id: body.peer_id,
+                    objects: body.objects,
+                    props: body.props.clone(),
+                });
             }
             Event::PeerJoin => {
                 let body = body.decode::<PeerJoinBody>()?;
@@ -130,11 +128,11 @@ async fn handle_peer(
                     peer.objects.insert(o.id, o);
                 }
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerJoin {
+                b.broadcast(RemoteUpdateBody::PeerJoin {
                     peer_id: body.peer_id,
                     objects: peer.objects.values().cloned().collect(),
                     images: peer.images.iter().cloned().collect(),
-                }));
+                });
             }
             Event::PeerDisconnect => {
                 let body = body.decode::<PeerDisconnectBody>()?;
@@ -143,9 +141,7 @@ async fn handle_peer(
                 let mut state = b.client_state().await;
                 state.peers.remove(&body.id);
 
-                b.broadcast(BackendEvent::RemoteUpdate(
-                    RemoteUpdateBody::PeerDisconnect { peer_id: body.id },
-                ));
+                b.broadcast(RemoteUpdateBody::PeerDisconnect { peer_id: body.id });
             }
             Event::PeerLeave => {
                 let body = body.decode::<PeerLeaveBody>()?;
@@ -160,9 +156,7 @@ async fn handle_peer(
                 peer.objects.retain(|_, o| o.ty.is_global());
                 peer.images.clear();
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerLeave {
-                    peer_id: body.id,
-                }));
+                b.broadcast(RemoteUpdateBody::PeerLeave { peer_id: body.id });
             }
             Event::PeerUpdated => {
                 let body = body.decode::<PeerUpdatedBody>()?;
@@ -176,11 +170,11 @@ async fn handle_peer(
 
                 peer.props.insert(body.key, body.value.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::PeerUpdate {
+                b.broadcast(RemoteUpdateBody::PeerUpdate {
                     peer_id: body.peer_id,
                     key: body.key,
                     value: body.value,
-                }));
+                });
             }
             Event::ObjectUpdated => {
                 let body = body.decode::<ObjectUpdatedBody>()?;
@@ -198,13 +192,11 @@ async fn handle_peer(
 
                 object.props.insert(body.key, body.value.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(
-                    RemoteUpdateBody::ObjectUpdated {
-                        id: RemoteId::new(body.peer_id, body.object_id),
-                        key: body.key,
-                        value: body.value,
-                    },
-                ));
+                b.broadcast(RemoteUpdateBody::ObjectUpdated {
+                    id: RemoteId::new(body.peer_id, body.object_id),
+                    key: body.key,
+                    value: body.value,
+                });
             }
             Event::ObjectCreated => {
                 let body = body.decode::<ObjectCreatedBody>()?;
@@ -218,12 +210,10 @@ async fn handle_peer(
 
                 peer.objects.insert(body.object.id, body.object.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(
-                    RemoteUpdateBody::ObjectCreated {
-                        id: RemoteId::new(body.peer_id, body.object.id),
-                        object: body.object,
-                    },
-                ));
+                b.broadcast(RemoteUpdateBody::ObjectCreated {
+                    id: RemoteId::new(body.peer_id, body.object.id),
+                    object: body.object,
+                });
             }
             Event::ImageCreated => {
                 let body = body.decode::<ImageCreatedBody>()?;
@@ -234,9 +224,7 @@ async fn handle_peer(
                 let id = RemoteId::new(body.peer_id, body.image.id);
                 images.store(id, body.image.bytes.clone());
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ImageAdded {
-                    id,
-                }));
+                b.broadcast(RemoteUpdateBody::ImageAdded { id });
             }
             Event::ObjectRemoved => {
                 let body = body.decode::<ObjectRemovedBody>()?;
@@ -258,11 +246,9 @@ async fn handle_peer(
                 };
 
                 if removed {
-                    b.broadcast(BackendEvent::RemoteUpdate(
-                        RemoteUpdateBody::ObjectRemoved {
-                            id: RemoteId::new(body.peer_id, body.object_id),
-                        },
-                    ));
+                    b.broadcast(RemoteUpdateBody::ObjectRemoved {
+                        id: RemoteId::new(body.peer_id, body.object_id),
+                    });
                 }
 
                 if remove_room {
@@ -277,9 +263,7 @@ async fn handle_peer(
 
                 b.write_images().await.remove(&id);
 
-                b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::ImageRemoved {
-                    id,
-                }));
+                b.broadcast(RemoteUpdateBody::ImageRemoved { id });
             }
             id => {
                 tracing::debug!(?id, body = body.len(), "Unknown event");
@@ -436,7 +420,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
         {
             let mut state = b.client_state().await;
             state.peers.clear();
-            b.broadcast(BackendEvent::RemoteUpdate(RemoteUpdateBody::RemoteLost));
+            b.broadcast(RemoteUpdateBody::RemoteLost);
         }
 
         if enabled {

@@ -1,4 +1,4 @@
-use api::{Key, Value};
+use api::{Key, UpdateBody, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
@@ -162,9 +162,9 @@ impl MumbleStatus {
 
                 Ok(true)
             }
-            Msg::ToggleResponse(result) => {
-                let packet = result?;
-                _ = packet.decode()?;
+            Msg::ToggleResponse(body) => {
+                let body = body?;
+                _ = body.decode()?;
                 Ok(false)
             }
             Msg::StateChanged(state) => {
@@ -176,12 +176,13 @@ impl MumbleStatus {
                 self.log = log;
                 Ok(false)
             }
-            Msg::GetConfig(result) => {
-                let packet = result?;
-                let response = packet.decode()?;
+            Msg::GetConfig(body) => {
+                let body = body?;
+                let body = body.decode()?;
 
                 let mut changed = false;
-                for (key, value) in response.iter() {
+
+                for (key, value) in body {
                     changed |= self.update_config(key, value)?;
                 }
 
@@ -190,13 +191,19 @@ impl MumbleStatus {
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-                let changed = self.update_config(body.key, &body.value)?;
-                Ok(changed)
+
+                match body {
+                    UpdateBody::Config { key, value } => {
+                        let changed = self.update_config(key, value)?;
+                        Ok(changed)
+                    }
+                    _ => Ok(false),
+                }
             }
         }
     }
 
-    fn update_config(&mut self, key: Key, value: &Value) -> Result<bool, Error> {
+    fn update_config(&mut self, key: Key, value: Value) -> Result<bool, Error> {
         match key {
             Key::MUMBLE_ENABLED => Ok(self.enabled.update(value.as_bool().unwrap_or_default())),
             _ => Ok(false),

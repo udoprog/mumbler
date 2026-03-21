@@ -20,7 +20,7 @@ pub struct App {
 pub enum Msg {
     Error(Error),
     StateChanged(ws::State),
-    Notification(Result<ws::Packet<api::ServerNotification>, ws::Error>),
+    Notification(Result<ws::Packet<api::Notification>, ws::Error>),
 }
 
 impl From<Error> for Msg {
@@ -52,7 +52,7 @@ impl Component for App {
 
         let _notification_listener = ws
             .handle()
-            .on_broadcast::<api::ServerNotification>(ctx.link().callback(Msg::Notification));
+            .on_broadcast::<api::Notification>(ctx.link().callback(Msg::Notification));
 
         ws.connect();
         Self {
@@ -77,10 +77,10 @@ impl Component for App {
             }
             Msg::Notification(result) => {
                 match result.and_then(|p| p.decode()) {
-                    Ok(api::ServerNotificationBody::Info { component, message }) => {
+                    Ok(api::NotificationBody::Info { component, message }) => {
                         self.log.info(component, message);
                     }
-                    Ok(api::ServerNotificationBody::Error { component, message }) => {
+                    Ok(api::NotificationBody::Error { component, message }) => {
                         self.log.error_message(component, message);
                     }
                     Err(error) => {

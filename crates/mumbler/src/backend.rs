@@ -9,6 +9,7 @@ use anyhow::Result;
 use api::ContentType;
 use api::Properties;
 use api::RemoteId;
+use api::UpdateBody;
 use api::{Id, Key, PeerId, RemoteObject, Transform, Type, Value};
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -20,25 +21,39 @@ use crate::crypto::Keypair;
 use super::{Database, Paths};
 
 #[derive(Debug, Clone)]
-pub(crate) struct LocalConfigEvent {
-    pub(crate) body: api::UpdateBody,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct LocalUpdateEvent {
-    pub(crate) body: api::LocalUpdateBody,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum BackendEvent {
-    ConfigUpdate(LocalConfigEvent),
-    LocalUpdate(LocalUpdateEvent),
+pub(crate) enum Broadcast {
+    Update(api::UpdateBody),
+    LocalUpdate(api::LocalUpdateBody),
     RemoteUpdate(api::RemoteUpdateBody),
-    Notification {
-        error: bool,
-        component: String,
-        message: String,
-    },
+    Notification(api::NotificationBody),
+}
+
+impl From<api::UpdateBody> for Broadcast {
+    #[inline]
+    fn from(value: api::UpdateBody) -> Self {
+        Self::Update(value)
+    }
+}
+
+impl From<api::LocalUpdateBody> for Broadcast {
+    #[inline]
+    fn from(value: api::LocalUpdateBody) -> Self {
+        Self::LocalUpdate(value)
+    }
+}
+
+impl From<api::RemoteUpdateBody> for Broadcast {
+    #[inline]
+    fn from(value: api::RemoteUpdateBody) -> Self {
+        Self::RemoteUpdate(value)
+    }
+}
+
+impl From<api::NotificationBody> for Broadcast {
+    #[inline]
+    fn from(value: api::NotificationBody) -> Self {
+        Self::Notification(value)
+    }
 }
 
 /// State for the backend.
@@ -144,7 +159,7 @@ struct Inner {
     mumblelink_notify: Notify,
     mumblelink_restart_notify: Notify,
     image_cache: RwLock<ImageCache>,
-    broadcast: Sender<BackendEvent>,
+    broadcast: Sender<Broadcast>,
     mumble_object: AtomicId,
     hidden: BlockingRwLock<HashSet<Id>>,
 }
@@ -294,7 +309,7 @@ impl Backend {
     }
 
     /// Set up an event subscriber.
-    pub(crate) fn subscribe(&self) -> Receiver<BackendEvent> {
+    pub(crate) fn subscribe(&self) -> Receiver<Broadcast> {
         self.inner.broadcast.subscribe()
     }
 
@@ -338,14 +353,13 @@ impl Backend {
     }
 
     /// Broadcast an event to all peers.
-    pub(crate) fn broadcast(&self, ev: BackendEvent) {
-        let _ = self.inner.broadcast.send(ev);
+    pub(crate) fn broadcast(&self, ev: impl Into<Broadcast>) {
+        let _ = self.inner.broadcast.send(ev.into());
     }
 
     /// Broadcast an info notification to all connected web clients.
     pub(crate) fn notify_info(&self, component: impl fmt::Display, message: impl fmt::Display) {
-        self.broadcast(BackendEvent::Notification {
-            error: false,
+        self.broadcast(api::NotificationBody::Info {
             component: component.to_string(),
             message: message.to_string(),
         });
@@ -353,8 +367,7 @@ impl Backend {
 
     /// Broadcast an error notification to all connected web clients.
     pub(crate) fn notify_error(&self, component: impl fmt::Display, message: impl fmt::Display) {
-        self.broadcast(BackendEvent::Notification {
-            error: true,
+        self.broadcast(api::NotificationBody::Error {
             component: component.to_string(),
             message: message.to_string(),
         });
@@ -384,6 +397,9 @@ impl Backend {
                 let keypair = crypto::derive_keypair(peer_secret.as_bytes());
                 state.keypair = keypair;
                 restart_client = true;
+
+                let peer_id = state.keypair.peer_id();
+                self.broadcast(UpdateBody::PeerId { peer_id });
             }
             _ => {}
         }

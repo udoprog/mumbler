@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, PeerId, RemoteId, Value};
+use api::{Color, Id, Key, LocalUpdateBody, PeerId, RemoteId, UpdateBody, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -30,6 +30,7 @@ pub(crate) enum Msg {
     ImageSelected(Event),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
+    Update(Result<Packet<api::Update>, ws::Error>),
     NameChanged(Event),
     OpenGallery,
     Rescale(Option<f64>),
@@ -53,6 +54,7 @@ pub(crate) struct StaticSettings {
     _file_reader: Option<FileReader>,
     _list_settings: ws::Request,
     _local_update_listener: ws::Listener,
+    _update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _select_color: ws::Request,
     _select_image: ws::Request,
@@ -106,11 +108,17 @@ impl Component for StaticSettings {
             .ws
             .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
 
+        let _update_listener = ctx
+            .props()
+            .ws
+            .on_broadcast::<api::Update>(ctx.link().callback(Msg::Update));
+
         let mut this = Self {
             _delete_image: ws::Request::new(),
             _file_reader: None,
             _list_settings: ws::Request::new(),
             _local_update_listener,
+            _update_listener,
             _log_handle,
             _select_color: ws::Request::new(),
             _select_image: ws::Request::new(),
@@ -541,7 +549,7 @@ impl StaticSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::ObjectUpdated {
+                    LocalUpdateBody::ObjectUpdated {
                         id: object_id,
                         key,
                         value,
@@ -556,6 +564,18 @@ impl StaticSettings {
                 };
 
                 Ok(changed)
+            }
+            Msg::Update(body) => {
+                let body = body?;
+                let body = body.decode()?;
+
+                match body {
+                    UpdateBody::PeerId { peer_id } => {
+                        self.peer_id = peer_id;
+                        Ok(true)
+                    }
+                    _ => Ok(false),
+                }
             }
             Msg::OpenGallery => {
                 self.gallery_open = true;

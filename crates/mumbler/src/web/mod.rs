@@ -22,7 +22,7 @@ use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
-use crate::backend::{Backend, BackendEvent, LocalConfigEvent};
+use crate::backend::Backend;
 use crate::remote::DEFAULT_PORT;
 
 /// Error type for web module.
@@ -401,10 +401,7 @@ pub(crate) async fn updates(
         }
 
         backend.update(key, value.clone()).await?;
-
-        backend.broadcast(BackendEvent::ConfigUpdate(LocalConfigEvent {
-            body: UpdateBody { key, value },
-        }));
+        backend.broadcast(UpdateBody::Config { key, value });
     }
 
     if restart_mumblelink {

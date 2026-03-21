@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use api::{Id, Key, LocalUpdateBody, PeerId, RemoteId, Type, Value};
+use api::{Id, Key, LocalUpdateBody, PeerId, RemoteId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -395,12 +395,18 @@ impl Rooms {
                 let body = body?;
                 let body = body.decode()?;
 
-                match body.key {
-                    Key::ROOM => {
-                        self.active_room = *body.value.as_remote_id();
+                match body {
+                    UpdateBody::Config { key, value } => match key {
+                        Key::ROOM => {
+                            self.active_room = *value.as_remote_id();
+                            Ok(true)
+                        }
+                        _ => Ok(false),
+                    },
+                    UpdateBody::PeerId { peer_id } => {
+                        self.peer_id = peer_id;
                         Ok(true)
                     }
-                    _ => Ok(false),
                 }
             }
             Msg::Disconnect => {

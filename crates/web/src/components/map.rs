@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteId, RemoteUpdateBody, Value, Vec3,
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, RemoteId, RemoteUpdateBody, UpdateBody,
+    Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -1249,16 +1250,24 @@ impl Map {
                 let body = body?;
                 let body = body.decode()?;
 
-                let changed = self.config.update(body.key, body.value);
+                match body {
+                    UpdateBody::Config { key, value } => {
+                        let changed = self.config.update(key, value);
 
-                if changed {
-                    for peer in self.peers.iter_mut() {
-                        peer.update_config(&self.config.room);
+                        if changed {
+                            for peer in self.peers.iter_mut() {
+                                peer.update_config(&self.config.room);
+                            }
+                        }
+
+                        self.s.redraw = changed;
+                        Ok(changed)
+                    }
+                    UpdateBody::PeerId { peer_id } => {
+                        self.peer_id = peer_id;
+                        Ok(true)
                     }
                 }
-
-                self.s.redraw = changed;
-                Ok(changed)
             }
             Msg::LocalUpdate(body) => {
                 let body = body?;

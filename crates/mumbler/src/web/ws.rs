@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
-use crate::backend::{Backend, BackendEvent, LocalUpdateEvent};
+use crate::backend::{Backend, Broadcast};
 
 struct Handler<'a> {
     backend: Backend,
@@ -82,14 +82,11 @@ impl ws::Handler for Handler<'_> {
 
                 self.database_updates_notify.notify_one();
 
-                self.backend
-                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ObjectUpdated {
-                            id: request.id,
-                            key: request.key,
-                            value: request.value,
-                        },
-                    }));
+                self.backend.broadcast(LocalUpdateBody::ObjectUpdated {
+                    id: request.id,
+                    key: request.key,
+                    value: request.value,
+                });
 
                 outgoing.write(api::Empty);
             }
@@ -116,9 +113,7 @@ impl ws::Handler for Handler<'_> {
                 let object = self.backend.create_object(body.ty, body.props).await?;
 
                 self.backend
-                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ObjectCreated { object },
-                    }));
+                    .broadcast(LocalUpdateBody::ObjectCreated { object });
 
                 outgoing.write(api::Empty);
             }
@@ -130,9 +125,7 @@ impl ws::Handler for Handler<'_> {
                 self.backend.remove_object(request.id).await?;
 
                 self.backend
-                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ObjectRemoved { id: request.id },
-                    }));
+                    .broadcast(LocalUpdateBody::ObjectRemoved { id: request.id });
 
                 outgoing.write(api::Empty);
             }
@@ -145,10 +138,7 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(api::UploadImageResponse { id });
 
-                self.backend
-                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ImageAdded { id },
-                    }));
+                self.backend.broadcast(LocalUpdateBody::ImageAdded { id });
             }
             api::Request::DeleteImage => {
                 let request = incoming
@@ -160,9 +150,7 @@ impl ws::Handler for Handler<'_> {
                 outgoing.write(api::Empty);
 
                 self.backend
-                    .broadcast(BackendEvent::LocalUpdate(LocalUpdateEvent {
-                        body: LocalUpdateBody::ImageRemoved { id: request.id },
-                    }));
+                    .broadcast(LocalUpdateBody::ImageRemoved { id: request.id });
             }
             api::Request::MumbleRestart => {
                 _ = incoming
@@ -259,22 +247,16 @@ pub(super) async fn entry(
                         tracing::debug!(?event, "Backend event");
 
                         let result = match event {
-                            BackendEvent::ConfigUpdate(event) => {
-                                server.broadcast(event.body).context("send config update")
+                            Broadcast::Update(body) => {
+                                server.broadcast(body).context("send config update")
                             }
-                            BackendEvent::LocalUpdate(event) => {
-                                server.broadcast(event.body).context("send local update")
+                            Broadcast::LocalUpdate(body) => {
+                                server.broadcast(body).context("send local update")
                             }
-                            BackendEvent::RemoteUpdate(body) => {
+                            Broadcast::RemoteUpdate(body) => {
                                 server.broadcast(body).context("send broadcast")
                             }
-                            BackendEvent::Notification { error, component, message } => {
-                                let body = if error {
-                                    api::ServerNotificationBody::Error { component, message }
-                                } else {
-                                    api::ServerNotificationBody::Info { component, message }
-                                };
-
+                            Broadcast::Notification(body) => {
                                 server.broadcast(body).context("send notification")
                             }
                         };

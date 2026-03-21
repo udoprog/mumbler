@@ -749,18 +749,21 @@ pub struct GetMumbleStatusResponse {
 #[musli(crate = musli_core)]
 pub struct RemoteRestartRequest;
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub enum ServerNotificationBody {
+pub enum NotificationBody {
     Info { component: String, message: String },
     Error { component: String, message: String },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct UpdateBody {
-    pub key: Key,
-    pub value: Value,
+pub enum UpdateBody {
+    /// A configuration change has occured.
+    Config { key: Key, value: Value },
+    /// The local peer id has been updated, likely because of a configuration
+    /// change.
+    PeerId { peer_id: PeerId },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -928,9 +931,9 @@ api::define! {
         impl Event for RemoteUpdateBody;
     }
 
-    pub type ServerNotification;
+    pub type Notification;
 
-    impl Broadcast for ServerNotification {
-        impl Event for ServerNotificationBody;
+    impl Broadcast for Notification {
+        impl Event for NotificationBody;
     }
 }
