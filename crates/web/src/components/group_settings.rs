@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, Value};
+use api::{Color, Key, RemoteId, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -26,7 +26,7 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct GroupSettings {
@@ -136,7 +136,9 @@ impl GroupSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .body(api::GetObjectSettingsRequest {
+                    id: ctx.props().id.id,
+                })
                 .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                 .send();
         }
@@ -172,7 +174,7 @@ impl GroupSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = send_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -185,7 +187,7 @@ impl GroupSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::SetLog(log) => {
@@ -202,12 +204,8 @@ impl GroupSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        if object_id != ctx.props().id {
+                    api::LocalUpdateBody::ObjectUpdated { id, key, value } => {
+                        if ctx.props().id != RemoteId::local(id) {
                             return Ok(false);
                         }
 
@@ -230,12 +228,12 @@ impl GroupSettings {
     }
 }
 
-fn send_update(ctx: &Context<GroupSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(ctx: &Context<GroupSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })

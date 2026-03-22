@@ -27,6 +27,7 @@ impl RemoteId {
     };
 
     /// A local identifier.
+    #[inline]
     pub fn local(id: Id) -> Self {
         Self {
             peer_id: PeerId::ZERO,
@@ -35,13 +36,20 @@ impl RemoteId {
     }
 
     /// Construct a new room.
+    #[inline]
     pub fn new(peer_id: PeerId, id: Id) -> Self {
         Self { peer_id, id }
     }
 
     /// Check if the remote identifier is zero.
+    #[inline]
     pub fn is_zero(&self) -> bool {
         self.peer_id.is_zero() && self.id.is_zero()
+    }
+
+    #[inline]
+    pub fn as_non_zero(&self) -> Option<Self> {
+        if self.is_zero() { None } else { Some(*self) }
     }
 }
 

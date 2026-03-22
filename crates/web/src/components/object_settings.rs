@@ -45,7 +45,7 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct TokenSettings {
@@ -274,7 +274,9 @@ impl TokenSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .body(api::GetObjectSettingsRequest {
+                    id: ctx.props().id.id,
+                })
                 .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
@@ -377,7 +379,7 @@ impl TokenSettings {
             Msg::SelectImage(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -406,7 +408,7 @@ impl TokenSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = send_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -419,7 +421,7 @@ impl TokenSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::RadiusChanged(e) => {
@@ -432,7 +434,7 @@ impl TokenSettings {
 
                     let radius = radius.clamp(0.05, 10.0);
                     *self.token_radius = radius;
-                    self._update_radius = send_update(ctx, Key::TOKEN_RADIUS, radius);
+                    self._update_radius = object_update(ctx, Key::TOKEN_RADIUS, radius);
                     true
                 };
 
@@ -448,7 +450,7 @@ impl TokenSettings {
 
                     let speed = speed.clamp(0.5, 100.0);
                     *self.speed = speed;
-                    self._update_radius = send_update(ctx, Key::SPEED, speed);
+                    self._update_radius = object_update(ctx, Key::SPEED, speed);
                     true
                 };
 
@@ -472,12 +474,8 @@ impl TokenSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        if object_id != ctx.props().id {
+                    api::LocalUpdateBody::ObjectUpdated { id, key, value } => {
+                        if ctx.props().id != RemoteId::local(id) {
                             return Ok(false);
                         }
 
@@ -564,12 +562,12 @@ impl TokenSettings {
     }
 }
 
-fn send_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })

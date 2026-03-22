@@ -1,4 +1,4 @@
-use api::Id;
+use api::RemoteId;
 use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
@@ -10,20 +10,20 @@ use super::Icon;
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) group: Id,
+    pub(crate) group: RemoteId,
     pub(crate) drag_over: Option<DragOver>,
-    pub(crate) mumble_object: Option<Id>,
+    pub(crate) mumble_object: Option<RemoteId>,
     #[prop_or_default]
-    pub(crate) drop_into_last: Option<Id>,
-    pub(crate) selected: Option<Id>,
-    pub(crate) onselect: Callback<Id>,
-    pub(crate) ondragend: Callback<Id>,
+    pub(crate) drop_into_last: Option<RemoteId>,
+    pub(crate) selected: Option<RemoteId>,
+    pub(crate) onselect: Callback<RemoteId>,
+    pub(crate) ondragend: Callback<RemoteId>,
     pub(crate) ondragover: Callback<DragOver>,
-    pub(crate) onhiddentoggle: Callback<Id>,
-    pub(crate) onlocalhiddentoggle: Callback<Id>,
-    pub(crate) onexpandtoggle: Callback<Id>,
-    pub(crate) onlockedtoggle: Callback<Id>,
-    pub(crate) onmumbletoggle: Callback<Id>,
+    pub(crate) onhiddentoggle: Callback<RemoteId>,
+    pub(crate) onlocalhiddentoggle: Callback<RemoteId>,
+    pub(crate) onexpandtoggle: Callback<RemoteId>,
+    pub(crate) onlockedtoggle: Callback<RemoteId>,
+    pub(crate) onmumbletoggle: Callback<RemoteId>,
 }
 
 pub(crate) enum Msg {

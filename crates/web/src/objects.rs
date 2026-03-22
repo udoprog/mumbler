@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -53,9 +53,9 @@ pub(crate) struct LocalObject {
 }
 
 impl LocalObject {
-    pub(crate) fn from_remote(remote: &RemoteObject) -> Option<Self> {
+    pub(crate) fn from_remote(peer_id: PeerId, remote: &RemoteObject) -> Option<Self> {
         Some(Self {
-            data: ObjectData::new(PeerId::ZERO, remote)?,
+            data: ObjectData::new(peer_id, remote)?,
             move_target: None,
             arrow_target: None,
         })
@@ -124,12 +124,12 @@ impl Objects {
 
 #[derive(Default)]
 pub(crate) struct ObjectsRef {
-    values: HashMap<Id, LocalObject>,
+    values: HashMap<RemoteId, LocalObject>,
 }
 
 impl ObjectsRef {
     #[inline]
-    pub(crate) fn get(&self, id: Id) -> Option<&LocalObject> {
+    pub(crate) fn get(&self, id: RemoteId) -> Option<&LocalObject> {
         self.values.get(&id)
     }
 
@@ -139,7 +139,7 @@ impl ObjectsRef {
     }
 
     #[inline]
-    pub(crate) fn is_interactive(&self, id: Id) -> bool {
+    pub(crate) fn is_interactive(&self, id: RemoteId) -> bool {
         let Some(object) = self.values.get(&id) else {
             return false;
         };
@@ -148,17 +148,25 @@ impl ObjectsRef {
     }
 
     #[inline]
-    pub(crate) fn remove(&mut self, id: Id) -> Option<LocalObject> {
+    pub(crate) fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&RemoteId, &mut LocalObject) -> bool,
+    {
+        self.values.retain(f);
+    }
+
+    #[inline]
+    pub(crate) fn remove(&mut self, id: RemoteId) -> Option<LocalObject> {
         self.values.remove(&id)
     }
 
     #[inline]
-    pub(crate) fn insert(&mut self, id: Id, object: LocalObject) -> Option<LocalObject> {
+    pub(crate) fn insert(&mut self, id: RemoteId, object: LocalObject) -> Option<LocalObject> {
         self.values.insert(id, object)
     }
 
     #[inline]
-    pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut LocalObject> {
+    pub(crate) fn get_mut(&mut self, id: RemoteId) -> Option<&mut LocalObject> {
         self.values.get_mut(&id)
     }
 
@@ -169,11 +177,11 @@ impl ObjectsRef {
 
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
-    pub(crate) fn visibility(&self, group: Id) -> Visibility {
+    pub(crate) fn visibility(&self, group: RemoteId) -> Visibility {
         let mut hidden = Visibility::Remote;
         let mut current = group;
 
-        while current != Id::ZERO {
+        while current != RemoteId::ZERO {
             let Some(object) = self.values.get(&current) else {
                 break;
             };
@@ -187,10 +195,10 @@ impl ObjectsRef {
 
     /// Test if the given group or any of its ancestors is locked.
     #[inline]
-    pub(crate) fn is_locked(&self, group: Id) -> bool {
+    pub(crate) fn is_locked(&self, group: RemoteId) -> bool {
         let mut current = group;
 
-        while current != Id::ZERO {
+        while current != RemoteId::ZERO {
             let Some(object) = self.values.get(&current) else {
                 break;
             };
@@ -407,10 +415,9 @@ pub(crate) enum ObjectKind {
 }
 
 pub(crate) struct ObjectData {
-    pub(crate) peer_id: PeerId,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
     pub(crate) kind: ObjectKind,
-    pub(crate) group: State<Id>,
+    pub(crate) group: State<RemoteId>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
     pub(crate) local_hidden: State<bool>,
@@ -427,10 +434,9 @@ impl ObjectData {
         };
 
         Some(Self {
-            peer_id,
-            id: o.id,
+            id: RemoteId::new(peer_id, o.id),
             kind,
-            group: State::new(o.props.get(Key::GROUP).as_id()),
+            group: State::new(RemoteId::new(peer_id, o.props.get(Key::GROUP).as_id())),
             name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),
@@ -442,6 +448,9 @@ impl ObjectData {
         match key {
             Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+            Key::GROUP => self
+                .group
+                .update(RemoteId::new(self.id.peer_id, value.as_id())),
             _ => match &mut self.kind {
                 ObjectKind::Token(this) => this.update(key, value),
                 ObjectKind::Static(this) => this.update(key, value),
@@ -480,7 +489,7 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn sort_mut(&mut self) -> Option<(&mut State<Id>, &mut State<Vec<u8>>)> {
+    pub(crate) fn sort_mut(&mut self) -> Option<(&mut State<RemoteId>, &mut State<Vec<u8>>)> {
         match &mut self.kind {
             ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),

@@ -46,7 +46,7 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct StaticSettings {
@@ -308,7 +308,9 @@ impl StaticSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .body(api::GetObjectSettingsRequest {
+                    id: ctx.props().id.id,
+                })
                 .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
@@ -396,14 +398,14 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::Rescale(ratio) => {
-                self._update_fixed_ratio = send_update(ctx, Key::RATIO, ratio);
+                self._update_fixed_ratio = object_update(ctx, Key::RATIO, ratio);
 
                 let Some(ratio) = ratio else {
                     return Ok(false);
                 };
 
                 *self.width = *self.height * ratio as f32;
-                self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, *self.width);
+                self._update_dimensions = object_update(ctx, Key::STATIC_WIDTH, *self.width);
 
                 Ok(true)
             }
@@ -424,7 +426,7 @@ impl StaticSettings {
             Msg::SelectImage(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -455,7 +457,7 @@ impl StaticSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = send_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -468,7 +470,7 @@ impl StaticSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::WidthChanged(e) => {
@@ -481,12 +483,12 @@ impl StaticSettings {
 
                     let width = width.clamp(0.05, 50.0);
                     *self.width = width;
-                    self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, width);
+                    self._update_dimensions = object_update(ctx, Key::STATIC_WIDTH, width);
 
                     if let Some(ratio) = *self.ratio {
                         *self.height = (*self.width / ratio).clamp(0.05, 50.0);
                         self._update_dimensions =
-                            send_update(ctx, Key::STATIC_HEIGHT, *self.height);
+                            object_update(ctx, Key::STATIC_HEIGHT, *self.height);
                     }
 
                     true
@@ -504,11 +506,12 @@ impl StaticSettings {
 
                     let height = height.clamp(0.05, 50.0);
                     *self.height = height;
-                    self._update_dimensions = send_update(ctx, Key::STATIC_HEIGHT, height);
+                    self._update_dimensions = object_update(ctx, Key::STATIC_HEIGHT, height);
 
                     if let Some(ratio) = *self.ratio {
                         *self.width = (*self.height * ratio).clamp(0.05, 50.0);
-                        self._update_dimensions = send_update(ctx, Key::STATIC_WIDTH, *self.width);
+                        self._update_dimensions =
+                            object_update(ctx, Key::STATIC_WIDTH, *self.width);
                     }
 
                     true
@@ -528,7 +531,7 @@ impl StaticSettings {
                     *self.ratio = None;
                 };
 
-                self._update_fixed_ratio = send_update(ctx, Key::RATIO, *self.ratio);
+                self._update_fixed_ratio = object_update(ctx, Key::RATIO, *self.ratio);
                 Ok(true)
             }
             Msg::ImageLoaded(msg) => {
@@ -549,12 +552,8 @@ impl StaticSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        if object_id != ctx.props().id {
+                    LocalUpdateBody::ObjectUpdated { id, key, value } => {
+                        if ctx.props().id != RemoteId::local(id) {
                             return Ok(false);
                         }
 
@@ -655,12 +654,12 @@ impl StaticSettings {
     }
 }
 
-fn send_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })
