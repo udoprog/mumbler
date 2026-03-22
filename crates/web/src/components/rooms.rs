@@ -1,9 +1,7 @@
 use core::cmp::Ordering;
 use std::collections::HashMap;
 
-use api::{
-    Id, Key, LocalUpdateBody, PeerId, PublicKey, RemoteId, StableId, Type, UpdateBody, Value,
-};
+use api::{Id, Key, PeerId, PublicKey, RemoteId, StableId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -21,7 +19,6 @@ use super::into_target;
 pub(crate) enum Msg {
     StateChanged(ws::State),
     Initialized(Result<Packet<api::InitializeRooms>, ws::Error>),
-    LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     Disconnect,
@@ -90,7 +87,6 @@ pub(crate) struct Rooms {
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
     _init_request: ws::Request,
-    _local_listener: ws::Listener,
     _remote_listener: ws::Listener,
     _config_listener: ws::Listener,
     _connect_room_request: ws::Request,
@@ -113,11 +109,6 @@ impl Component for Rooms {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
-        let _local_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
-
         let _remote_listener = ctx
             .props()
             .ws
@@ -139,7 +130,6 @@ impl Component for Rooms {
             _log_handle,
             _state_change,
             _init_request: ws::Request::new(),
-            _local_listener,
             _remote_listener,
             _config_listener,
             _connect_room_request: ws::Request::new(),
@@ -258,6 +248,10 @@ impl Rooms {
     }
 
     fn to_stable_id(&self, id: RemoteId) -> StableId {
+        if id.is_local() {
+            return StableId::new(self.public_key, id.id);
+        }
+
         let Some(public_key) = self.peers.get(&id.peer_id) else {
             return StableId::ZERO;
         };
@@ -303,47 +297,6 @@ impl Rooms {
 
                 self.rooms.sort_by(Room::cmp);
                 Ok(true)
-            }
-            Msg::LocalUpdate(body) => {
-                let body = body?;
-                let body = body.decode()?;
-
-                match body {
-                    LocalUpdateBody::ObjectCreated { object } => {
-                        let id = StableId::new(self.public_key, object.id);
-
-                        if let Some(room) = Room::from_remote(id, &object) {
-                            self.rooms.push(room);
-                            self.rooms.sort_by(Room::cmp);
-                            return Ok(true);
-                        }
-
-                        Ok(true)
-                    }
-                    LocalUpdateBody::ObjectRemoved { id } => {
-                        let id = StableId::new(self.public_key, id);
-
-                        let prev = self.rooms.len();
-                        self.rooms.retain(|r| r.id != id);
-                        Ok(self.rooms.len() != prev)
-                    }
-                    LocalUpdateBody::ObjectUpdated { id, key, value } => {
-                        let id = StableId::new(self.public_key, id);
-
-                        let Some(room) = self.rooms.iter_mut().find(|r| r.id == id) else {
-                            return Ok(false);
-                        };
-
-                        let update = room.update(key, value);
-
-                        if update {
-                            self.rooms.sort_by(Room::cmp);
-                        }
-
-                        Ok(update)
-                    }
-                    _ => Ok(false),
-                }
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;

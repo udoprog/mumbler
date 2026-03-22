@@ -31,7 +31,14 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
             break 'transform None;
         };
 
-        if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
+        let hidden = object.props.get(Key::HIDDEN).as_bool().unwrap_or_default();
+        let local_hidden = object
+            .props
+            .get(Key::LOCAL_HIDDEN)
+            .as_bool()
+            .unwrap_or_default();
+
+        if hidden || local_hidden {
             None
         } else {
             object.props.get(Key::TRANSFORM).as_transform()

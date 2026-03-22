@@ -1,4 +1,4 @@
-use api::Id;
+use api::RemoteId;
 
 use crate::hierarchy::HierarchyRef;
 use crate::objects::ObjectsRef;
@@ -13,13 +13,13 @@ enum Drag {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DragOver {
     drag: Drag,
-    pub(crate) group: Id,
-    pub(crate) target: Id,
+    pub(crate) group: RemoteId,
+    pub(crate) target: RemoteId,
 }
 
 impl DragOver {
     #[inline]
-    pub(crate) const fn above(group: Id, target: Id) -> Self {
+    pub(crate) const fn above(group: RemoteId, target: RemoteId) -> Self {
         Self {
             drag: Drag::Above,
             group,
@@ -28,7 +28,7 @@ impl DragOver {
     }
 
     #[inline]
-    pub(crate) const fn below(group: Id, target: Id) -> Self {
+    pub(crate) const fn below(group: RemoteId, target: RemoteId) -> Self {
         Self {
             drag: Drag::Below,
             group,
@@ -37,7 +37,7 @@ impl DragOver {
     }
 
     #[inline]
-    pub(crate) const fn into(group: Id, target: Id) -> Self {
+    pub(crate) const fn into(group: RemoteId, target: RemoteId) -> Self {
         Self {
             drag: Drag::Into,
             group,
@@ -46,7 +46,7 @@ impl DragOver {
     }
 
     #[inline]
-    pub(crate) fn target_group(&self) -> Id {
+    pub(crate) fn target_group(&self) -> RemoteId {
         match self.drag {
             Drag::Into => self.target,
             _ => self.group,
@@ -67,7 +67,7 @@ impl DragOver {
                 if let Some(last) = last {
                     sorting::after(last)
                 } else {
-                    target.id.to_vec()
+                    target.id.id.to_vec()
                 }
             }
             Drag::Above => {
@@ -90,6 +90,7 @@ impl DragOver {
                     .iter(self.group)
                     .skip_while(|id| *id != self.target)
                     .nth(1);
+
                 let next = next.and_then(|id| Some(objects.get(id)?.sort()));
 
                 if let Some(next) = next {

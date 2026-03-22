@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Color, Extent, Id, RemoteId, Vec3};
+use api::{Color, Extent, RemoteId, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
@@ -18,12 +18,17 @@ pub(crate) enum Visibility {
 
 impl Visibility {
     #[inline]
-    pub(crate) fn is_hidden(&self) -> bool {
-        matches!(self, Self::Local | Self::None)
+    pub(crate) fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote)
     }
 
     #[inline]
-    pub(crate) fn is_local_hidden(&self) -> bool {
+    pub(crate) fn is_local(&self) -> bool {
+        matches!(self, Self::Local)
+    }
+
+    #[inline]
+    pub(crate) fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
 }
@@ -49,20 +54,20 @@ impl<'a> RenderObject<'a> {
     pub(crate) fn from_data(
         data: &'a ObjectData,
         arrow_target: Option<&'a Vec3>,
-        visibility: impl FnOnce(Id) -> Visibility,
+        visibility: impl FnOnce(RemoteId) -> Visibility,
     ) -> Option<Self> {
         let kind = match &data.kind {
             ObjectKind::Token(this) => RenderObjectKind::Token(RenderToken {
                 transform: &this.transform,
                 look_at: this.look_at.as_ref(),
-                image: RemoteId::new(data.peer_id, *this.image),
+                image: RemoteId::new(data.id.peer_id, *this.image),
                 color: this.color.unwrap_or_else(Color::neutral),
                 token_radius: *this.token_radius,
                 arrow_target,
             }),
             ObjectKind::Static(this) => RenderObjectKind::Static(RenderStatic {
                 transform: &this.transform,
-                image: RemoteId::new(data.peer_id, *this.image),
+                image: RemoteId::new(data.id.peer_id, *this.image),
                 color: this.color.unwrap_or_else(Color::neutral),
                 width: *this.width,
                 height: *this.height,
@@ -411,7 +416,7 @@ pub(crate) fn draw_token(
         cx.set_shadow_blur(0.0);
     }
 
-    if base.visibility.is_hidden() {
+    if base.visibility.is_local() {
         draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
     }
 
@@ -475,7 +480,7 @@ pub(crate) fn draw_static(
 
     cx.restore();
 
-    if base.visibility.is_hidden() {
+    if base.visibility.is_local() {
         let badge_size = hw.hypot(hh) * 0.38;
         draw_hidden_badge(cx, pos.x, pos.y, badge_size)?;
     }

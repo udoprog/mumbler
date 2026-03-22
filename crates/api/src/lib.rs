@@ -775,16 +775,6 @@ pub enum UpdateBody {
 
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub enum LocalUpdateBody {
-    ObjectCreated { object: RemoteObject },
-    ObjectRemoved { id: Id },
-    ObjectUpdated { id: Id, key: Key, value: Value },
-    ImageAdded { id: Id },
-    ImageRemoved { id: Id },
-}
-
-#[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum RemoteUpdateBody {
     /// Indicates that the remote connection has been lost and all local state
     /// should be cleared.
@@ -925,12 +915,6 @@ api::define! {
 
     impl Broadcast for Update {
         impl Event for UpdateBody;
-    }
-
-    pub type LocalUpdate;
-
-    impl Broadcast for LocalUpdate {
-        impl Event for LocalUpdateBody;
     }
 
     pub type RemoteUpdate;

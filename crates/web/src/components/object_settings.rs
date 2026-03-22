@@ -1,4 +1,4 @@
-use api::{Color, Id, Image, Key, PeerId, PublicKey, RemoteId, Value};
+use api::{Color, Id, Image, Key, PublicKey, RemoteId, RemoteUpdateBody, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -29,7 +29,7 @@ pub(crate) enum Msg {
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
     ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
+    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     NameChanged(Event),
     OpenGallery,
     RadiusChanged(Event),
@@ -45,14 +45,14 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct TokenSettings {
     _delete_image: ws::Request,
     _file_reader: Option<FileReader>,
     _list_settings: ws::Request,
-    _local_update_listener: ws::Listener,
+    _remote_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _select_color: ws::Request,
     _select_image: ws::Request,
@@ -99,16 +99,16 @@ impl Component for TokenSettings {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
-        let _local_update_listener = ctx
+        let _remote_update_listener = ctx
             .props()
             .ws
-            .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
+            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
 
         let mut this = Self {
             _delete_image: ws::Request::new(),
             _file_reader: None,
             _list_settings: ws::Request::new(),
-            _local_update_listener,
+            _remote_update_listener,
             _log_handle,
             _select_color: ws::Request::new(),
             _select_image: ws::Request::new(),
@@ -274,7 +274,9 @@ impl TokenSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .body(api::GetObjectSettingsRequest {
+                    id: ctx.props().id.id,
+                })
                 .on_packet(ctx.link().callback(Msg::Initialize))
                 .send();
         }
@@ -377,7 +379,7 @@ impl TokenSettings {
             Msg::SelectImage(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -406,7 +408,7 @@ impl TokenSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = send_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -419,7 +421,7 @@ impl TokenSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::RadiusChanged(e) => {
@@ -432,7 +434,7 @@ impl TokenSettings {
 
                     let radius = radius.clamp(0.05, 10.0);
                     *self.token_radius = radius;
-                    self._update_radius = send_update(ctx, Key::TOKEN_RADIUS, radius);
+                    self._update_radius = object_update(ctx, Key::TOKEN_RADIUS, radius);
                     true
                 };
 
@@ -448,7 +450,7 @@ impl TokenSettings {
 
                     let speed = speed.clamp(0.5, 100.0);
                     *self.speed = speed;
-                    self._update_radius = send_update(ctx, Key::SPEED, speed);
+                    self._update_radius = object_update(ctx, Key::SPEED, speed);
                     true
                 };
 
@@ -467,17 +469,13 @@ impl TokenSettings {
                 _ = result.decode()?;
                 Ok(false)
             }
-            Msg::LocalUpdate(body) => {
+            Msg::RemoteUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        if object_id != ctx.props().id {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                        if ctx.props().id != id {
                             return Ok(false);
                         }
 
@@ -519,7 +517,7 @@ impl TokenSettings {
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
-        let id = RemoteId::new(PeerId::ZERO, *self.image);
+        let id = RemoteId::local(*self.image);
         self.preview_images.load(ctx, &id);
     }
 
@@ -546,7 +544,7 @@ impl TokenSettings {
         let render = render::RenderToken {
             transform: &api::Transform::origin(),
             look_at: None,
-            image: RemoteId::new(PeerId::ZERO, *self.image),
+            image: RemoteId::local(*self.image),
             color: self.color.unwrap_or_else(Color::neutral),
             token_radius: 1.0,
             arrow_target: None,
@@ -564,12 +562,12 @@ impl TokenSettings {
     }
 }
 
-fn send_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })

@@ -158,7 +158,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     }
 
     for id in state.images.keys() {
-        images.push(RemoteId::new(PeerId::ZERO, *id));
+        images.push(RemoteId::local(*id));
     }
 
     for (peer_id, peer) in state.peers.iter() {

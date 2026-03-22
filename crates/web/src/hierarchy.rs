@@ -4,7 +4,7 @@ use std::collections::btree_set::Iter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
-use api::Id;
+use api::{PeerId, RemoteId};
 
 use crate::objects::LocalObject;
 
@@ -58,20 +58,20 @@ impl Hierarchy {
 #[derive(PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) struct Key {
     sort: Vec<u8>,
-    id: Id,
+    pub(crate) id: RemoteId,
 }
 
 /// Reference to the mutable data of a hierarchy.
 #[derive(Default)]
 pub(crate) struct HierarchyRef {
-    children: HashMap<Id, BTreeSet<Key>>,
+    children: HashMap<RemoteId, BTreeSet<Key>>,
     len: usize,
 }
 
 impl HierarchyRef {
     /// Test if the given group is empty.
     #[inline]
-    pub(crate) fn is_empty(&self, group: Id) -> bool {
+    pub(crate) fn is_empty(&self, group: RemoteId) -> bool {
         self.children
             .get(&group)
             .map(|s| s.is_empty())
@@ -79,7 +79,7 @@ impl HierarchyRef {
     }
 
     /// Get the children of the given group, sorted by their sort key.
-    pub(crate) fn iter(&self, group: Id) -> impl DoubleEndedIterator<Item = Id> {
+    pub(crate) fn iter(&self, group: RemoteId) -> impl DoubleEndedIterator<Item = RemoteId> {
         self.children
             .get(&group)
             .into_iter()
@@ -88,12 +88,12 @@ impl HierarchyRef {
     }
 
     /// Get all objects in the hierarchy.
-    pub(crate) fn walk(&self) -> impl DoubleEndedIterator<Item = Id> {
-        self.walk_from(Id::ZERO)
+    pub(crate) fn walk(&self) -> impl DoubleEndedIterator<Item = RemoteId> {
+        self.walk_from(RemoteId::ZERO)
     }
 
     /// Get all objects in the hierarchy.
-    pub(crate) fn walk_from(&self, id: Id) -> impl DoubleEndedIterator<Item = Id> {
+    pub(crate) fn walk_from(&self, id: RemoteId) -> impl DoubleEndedIterator<Item = RemoteId> {
         Walk {
             mutable: self,
             visited: HashSet::with_capacity(self.len),
@@ -107,8 +107,8 @@ impl HierarchyRef {
     }
 
     /// Remove the given id from all groups.
-    pub(crate) fn remove(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = Key { id, sort };
+    pub(crate) fn remove(&mut self, group: RemoteId, sort: Vec<u8>, id: RemoteId) {
+        let key = Key { sort, id };
 
         if let Some(values) = self.children.get_mut(&group) {
             values.remove(&key);
@@ -117,8 +117,9 @@ impl HierarchyRef {
     }
 
     /// Insert a child into the given group with the given sort key.
-    pub(crate) fn insert(&mut self, group: Id, sort: Vec<u8>, id: Id) {
-        let key = Key { id, sort };
+    pub(crate) fn insert(&mut self, group: RemoteId, sort: Vec<u8>, id: RemoteId) {
+        let group = as_group(group);
+        let key = Key { sort, id };
 
         if self.children.entry(group).or_default().insert(key) {
             self.len = self.len.saturating_add(1);
@@ -128,26 +129,51 @@ impl HierarchyRef {
     /// Extend the hierarchy with the given objects.
     pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
         for object in objects {
+            let group = as_group(*object.group);
+
             let key = Key {
                 id: object.id,
                 sort: object.sort().to_vec(),
             };
 
-            if self.children.entry(*object.group).or_default().insert(key) {
+            if self.children.entry(group).or_default().insert(key) {
                 self.len = self.len.saturating_add(1);
             }
         }
     }
+
+    pub(crate) fn retain(&mut self, mut f: impl FnMut(PeerId) -> bool + Copy) {
+        self.children.retain(|group, children| {
+            if !f(group.peer_id) {
+                self.len -= children.len();
+                return false;
+            }
+
+            let before = children.len();
+            children.retain(move |id| f(id.id.peer_id));
+            self.len -= before - children.len();
+
+            !children.is_empty()
+        });
+    }
+}
+
+fn as_group(id: RemoteId) -> RemoteId {
+    if id.id.is_zero() {
+        return RemoteId::ZERO;
+    }
+
+    id
 }
 
 pub(crate) struct Walk<'a> {
     mutable: &'a HierarchyRef,
-    visited: HashSet<Id>,
+    visited: HashSet<RemoteId>,
     stack: Vec<Iter<'a, Key>>,
 }
 
 impl Iterator for Walk<'_> {
-    type Item = Id;
+    type Item = RemoteId;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

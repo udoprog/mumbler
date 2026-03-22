@@ -1,4 +1,4 @@
-use api::Id;
+use api::RemoteId;
 use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
@@ -10,20 +10,20 @@ use super::Icon;
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) group: Id,
+    pub(crate) group: RemoteId,
     pub(crate) drag_over: Option<DragOver>,
-    pub(crate) mumble_object: Option<Id>,
+    pub(crate) mumble_object: Option<RemoteId>,
     #[prop_or_default]
-    pub(crate) drop_into_last: Option<Id>,
-    pub(crate) selected: Option<Id>,
-    pub(crate) onselect: Callback<Id>,
-    pub(crate) ondragend: Callback<Id>,
+    pub(crate) drop_into_last: Option<RemoteId>,
+    pub(crate) selected: Option<RemoteId>,
+    pub(crate) onselect: Callback<RemoteId>,
+    pub(crate) ondragend: Callback<RemoteId>,
     pub(crate) ondragover: Callback<DragOver>,
-    pub(crate) onhiddentoggle: Callback<Id>,
-    pub(crate) onlocalhiddentoggle: Callback<Id>,
-    pub(crate) onexpandtoggle: Callback<Id>,
-    pub(crate) onlockedtoggle: Callback<Id>,
-    pub(crate) onmumbletoggle: Callback<Id>,
+    pub(crate) onhiddentoggle: Callback<RemoteId>,
+    pub(crate) onlocalhiddentoggle: Callback<RemoteId>,
+    pub(crate) onexpandtoggle: Callback<RemoteId>,
+    pub(crate) onlockedtoggle: Callback<RemoteId>,
+    pub(crate) onmumbletoggle: Callback<RemoteId>,
 }
 
 pub(crate) enum Msg {
@@ -138,137 +138,149 @@ impl Component for ObjectList {
                 });
             }
 
-            let mumble_button = o.is_interactive().then(|| {
-                let is_mumble = ctx.props().mumble_object == Some(target);
+            let buttons = o.id.is_local().then(|| {
+                let mumble_button = o.is_interactive().then(|| {
+                    let is_mumble = ctx.props().mumble_object == Some(target);
 
-                let class = classes! {
-                    "btn", "sm", "square", "list-action",
-                    is_mumble.then_some("success"),
-                    is_mumble.then_some("active"),
-                };
+                    let class = classes! {
+                        "btn", "sm", "square", "list-action",
+                        is_mumble.then_some("success"),
+                        is_mumble.then_some("active"),
+                    };
 
-                let onclick = ctx.props().onmumbletoggle.reform(move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    target
-                });
-
-                html! {
-                    <button {class} title="Toggle as MumbleLink Source" {onclick}>
-                    <Icon name="mumble" />
-                    </button>
-                }
-            });
-
-            let expand_button = o.is_group().then(|| {
-                let is_expanded = o.is_expanded();
-
-                let class = classes! {
-                    "btn", "sm", "square", "list-action",
-                    is_expanded.then_some("success"),
-                    is_expanded.then_some("active"),
-                };
-
-                let onclick = ctx.props().onexpandtoggle.reform(move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    target
-                });
-
-                html! {
-                    <button {class} title="Expand or collapse group" {onclick}>
-                        <Icon name="folder-open" />
-                    </button>
-                }
-            });
-
-            let hidden_button = {
-                let is_hidden = o.is_hidden();
-
-                let class = classes! {
-                    "btn", "sm", "square", "list-action",
-                    is_hidden.then_some("danger"),
-                    is_hidden.then_some("active"),
-                };
-
-                let title = if is_hidden {
-                    "Hidden from others"
-                } else {
-                    "Visible to others"
-                };
-
-                let onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    target
-                });
-
-                let name = if is_hidden { "link-slash" } else { "link" };
-
-                html! {
-                    <button {class} {title} {onclick}>
-                        <Icon {name} />
-                    </button>
-                }
-            };
-
-            let local_hidden_button = {
-                let is_local_hidden = o.is_local_hidden();
-
-                let class = classes! {
-                    "btn", "sm", "square", "list-action",
-                    is_local_hidden.then_some("danger"),
-                    is_local_hidden.then_some("active"),
-                };
-
-                let title = if is_local_hidden {
-                    "Hidden locally"
-                } else {
-                    "Visible locally"
-                };
-
-                let onclick = ctx
-                    .props()
-                    .onlocalhiddentoggle
-                    .reform(move |ev: MouseEvent| {
+                    let onclick = ctx.props().onmumbletoggle.reform(move |ev: MouseEvent| {
                         ev.stop_propagation();
                         target
                     });
 
-                let name = if is_local_hidden { "eye-slash" } else { "eye" };
-
-                html! {
-                    <button {class} {title} {onclick}>
-                        <Icon {name} />
-                    </button>
-                }
-            };
-
-            let locked_button = {
-                let is_locked = o.is_locked();
-
-                let class = classes! {
-                    "btn", "sm", "square", "list-action",
-                    is_locked.then_some("danger"),
-                    is_locked.then_some("active"),
-                };
-
-                let title = if is_locked { "Locked" } else { "Unlocked" };
-
-                let onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    target
+                    html! {
+                        <button {class} title="Toggle as MumbleLink Source" {onclick}>
+                        <Icon name="mumble" />
+                        </button>
+                    }
                 });
 
-                let name = if is_locked {
-                    "lock-closed"
-                } else {
-                    "lock-open"
+                let expand_button = o.is_group().then(|| {
+                    let is_expanded = o.is_expanded();
+
+                    let class = classes! {
+                        "btn", "sm", "square", "list-action",
+                        is_expanded.then_some("success"),
+                        is_expanded.then_some("active"),
+                    };
+
+                    let onclick = ctx.props().onexpandtoggle.reform(move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        target
+                    });
+
+                    html! {
+                        <button {class} title="Expand or collapse group" {onclick}>
+                            <Icon name="folder-open" />
+                        </button>
+                    }
+                });
+
+                let hidden_button = {
+                    let is_hidden = o.is_hidden();
+
+                    let class = classes! {
+                        "btn", "sm", "square", "list-action",
+                        is_hidden.then_some("danger"),
+                        is_hidden.then_some("active"),
+                    };
+
+                    let title = if is_hidden {
+                        "Hidden from others"
+                    } else {
+                        "Visible to others"
+                    };
+
+                    let onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        target
+                    });
+
+                    let name = if is_hidden { "link-slash" } else { "link" };
+
+                    html! {
+                        <button {class} {title} {onclick}>
+                            <Icon {name} />
+                        </button>
+                    }
+                };
+
+                let local_hidden_button = {
+                    let is_local_hidden = o.is_local_hidden();
+
+                    let class = classes! {
+                        "btn", "sm", "square", "list-action",
+                        is_local_hidden.then_some("danger"),
+                        is_local_hidden.then_some("active"),
+                    };
+
+                    let title = if is_local_hidden {
+                        "Hidden locally"
+                    } else {
+                        "Visible locally"
+                    };
+
+                    let onclick = ctx
+                        .props()
+                        .onlocalhiddentoggle
+                        .reform(move |ev: MouseEvent| {
+                            ev.stop_propagation();
+                            target
+                        });
+
+                    let name = if is_local_hidden { "eye-slash" } else { "eye" };
+
+                    html! {
+                        <button {class} {title} {onclick}>
+                            <Icon {name} />
+                        </button>
+                    }
+                };
+
+                let locked_button = {
+                    let is_locked = o.is_locked();
+
+                    let class = classes! {
+                        "btn", "sm", "square", "list-action",
+                        is_locked.then_some("danger"),
+                        is_locked.then_some("active"),
+                    };
+
+                    let title = if is_locked { "Locked" } else { "Unlocked" };
+
+                    let onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        target
+                    });
+
+                    let name = if is_locked {
+                        "lock-closed"
+                    } else {
+                        "lock-open"
+                    };
+
+                    html! {
+                        <button {class} {title} {onclick}>
+                            <Icon {name} />
+                        </button>
+                    }
                 };
 
                 html! {
-                    <button {class} {title} {onclick}>
-                        <Icon {name} />
-                    </button>
+                    <>
+                        {mumble_button}
+                        {expand_button}
+                        {hidden_button}
+                        {local_hidden_button}
+                        {locked_button}
+                    </>
                 }
-            };
+            });
 
             let drop_into_last =
                 (ctx.props().drag_over == Some(DragOver::into(group, o.id))).then_some(group);
@@ -290,18 +302,8 @@ impl Component for ObjectList {
                 >
                     <section {class}>
                         <Icon name={o.icon()} invert={true} small={true} />
-
                         <span class="list-label">{label}</span>
-
-                        {mumble_button}
-
-                        {expand_button}
-
-                        {hidden_button}
-
-                        {local_hidden_button}
-
-                        {locked_button}
+                        {buttons}
                     </section>
                 </section>
             });

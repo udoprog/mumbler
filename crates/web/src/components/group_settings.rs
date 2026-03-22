@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, Value};
+use api::{Color, Key, RemoteId, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -14,7 +14,7 @@ use super::into_target;
 pub(crate) enum Msg {
     ColorChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
-    LocalUpdate(Result<Packet<api::LocalUpdate>, ws::Error>),
+    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     NameChanged(Event),
     SelectColor(api::Color),
     SetLog(log::Log),
@@ -26,12 +26,12 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct GroupSettings {
     _list_settings: ws::Request,
-    _local_update_listener: ws::Listener,
+    _remote_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _select_color: ws::Request,
     _state_change: ws::StateListener,
@@ -57,10 +57,10 @@ impl Component for GroupSettings {
             .ws
             .on_state_change(ctx.link().callback(Msg::StateChanged));
 
-        let _local_update_listener = ctx
+        let _remote_update_listener = ctx
             .props()
             .ws
-            .on_broadcast::<api::LocalUpdate>(ctx.link().callback(Msg::LocalUpdate));
+            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
 
         let mut this = Self {
             state,
@@ -72,7 +72,7 @@ impl Component for GroupSettings {
             _list_settings: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
-            _local_update_listener,
+            _remote_update_listener,
         };
 
         this.refresh(ctx);
@@ -136,7 +136,9 @@ impl GroupSettings {
                 .props()
                 .ws
                 .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                .body(api::GetObjectSettingsRequest {
+                    id: ctx.props().id.id,
+                })
                 .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                 .send();
         }
@@ -172,7 +174,7 @@ impl GroupSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = send_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -185,7 +187,7 @@ impl GroupSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = send_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::SetLog(log) => {
@@ -197,17 +199,13 @@ impl GroupSettings {
                 _ = result.decode()?;
                 Ok(false)
             }
-            Msg::LocalUpdate(body) => {
+            Msg::RemoteUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
 
                 let changed = match body {
-                    api::LocalUpdateBody::ObjectUpdated {
-                        id: object_id,
-                        key,
-                        value,
-                    } => {
-                        if object_id != ctx.props().id {
+                    api::RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                        if ctx.props().id != id {
                             return Ok(false);
                         }
 
@@ -230,12 +228,12 @@ impl GroupSettings {
     }
 }
 
-fn send_update(ctx: &Context<GroupSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
+fn object_update(ctx: &Context<GroupSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
     ctx.props()
         .ws
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })

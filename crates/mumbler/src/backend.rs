@@ -24,7 +24,6 @@ use super::{Database, Paths};
 #[derive(Debug, Clone)]
 pub(crate) enum Broadcast {
     Update(api::UpdateBody),
-    LocalUpdate(api::LocalUpdateBody),
     RemoteUpdate(api::RemoteUpdateBody),
     Notification(api::NotificationBody),
 }
@@ -33,13 +32,6 @@ impl From<api::UpdateBody> for Broadcast {
     #[inline]
     fn from(value: api::UpdateBody) -> Self {
         Self::Update(value)
-    }
-}
-
-impl From<api::LocalUpdateBody> for Broadcast {
-    #[inline]
-    fn from(value: api::LocalUpdateBody) -> Self {
-        Self::LocalUpdate(value)
     }
 }
 
@@ -271,10 +263,7 @@ impl Backend {
                 "loading image",
             };
 
-            image_cache.store(
-                RemoteId::new(PeerId::ZERO, image.id),
-                Box::from(image.bytes.as_slice()),
-            );
+            image_cache.store(RemoteId::local(image.id), Box::from(image.bytes.as_slice()));
 
             images.insert(
                 image.id,
@@ -618,10 +607,7 @@ impl Backend {
 
         {
             let mut images = self.inner.image_cache.write().await;
-            images.store(
-                RemoteId::new(PeerId::ZERO, id),
-                Box::from(image.bytes.as_slice()),
-            );
+            images.store(RemoteId::local(id), Box::from(image.bytes.as_slice()));
         }
 
         Ok(id)

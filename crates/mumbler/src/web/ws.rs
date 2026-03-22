@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use api::LocalUpdateBody;
 use api::{Id, Key, Value};
+use api::{RemoteId, RemoteUpdateBody};
 use async_fuse::Fuse;
 use axum::Extension;
 use axum::extract::ConnectInfo;
@@ -82,8 +82,8 @@ impl ws::Handler for Handler<'_> {
 
                 self.database_updates_notify.notify_one();
 
-                self.backend.broadcast(LocalUpdateBody::ObjectUpdated {
-                    id: request.id,
+                self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
+                    id: RemoteId::local(request.id),
                     key: request.key,
                     value: request.value,
                 });
@@ -112,8 +112,10 @@ impl ws::Handler for Handler<'_> {
 
                 let object = self.backend.create_object(body.ty, body.props).await?;
 
-                self.backend
-                    .broadcast(LocalUpdateBody::ObjectCreated { object });
+                self.backend.broadcast(RemoteUpdateBody::ObjectCreated {
+                    id: RemoteId::local(object.id),
+                    object,
+                });
 
                 outgoing.write(api::Empty);
             }
@@ -124,8 +126,9 @@ impl ws::Handler for Handler<'_> {
 
                 self.backend.remove_object(request.id).await?;
 
-                self.backend
-                    .broadcast(LocalUpdateBody::ObjectRemoved { id: request.id });
+                self.backend.broadcast(RemoteUpdateBody::ObjectRemoved {
+                    id: RemoteId::local(request.id),
+                });
 
                 outgoing.write(api::Empty);
             }
@@ -135,10 +138,10 @@ impl ws::Handler for Handler<'_> {
                     .context("missing request")?;
 
                 let id = super::upload_image(&self.backend, request).await?;
-
                 outgoing.write(api::UploadImageResponse { id });
-
-                self.backend.broadcast(LocalUpdateBody::ImageAdded { id });
+                self.backend.broadcast(RemoteUpdateBody::ImageAdded {
+                    id: RemoteId::local(id),
+                });
             }
             api::Request::DeleteImage => {
                 let request = incoming
@@ -149,8 +152,9 @@ impl ws::Handler for Handler<'_> {
 
                 outgoing.write(api::Empty);
 
-                self.backend
-                    .broadcast(LocalUpdateBody::ImageRemoved { id: request.id });
+                self.backend.broadcast(RemoteUpdateBody::ImageRemoved {
+                    id: RemoteId::local(request.id),
+                });
             }
             api::Request::MumbleRestart => {
                 _ = incoming
@@ -249,9 +253,6 @@ pub(super) async fn entry(
                         let result = match event {
                             Broadcast::Update(body) => {
                                 server.broadcast(body).context("send config update")
-                            }
-                            Broadcast::LocalUpdate(body) => {
-                                server.broadcast(body).context("send local update")
                             }
                             Broadcast::RemoteUpdate(body) => {
                                 server.broadcast(body).context("send broadcast")
