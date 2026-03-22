@@ -1,4 +1,4 @@
-use api::{Id, Image};
+use api::{Id, Image, PeerId};
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
@@ -66,7 +66,7 @@ impl Component for ImageGalleryModal {
 
             html! {
                 <div class="image-entry">
-                    <img src={format!("/api/image/{}", image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
+                    <img src={format!("/api/image/{}/{}", PeerId::ZERO, image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
                     <button class="btn danger floating icon" onclick={on_delete} title="Remove image">{"ⓧ"}</button>
                 </div>
             }

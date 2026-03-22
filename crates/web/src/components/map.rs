@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Id, Key, LocalUpdateBody, Pan, PublicKey, RemoteUpdateBody, StableId,
-    UpdateBody, Value, Vec3,
+    Color, Extent, Id, Key, LocalUpdateBody, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody,
+    StableId, UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -1224,12 +1224,10 @@ impl Map {
                 self.peers.clear();
 
                 for p in body.peers {
-                    let peer =
-                        self.peers
-                            .create(p.peer_id, p.public_key, p.props, &self.config.room);
+                    let peer = self.peers.create(p.peer_id, p.props, &self.config.room);
 
                     for object in p.objects {
-                        let Some(data) = ObjectData::from_remote(&object) else {
+                        let Some(data) = ObjectData::new(p.peer_id, &object) else {
                             continue;
                         };
 
@@ -1333,12 +1331,12 @@ impl Map {
                             o.update(key, value) || update
                         }
                         LocalUpdateBody::ImageAdded { id, .. } => {
-                            let id = StableId::new(self.public_key, id);
+                            let id = RemoteId::new(PeerId::ZERO, id);
                             self.images.load(ctx, &id);
                             false
                         }
                         LocalUpdateBody::ImageRemoved { id } => {
-                            let id = StableId::new(self.public_key, id);
+                            let id = RemoteId::new(PeerId::ZERO, id);
                             self.images.remove(&id);
                             false
                         }
@@ -1361,16 +1359,14 @@ impl Map {
                     }
                     RemoteUpdateBody::PeerConnected {
                         peer_id,
-                        public_key,
                         objects,
                         props,
+                        ..
                     } => {
-                        let peer = self
-                            .peers
-                            .create(peer_id, public_key, props, &self.config.room);
+                        let peer = self.peers.create(peer_id, props, &self.config.room);
 
                         for object in objects {
-                            let Some(data) = ObjectData::from_remote(&object) else {
+                            let Some(data) = ObjectData::new(peer_id, &object) else {
                                 continue;
                             };
 
@@ -1389,7 +1385,7 @@ impl Map {
                         };
 
                         for object in objects {
-                            let Some(data) = ObjectData::from_remote(&object) else {
+                            let Some(data) = ObjectData::new(peer_id, &object) else {
                                 continue;
                             };
 
@@ -1397,7 +1393,7 @@ impl Map {
                         }
 
                         for id in images {
-                            let id = StableId::new(peer.public_key, id);
+                            let id = RemoteId::new(peer_id, id);
                             self.images.load(ctx, &id);
                         }
 
@@ -1436,7 +1432,7 @@ impl Map {
                             break 'done false;
                         };
 
-                        if let Some(data) = ObjectData::from_remote(&object) {
+                        if let Some(data) = ObjectData::new(id.peer_id, &object) {
                             peer.insert(data.id, data);
                             true
                         } else {
@@ -1448,12 +1444,10 @@ impl Map {
                         true
                     }
                     RemoteUpdateBody::ImageAdded { id } => {
-                        let id = self.peers.to_stable_id(id.peer_id, id.id);
                         self.images.load(ctx, &id);
                         true
                     }
                     RemoteUpdateBody::ImageRemoved { id } => {
-                        let id = self.peers.to_stable_id(id.peer_id, id.id);
                         self.images.remove(&id);
                         true
                     }

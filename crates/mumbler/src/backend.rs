@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use anyhow::bail;
+use api::RemoteId;
 use api::{
     ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, StableId, Transform, Type,
     UpdateBody, Value,
@@ -138,22 +139,22 @@ struct Data {
 /// Temporary images.
 #[derive(Default)]
 pub(crate) struct ImageCache {
-    images: HashMap<StableId, Data>,
+    images: HashMap<RemoteId, Data>,
 }
 
 impl ImageCache {
     /// Store an image.
-    pub(crate) fn store(&mut self, id: StableId, bytes: Box<[u8]>) {
+    pub(crate) fn store(&mut self, id: RemoteId, bytes: Box<[u8]>) {
         self.images.insert(id, Data { bytes });
     }
 
     /// Remove an image.
-    pub(crate) fn remove(&mut self, id: &StableId) {
+    pub(crate) fn remove(&mut self, id: &RemoteId) {
         self.images.remove(id);
     }
 
     /// Get an image.
-    pub(crate) fn get(&self, id: &StableId) -> Option<&[u8]> {
+    pub(crate) fn get(&self, id: &RemoteId) -> Option<&[u8]> {
         Some(self.images.get(id)?.bytes.as_ref())
     }
 }
@@ -271,7 +272,7 @@ impl Backend {
             };
 
             image_cache.store(
-                StableId::new(keypair.public_key(), image.id),
+                RemoteId::new(PeerId::ZERO, image.id),
                 Box::from(image.bytes.as_slice()),
             );
 
@@ -608,18 +609,19 @@ impl Backend {
             )
             .await?;
 
-        let public_key = {
+        {
             let mut state = self.inner.client_state.lock().await;
             state.images.insert(id, image.clone());
             state.images_added.insert(id);
             self.inner.client_notify.notify_one();
-            state.keypair.public_key()
-        };
+        }
 
         {
-            let id = StableId::new(public_key, id);
             let mut images = self.inner.image_cache.write().await;
-            images.store(id, Box::from(image.bytes.as_slice()));
+            images.store(
+                RemoteId::new(PeerId::ZERO, id),
+                Box::from(image.bytes.as_slice()),
+            );
         }
 
         Ok(id)

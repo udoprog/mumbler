@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use anyhow::{Context as _, Result};
 use api::{
     GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeMapResponse,
-    InitializeRoomsResponse, Key, Properties, PublicKey, RemoteObject, RemotePeer, StableId, Type,
+    InitializeRoomsResponse, Key, PeerId, Properties, RemoteId, RemoteObject, RemotePeer, Type,
     UpdateBody, UploadImageRequest, Value,
 };
 use axum::extract::Path;
@@ -121,17 +121,17 @@ pub(crate) fn setup(
 #[allow(clippy::let_and_return)]
 fn common_routes(router: Router) -> Router {
     let router = router.route("/ws", get(ws::entry));
-    let router = router.route("/api/image/{public_key}/{id}", get(image));
+    let router = router.route("/api/image/{peer_id}/{id}", get(image));
     router
 }
 
 async fn image(
     Extension(backend): Extension<Backend>,
-    Path((public_key, id)): Path<(PublicKey, Id)>,
+    Path((peer_id, id)): Path<(PeerId, Id)>,
 ) -> Result<impl IntoResponse, WebError> {
     const MIME: mime_guess::Mime = mime_guess::mime::IMAGE_PNG;
 
-    let id = StableId::new(public_key, id);
+    let id = RemoteId::new(peer_id, id);
 
     let images = backend.read_images().await;
 
@@ -158,7 +158,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     }
 
     for id in state.images.keys() {
-        images.push(StableId::new(state.keypair.public_key(), *id));
+        images.push(RemoteId::new(PeerId::ZERO, *id));
     }
 
     for (peer_id, peer) in state.peers.iter() {
@@ -178,7 +178,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
         }
 
         for id in peer.images.iter() {
-            images.push(StableId::new(peer.public_key, *id));
+            images.push(RemoteId::new(*peer_id, *id));
         }
 
         peers.push(new_peer);

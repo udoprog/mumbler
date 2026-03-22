@@ -1,4 +1,4 @@
-use api::{Color, Id, Image, Key, PublicKey, StableId, Value};
+use api::{Color, Id, Image, Key, PeerId, PublicKey, RemoteId, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -64,7 +64,7 @@ pub(crate) struct TokenSettings {
     crop_source_url: Option<String>,
     gallery_open: bool,
     image_uploading: bool,
-    image: State<StableId>,
+    image: State<Id>,
     images: Vec<Image>,
     public_key: PublicKey,
     log: log::Log,
@@ -120,7 +120,7 @@ impl Component for TokenSettings {
             crop_source_url: None,
             gallery_open: false,
             image_uploading: false,
-            image: State::new(StableId::ZERO),
+            image: State::new(Id::ZERO),
             images: Vec::new(),
             public_key: PublicKey::ZERO,
             log,
@@ -247,7 +247,7 @@ impl Component for TokenSettings {
             if self.gallery_open {
                 <ImageGalleryModal
                     images={self.images.clone()}
-                    selected={self.image.id}
+                    selected={*self.image}
                     onselect={ctx.link().callback(Msg::SelectImage)}
                     ondelete={ctx.link().callback(Msg::DeleteImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
@@ -375,9 +375,9 @@ impl TokenSettings {
                 Ok(false)
             }
             Msg::SelectImage(id) => {
-                *self.image = StableId::new(self.public_key, id);
+                *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = send_update(ctx, Key::IMAGE_ID, *self.image);
+                self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::DeleteImage(id) => {
@@ -502,7 +502,7 @@ impl TokenSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(*value.as_stable_id()) {
+                if self.image.update(value.as_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {
@@ -519,7 +519,8 @@ impl TokenSettings {
 
     fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
-        self.preview_images.load(ctx, &self.image);
+        let id = RemoteId::new(PeerId::ZERO, *self.image);
+        self.preview_images.load(ctx, &id);
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
@@ -545,7 +546,7 @@ impl TokenSettings {
         let render = render::RenderToken {
             transform: &api::Transform::origin(),
             look_at: None,
-            image: &self.image,
+            image: RemoteId::new(PeerId::ZERO, *self.image),
             color: self.color.unwrap_or_else(Color::neutral),
             token_radius: 1.0,
             arrow_target: None,

@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use std::collections::HashMap;
 
-use api::StableId;
+use api::RemoteId;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::HtmlImageElement;
@@ -10,8 +10,8 @@ use yew::{Component, Context};
 use crate::error::Error;
 
 pub(crate) enum ImageMessage {
-    Loaded(StableId),
-    Errored(StableId, Error),
+    Loaded(RemoteId),
+    Errored(RemoteId, Error),
 }
 
 struct ImageState {
@@ -23,7 +23,7 @@ struct ImageState {
 
 /// Collection of images loaded for rendering.
 pub(crate) struct Images<M> {
-    inner: HashMap<StableId, ImageState>,
+    inner: HashMap<RemoteId, ImageState>,
     _marker: PhantomData<M>,
 }
 
@@ -55,7 +55,7 @@ where
     }
 
     /// Remove a loaded image.
-    pub(crate) fn remove(&mut self, id: &StableId) {
+    pub(crate) fn remove(&mut self, id: &RemoteId) {
         if id.is_zero() {
             return;
         }
@@ -74,7 +74,7 @@ where
         self.inner.clear();
     }
 
-    pub(crate) fn load(&mut self, ctx: &Context<M>, id: &StableId) {
+    pub(crate) fn load(&mut self, ctx: &Context<M>, id: &RemoteId) {
         if id.is_zero() {
             return;
         }
@@ -96,7 +96,7 @@ where
     }
 
     /// Get an image by id.
-    pub(crate) fn get(&self, id: &StableId) -> Option<&HtmlImageElement> {
+    pub(crate) fn get(&self, id: &RemoteId) -> Option<&HtmlImageElement> {
         let state = self.inner.get(id)?;
 
         // Still loading.
@@ -112,7 +112,7 @@ where
         Some(&state.image)
     }
 
-    fn load_image(ctx: &Context<M>, id: &StableId) -> Result<ImageState, Error> {
+    fn load_image(ctx: &Context<M>, id: &RemoteId) -> Result<ImageState, Error> {
         let img = HtmlImageElement::new()?;
 
         let load = Closure::<dyn FnMut()>::new({
@@ -138,7 +138,7 @@ where
 
         img.set_onload(Some(load.as_ref().unchecked_ref()));
         img.set_onerror(Some(error.as_ref().unchecked_ref()));
-        img.set_src(&format!("/api/image/{id}"));
+        img.set_src(&format!("/api/image/{}/{}", id.peer_id, id.id));
 
         Ok(ImageState {
             image: img,

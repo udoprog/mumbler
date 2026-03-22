@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, LocalUpdateBody, PublicKey, StableId, UpdateBody, Value};
+use api::{Color, Id, Key, LocalUpdateBody, PeerId, PublicKey, RemoteId, UpdateBody, Value};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -68,7 +68,7 @@ pub(crate) struct StaticSettings {
     gallery_open: bool,
     height: State<f32>,
     image_uploading: bool,
-    image: State<StableId>,
+    image: State<Id>,
     images: Vec<api::Image>,
     public_key: PublicKey,
     log: log::Log,
@@ -132,7 +132,7 @@ impl Component for StaticSettings {
             gallery_open: false,
             height: State::new(1.0),
             image_uploading: false,
-            image: State::new(StableId::ZERO),
+            image: State::new(Id::ZERO),
             images: Vec::new(),
             public_key: PublicKey::ZERO,
             log,
@@ -280,7 +280,7 @@ impl Component for StaticSettings {
             if self.gallery_open {
                 <ImageGalleryModal
                     images={self.images.clone()}
-                    selected={self.image.id}
+                    selected={*self.image}
                     onselect={ctx.link().callback(Msg::SelectImage)}
                     ondelete={ctx.link().callback(Msg::DeleteImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
@@ -422,7 +422,7 @@ impl StaticSettings {
                 Ok(false)
             }
             Msg::SelectImage(id) => {
-                *self.image = StableId::new(self.public_key, id);
+                *self.image = id;
                 self.load_preview_image(ctx);
                 self._select_image = send_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
@@ -591,7 +591,7 @@ impl StaticSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(*value.as_stable_id()) {
+                if self.image.update(value.as_id()) {
                     self.load_preview_image(ctx);
                     true
                 } else {
@@ -611,7 +611,8 @@ impl StaticSettings {
         self.preview_images.clear();
 
         if !self.image.is_zero() {
-            self.preview_images.load(ctx, &self.image);
+            let id = RemoteId::new(PeerId::ZERO, *self.image);
+            self.preview_images.load(ctx, &id);
         }
     }
 
@@ -637,7 +638,7 @@ impl StaticSettings {
 
         let render = render::RenderStatic {
             transform: &api::Transform::origin(),
-            image: &self.image,
+            image: RemoteId::new(PeerId::ZERO, *self.image),
             color: self.color.unwrap_or_else(Color::neutral),
             width: (*self.width).min(*self.height * 3.0),
             height: (*self.height).min(*self.width * 3.0),

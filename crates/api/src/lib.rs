@@ -50,7 +50,7 @@ impl Type {
 
 crate::macros::keys! {
     pub struct Key {
-        IMAGE_ID: StableId = 0;
+        IMAGE_ID: Id = 0;
         COLOR: Color = 1;
         TRANSFORM: Transform = 2;
         LOOK_AT: Vec3 = 3;
@@ -618,7 +618,7 @@ pub struct InitializeMapResponse {
     pub public_key: PublicKey,
     pub props: Properties,
     pub objects: Vec<RemoteObject>,
-    pub images: Vec<StableId>,
+    pub images: Vec<RemoteId>,
     pub peers: Vec<RemotePeer>,
 }
 

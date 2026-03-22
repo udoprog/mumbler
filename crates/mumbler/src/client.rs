@@ -4,7 +4,7 @@ use core::time::Duration;
 use std::collections::HashSet;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, Properties, RemoteId, RemoteObject, RemoteUpdateBody, StableId, Value};
+use api::{Key, Properties, RemoteId, RemoteObject, RemoteUpdateBody, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
@@ -120,7 +120,7 @@ async fn handle_peer(
                     let mut images = b.write_images().await;
 
                     for image in body.images {
-                        let id = StableId::new(peer.public_key, image.id);
+                        let id = RemoteId::new(body.peer_id, image.id);
                         images.store(id, image.bytes);
                         peer.images.insert(image.id);
                     }
@@ -221,17 +221,11 @@ async fn handle_peer(
                 let body = body.decode::<ImageCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, image_id = ?body.image.id, "ImageAdded");
 
-                let id = {
-                    let state = b.client_state().await;
-                    state.to_stable_id(body.peer_id, body.image.id)
-                };
-
+                let id = RemoteId::new(body.peer_id, body.image.id);
                 let mut images = b.write_images().await;
                 images.store(id, body.image.bytes.clone());
 
-                b.broadcast(RemoteUpdateBody::ImageAdded {
-                    id: RemoteId::new(body.peer_id, body.image.id),
-                });
+                b.broadcast(RemoteUpdateBody::ImageAdded { id });
             }
             Event::ObjectRemoved => {
                 let body = body.decode::<ObjectRemovedBody>()?;
@@ -266,16 +260,9 @@ async fn handle_peer(
                 let body = body.decode::<ImageRemovedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, ?body.image_id, "ImageRemoved");
 
-                let id = {
-                    let state = b.client_state().await;
-                    state.to_stable_id(body.peer_id, body.image_id)
-                };
-
+                let id = RemoteId::new(body.peer_id, body.image_id);
                 b.write_images().await.remove(&id);
-
-                b.broadcast(RemoteUpdateBody::ImageRemoved {
-                    id: RemoteId::new(body.peer_id, body.image_id),
-                });
+                b.broadcast(RemoteUpdateBody::ImageRemoved { id });
             }
             id => {
                 tracing::debug!(?id, body = body.len(), "Unknown event");

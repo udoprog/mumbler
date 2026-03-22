@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, RemoteObject, StableId, Transform, Type, Value, Vec3};
+use api::{Color, Id, Key, PeerId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -55,7 +55,7 @@ pub(crate) struct LocalObject {
 impl LocalObject {
     pub(crate) fn from_remote(remote: &RemoteObject) -> Option<Self> {
         Some(Self {
-            data: ObjectData::from_remote(remote)?,
+            data: ObjectData::new(PeerId::ZERO, remote)?,
             move_target: None,
             arrow_target: None,
         })
@@ -232,7 +232,7 @@ pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
     pub(crate) look_at: State<Option<Vec3>>,
-    pub(crate) image: State<StableId>,
+    pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
@@ -250,7 +250,7 @@ impl TokenObject {
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
-            image: State::new(*o.props.get(Key::IMAGE_ID).as_stable_id()),
+            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             token_radius: State::new(
                 o.props
@@ -276,7 +276,7 @@ impl TokenObject {
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
-            Key::IMAGE_ID => self.image.update(*value.as_stable_id()),
+            Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::TOKEN_RADIUS => self
                 .token_radius
@@ -293,7 +293,7 @@ impl TokenObject {
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
-    pub(crate) image: State<StableId>,
+    pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
     pub(crate) name: State<Option<String>>,
     pub(crate) hidden: State<bool>,
@@ -312,7 +312,7 @@ impl StaticObject {
                     .unwrap_or_else(Transform::origin),
             ),
             locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            image: State::new(*o.props.get(Key::IMAGE_ID).as_stable_id()),
+            image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
             name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
@@ -344,7 +344,7 @@ impl StaticObject {
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
             Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::IMAGE_ID => self.image.update(*value.as_stable_id()),
+            Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
             Key::OBJECT_NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
@@ -407,6 +407,7 @@ pub(crate) enum ObjectKind {
 }
 
 pub(crate) struct ObjectData {
+    pub(crate) peer_id: PeerId,
     pub(crate) id: Id,
     pub(crate) kind: ObjectKind,
     pub(crate) group: State<Id>,
@@ -417,7 +418,7 @@ pub(crate) struct ObjectData {
 
 impl ObjectData {
     #[inline]
-    pub(crate) fn from_remote(o: &RemoteObject) -> Option<Self> {
+    pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
         let kind = match o.ty {
             Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
             Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
@@ -426,6 +427,7 @@ impl ObjectData {
         };
 
         Some(Self {
+            peer_id,
             id: o.id,
             kind,
             group: State::new(o.props.get(Key::GROUP).as_id()),
