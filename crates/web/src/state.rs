@@ -1,5 +1,6 @@
+use core::fmt;
 use core::mem;
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 /// A wrapper around a value that tracks whether it has changed.
 ///
@@ -78,5 +79,15 @@ where
     #[inline]
     fn clone(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+impl<T> fmt::Debug for State<T>
+where
+    T: fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }

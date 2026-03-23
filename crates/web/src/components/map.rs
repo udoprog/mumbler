@@ -51,7 +51,7 @@ struct Inner {
     delete: Option<(RemoteId, String)>,
     _toggle_mumble_request: ws::Request,
     redraw: bool,
-    update_room: bool,
+    update_cache: bool,
 }
 
 impl Inner {
@@ -181,31 +181,53 @@ enum Action {
     Scale(Scale),
 }
 
-struct RoomView {
+struct Cache {
     extent: Extent,
     show_grid: bool,
     background: RemoteId,
+    room_icon: &'static str,
+    room_name: String,
 }
 
-impl RoomView {
-    fn recalculate(&mut self, room_id: RemoteId, objects: &ObjectsRef) {
-        *self = match objects.get(room_id).map(|o| &o.kind) {
-            Some(ObjectKind::Room(room)) => Self {
-                extent: *room.extent,
-                show_grid: *room.show_grid,
-                background: RemoteId::new(room_id.peer_id, *room.background),
-            },
-            _ => Self::default(),
+impl Cache {
+    fn update(&mut self, room_id: RemoteId, objects: &ObjectsRef) {
+        tracing::debug!(?room_id, object = ?objects.get(room_id));
+
+        let Some((o, ObjectKind::Room(room))) = objects.get(room_id).map(|o| (o, &o.kind)) else {
+            *self = Self::default();
+            return;
+        };
+
+        let room_icon = 'done: {
+            if room_id.is_zero() {
+                break 'done "question-mark-circle";
+            }
+
+            if room_id.is_local() {
+                "home"
+            } else {
+                "home-modern"
+            }
+        };
+
+        *self = Self {
+            extent: *room.extent,
+            show_grid: *room.show_grid,
+            background: RemoteId::new(room_id.peer_id, *room.background),
+            room_icon,
+            room_name: o.name().unwrap_or(UNKNOWN_ROOM).to_owned(),
         };
     }
 }
 
-impl Default for RoomView {
+impl Default for Cache {
     fn default() -> Self {
         Self {
             extent: Extent::arena(),
             show_grid: false,
             background: RemoteId::ZERO,
+            room_icon: "question-mark-circle",
+            room_name: String::from(COMMON_ROOM),
         }
     }
 }
@@ -382,7 +404,7 @@ pub(crate) struct Map {
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
-    room_view: RoomView,
+    cache: Cache,
     action: Option<Action>,
     state: ws::State,
     transform_requests: HashMap<RemoteId, ws::Request>,
@@ -545,7 +567,7 @@ impl Component for Map {
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
-            room_view: RoomView::default(),
+            cache: Cache::default(),
             s: Inner::default(),
             state,
             transform_requests: HashMap::new(),
@@ -577,7 +599,7 @@ impl Component for Map {
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        let changed = match self.try_update(ctx, msg) {
+        let mut changed = match self.try_update(ctx, msg) {
             Ok(changed) => changed,
             Err(error) => {
                 self.log.error("map::update", error);
@@ -598,11 +620,12 @@ impl Component for Map {
             self.update_world = false;
         }
 
-        if self.s.update_room {
+        if self.s.update_cache {
             let room_id = self.peers.to_remote_id(&self.config.room);
             let objects = self.objects.borrow();
-            self.room_view.recalculate(room_id, &objects);
-            self.s.update_room = false;
+            self.cache.update(room_id, &objects);
+            self.s.update_cache = false;
+            changed = true;
         }
 
         if self.s.redraw {
@@ -697,26 +720,6 @@ impl Component for Map {
                     </button>
                 </div>
             }
-        };
-
-        let (room_icon, room_name) = 'done: {
-            if self.config.room.is_zero() {
-                break 'done ("question-mark-circle", String::from(COMMON_ROOM));
-            }
-
-            let remote_id = self.peers.to_remote_id(&self.config.room);
-
-            let Some(o) = objects.get(remote_id) else {
-                break 'done ("question-mark-circle", String::from(UNKNOWN_ROOM));
-            };
-
-            let icon = if o.id.is_local() {
-                "home"
-            } else {
-                "home-modern"
-            };
-
-            (icon, o.name().unwrap_or(UNKNOWN_ROOM).to_owned())
         };
 
         let toolbar = {
@@ -869,8 +872,8 @@ impl Component for Map {
                     {locked}
                     <section class="icon-group">
                         <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenRooms)}>
-                            <Icon name={room_icon} />
-                            <span>{room_name}</span>
+                            <Icon name={self.cache.room_icon} />
+                            <span>{self.cache.room_name.clone()}</span>
                         </button>
                     </section>
                     <div class="fill"></div>
@@ -1063,7 +1066,7 @@ impl Map {
             return Ok(false);
         };
 
-        let t = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
         let world_pos = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let world_pos = t.to_world(world_pos);
 
@@ -1265,7 +1268,7 @@ impl Map {
                     self.images.load(ctx, &id);
                 }
 
-                self.s.update_room = true;
+                self.s.update_cache = true;
                 self.s.redraw = true;
                 Ok(true)
             }
@@ -1281,7 +1284,8 @@ impl Map {
                             for peer in self.peers.iter_mut() {
                                 peer.update_config(&self.config.room);
                             }
-                            self.s.update_room = true;
+
+                            self.s.update_cache = true;
                         }
 
                         self.s.redraw = changed;
@@ -1344,12 +1348,16 @@ impl Map {
                         true
                     }
                     RemoteUpdateBody::PeerLeave { peer_id } => {
-                        objects.retain(|id, _| id.peer_id != peer_id);
+                        // When a peer leaves our room, we remove all of their
+                        // local objects.
+                        objects.retain(|id, global| global || id.peer_id != peer_id);
                         order.retain(|this| this != peer_id);
                         true
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => {
                         self.peers.remove_peer(peer_id);
+                        // We remove all objects associated with a peer when
+                        // that peer disconnects.
                         objects.retain(|id, _| id.peer_id != peer_id);
                         order.retain(|this| this != peer_id);
                         true
@@ -1429,7 +1437,7 @@ impl Map {
                     }
                 };
 
-                self.s.update_room = true;
+                self.s.update_cache = true;
                 self.s.redraw = true;
                 Ok(update)
             }
@@ -2109,7 +2117,7 @@ impl Map {
             return Ok(());
         };
 
-        let t = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
         let w = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let w = t.to_world(w);
@@ -2212,7 +2220,7 @@ impl Map {
                     return Ok(());
                 };
 
-                let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+                let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
@@ -2233,7 +2241,7 @@ impl Map {
                     return Ok(());
                 };
 
-                let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+                let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
@@ -2257,7 +2265,7 @@ impl Map {
             return Ok(());
         };
 
-        let v = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let v = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = ev.client_x() as f64 - ax;
@@ -2334,9 +2342,9 @@ impl Map {
             1.0 / ZOOM_FACTOR
         };
 
-        let view_before = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let view_before = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
-        let view_after = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let view_after = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
         let c1 = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let c2 = view_after.to_canvas(view_before.to_world(c1));
@@ -2553,6 +2561,7 @@ impl Map {
         Ok(true)
     }
 
+    #[tracing::instrument(skip_all)]
     fn redraw(&mut self) -> Result<(), Error> {
         let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
             return Ok(());
@@ -2566,19 +2575,19 @@ impl Map {
             return Ok(());
         };
 
-        cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
-
         let order = self.order.borrow();
         let objects = self.objects.borrow();
 
-        let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+        let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
-        if let Some(img) = self.images.get(&self.room_view.background) {
-            render::draw_background(&cx, &view, &self.room_view.extent, img)?;
+        cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
+
+        if let Some(img) = self.images.get(&self.cache.background) {
+            render::draw_background(&cx, &view, &self.cache.extent, img)?;
         }
 
-        if self.room_view.show_grid {
-            render::draw_grid(&cx, &view, &self.room_view.extent, *self.config.zoom);
+        if self.cache.show_grid {
+            render::draw_grid(&cx, &view, &self.cache.extent, *self.config.zoom);
         }
 
         let selected = self.s.selected;

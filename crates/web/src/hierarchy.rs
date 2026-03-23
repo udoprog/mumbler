@@ -111,7 +111,7 @@ impl HierarchyRef {
     }
 
     pub(crate) fn remove(&mut self, object: &LocalObject) -> bool {
-        if object.is_room() {
+        if object.is_global() {
             return false;
         }
 
@@ -142,7 +142,7 @@ impl HierarchyRef {
 
     /// Insert an object into the hierarchy. Does nothing if the object has no sort key.
     pub(crate) fn insert(&mut self, object: &LocalObject) {
-        if object.is_room() {
+        if object.is_global() {
             return;
         }
 

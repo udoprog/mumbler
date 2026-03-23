@@ -46,6 +46,7 @@ impl Geometry<'_> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct LocalObject {
     pub(crate) move_target: Option<Vec3>,
     pub(crate) arrow_target: Option<Vec3>,
@@ -148,11 +149,14 @@ impl ObjectsRef {
     }
 
     #[inline]
-    pub(crate) fn retain<F>(&mut self, f: F)
+    pub(crate) fn retain<F>(&mut self, mut f: F)
     where
-        F: FnMut(&RemoteId, &mut LocalObject) -> bool,
+        F: FnMut(&RemoteId, bool) -> bool,
     {
-        self.values.retain(f);
+        self.values.retain(move |id, o| {
+            let global = o.is_global();
+            f(id, global)
+        });
     }
 
     #[inline]
@@ -236,6 +240,7 @@ impl FromIterator<LocalObject> for Objects {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
@@ -298,6 +303,7 @@ impl TokenObject {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
@@ -370,6 +376,7 @@ impl StaticObject {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct GroupObject {
     pub(crate) locked: State<bool>,
     pub(crate) sort: State<Vec<u8>>,
@@ -408,6 +415,7 @@ impl GroupObject {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct RoomObject {
     pub(crate) sort: State<Vec<u8>>,
     pub(crate) background: State<Id>,
@@ -451,6 +459,7 @@ impl RoomObject {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum ObjectKind {
     Token(TokenObject),
     Static(StaticObject),
@@ -458,6 +467,7 @@ pub(crate) enum ObjectKind {
     Room(RoomObject),
 }
 
+#[derive(Debug)]
 pub(crate) struct ObjectData {
     pub(crate) id: RemoteId,
     pub(crate) kind: ObjectKind,
@@ -507,7 +517,7 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn is_room(&self) -> bool {
+    pub(crate) fn is_global(&self) -> bool {
         matches!(self.kind, ObjectKind::Room(_))
     }
 

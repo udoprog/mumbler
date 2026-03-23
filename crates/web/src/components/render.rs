@@ -130,6 +130,7 @@ impl Canvas2 {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ViewTransform {
     pub(crate) scale: f64,
     center_x: f64,
