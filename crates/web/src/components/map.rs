@@ -348,6 +348,7 @@ pub(crate) struct Map {
     objects: Objects,
     open_help: bool,
     open_settings: Option<RemoteId>,
+    open_room_selector: bool,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
@@ -367,6 +368,8 @@ pub(crate) enum Msg {
     CloseSettings,
     OpenHelp,
     CloseHelp,
+    OpenRoomSelector,
+    CloseRoomSelector,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmDelete(RemoteId),
@@ -508,6 +511,7 @@ impl Component for Map {
             objects: Objects::default(),
             open_help: false,
             open_settings: None,
+            open_room_selector: false,
             order: Hierarchy::default(),
             pan_anchor: None,
             public_key: PublicKey::ZERO,
@@ -800,8 +804,25 @@ impl Component for Map {
                 }
             };
 
+            let room_selector = {
+                let current_room = *self.config.room;
+                let room_text = if current_room == StableId::ZERO {
+                    "No Room".to_string()
+                } else {
+                    format!("Room ({})", current_room.id)
+                };
+
+                html! {
+                    <button class="btn" title="Select room" onclick={ctx.link().callback(|_| Msg::OpenRoomSelector)}>
+                        <Icon name="home-modern" />
+                        <span>{room_text}</span>
+                    </button>
+                }
+            };
+
             html! {
                 <div class="control-group">
+                    {room_selector}
                     {mumble}
                     {hidden}
                     {local_hidden}
@@ -947,6 +968,23 @@ impl Component for Map {
 
                 if self.open_help {
                     <HelpModal onclose={ctx.link().callback(|_| Msg::CloseHelp)} />
+                }
+
+                if self.open_room_selector {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRoomSelector)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Rooms"}</h2>
+                                <button class="btn sm square danger" title="Close"
+                                    onclick={ctx.link().callback(|_| Msg::CloseRoomSelector)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                <Rooms ws={ws.clone()} />
+                            </div>
+                        </div>
+                    </div>
                 }
             </>
         }
@@ -1117,12 +1155,20 @@ impl Map {
                 self.open_help = false;
                 Ok(true)
             }
-            Msg::ToggleMumbleObject(id) => self.toggle_mumble_object(ctx, id),
-            Msg::ToggleLocked(id) => self.toggle_locked(ctx, id),
+            Msg::OpenRoomSelector => {
+                self.open_room_selector = true;
+                Ok(true)
+            }
+            Msg::CloseRoomSelector => {
+                self.open_room_selector = false;
+                Ok(true)
+            }
             Msg::ConfigResult(result) => {
                 result?;
                 Ok(false)
             }
+            Msg::ToggleMumbleObject(id) => self.toggle_mumble_object(ctx, id),
+            Msg::ToggleLocked(id) => self.toggle_locked(ctx, id),
             Msg::ToggleHidden(id) => self.toggle_hidden(ctx, id),
             Msg::ToggleLocalHidden(id) => self.toggle_local_hidden(ctx, id),
             Msg::ToggleExpanded(id) => self.toggle_expanded(ctx, id),
