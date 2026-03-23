@@ -256,7 +256,7 @@ async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<
     let (content_type, bytes, width, height) = task.await??;
 
     let id = backend
-        .insert_image(content_type, bytes, width, height)
+        .insert_image(content_type, bytes, width, height, request.role)
         .await?;
 
     Ok(id)
@@ -299,6 +299,7 @@ async fn get_object_settings(
         images.push(Image {
             id: image.id,
             content_type: image.content_type,
+            role: image.role,
             width: image.width,
             height: image.height,
         });

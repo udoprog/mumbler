@@ -1,4 +1,4 @@
-use api::{Id, Image};
+use api::{Id, Image, Role};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -35,6 +35,7 @@ pub(crate) struct Props {
     #[prop_or_default]
     pub(crate) crop_ratio: Option<f64>,
     pub(crate) input_id: AttrValue,
+    pub(crate) role: Role,
     pub(crate) onselect: Callback<Id>,
     pub(crate) onrefresh: Callback<()>,
     #[prop_or_default]
@@ -115,6 +116,7 @@ impl Component for ImageUpload {
                 <ImageGalleryModal
                     images={ctx.props().images.clone()}
                     selected={ctx.props().selected}
+                    default_role={ctx.props().role}
                     onselect={ctx.link().callback(Msg::SelectImage)}
                     ondelete={ctx.link().callback(Msg::DeleteImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
@@ -184,6 +186,7 @@ impl ImageUpload {
                         crop,
                         sizing: ctx.props().sizing,
                         size: ctx.props().size,
+                        role: ctx.props().role,
                     })
                     .on_packet(ctx.link().callback(Msg::Uploaded))
                     .send();

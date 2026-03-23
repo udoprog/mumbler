@@ -1109,6 +1109,7 @@ impl Map {
                 },
                 sizing: api::ImageSizing::Crop,
                 size: 512,
+                role: api::Role::TOKEN,
             })
             .on_packet(ctx.link().callback(Msg::DropImageUploaded))
             .send();

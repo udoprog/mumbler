@@ -155,10 +155,10 @@ impl Component for StaticSettings {
             <div id="content" class="row">
                 <div class="col-8 rows">
                     <section class="input-group">
-                        <label for="static-name">{"Name:"}</label>
+                        <label for="name">{"Name:"}</label>
 
                         <input
-                            id="static-name"
+                            id="name"
                             type="text"
                             placeholder="Enter name"
                             value={(*self.name).clone().unwrap_or_default()}
@@ -167,13 +167,13 @@ impl Component for StaticSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="static-color">
+                        <label for="color">
                             {"Color:"}
                             <span class="color-preview" style={format!("--color: {}", color.to_css_string())} />
                         </label>
 
                         <input
-                            id="static-color"
+                            id="color"
                             class="hidden"
                             type="color"
                             value={color.to_css_string()}
@@ -182,10 +182,10 @@ impl Component for StaticSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="static-width">{"Width:"}</label>
+                        <label for="width">{"Width:"}</label>
 
                         <input
-                            id="static-width"
+                            id="width"
                             type="number"
                             min="0.05"
                             max="50"
@@ -197,10 +197,10 @@ impl Component for StaticSettings {
 
                     if self.ratio.is_none() {
                         <section class="input-group">
-                            <label for="static-height">{"Height:"}</label>
+                            <label for="height">{"Height:"}</label>
 
                             <input
-                                id="static-height"
+                                id="height"
                                 type="number"
                                 min="0.05"
                                 max="50"
@@ -212,10 +212,10 @@ impl Component for StaticSettings {
                     }
 
                     <section class="input-group">
-                        <label for="static-fixed-ratio">{"Fixed Ratio:"}</label>
+                        <label for="fixed-ratio">{"Fixed Ratio:"}</label>
 
                         <input
-                            id="static-fixed-ratio"
+                            id="fixed-ratio"
                             type="checkbox"
                             checked={self.ratio.is_some()}
                             onchange={ctx.link().callback(Msg::FixedRatioChanged)}
@@ -231,7 +231,8 @@ impl Component for StaticSettings {
                         sizing={api::ImageSizing::Crop}
                         size={512}
                         crop_ratio={Some((*self.width / *self.height) as f64)}
-                        input_id="static-file"
+                        role={api::Role::STATIC}
+                        input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}
                         onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
                         onrescale={ctx.link().callback(Msg::Rescale)}

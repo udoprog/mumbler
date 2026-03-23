@@ -135,10 +135,10 @@ impl Component for TokenSettings {
             <div id="content" class="row">
                 <div class="col-8 rows">
                     <section class="input-group">
-                        <label for="token-name">{"Name:"}</label>
+                        <label for="name">{"Name:"}</label>
 
                         <input
-                            id="token-name"
+                            id="name"
                             type="text"
                             placeholder="Enter name"
                             value={(*self.name).clone().unwrap_or_default()}
@@ -147,13 +147,13 @@ impl Component for TokenSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="token-color">
+                        <label for="color">
                             {"Color:"}
                             <span class="color-preview" style={format!("--color: {}", color.to_css_string())} />
                         </label>
 
                         <input
-                            id="token-color"
+                            id="color"
                             class="hidden"
                             type="color"
                             value={color.to_css_string()}
@@ -162,10 +162,10 @@ impl Component for TokenSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="token-radius">{"Radius:"}</label>
+                        <label for="radius">{"Radius:"}</label>
 
                         <input
-                            id="token-radius"
+                            id="radius"
                             type="number"
                             min="0.05"
                             max="10"
@@ -176,10 +176,10 @@ impl Component for TokenSettings {
                     </section>
 
                     <section class="input-group">
-                        <label for="token-speed">{"Speed:"}</label>
+                        <label for="speed">{"Speed:"}</label>
 
                         <input
-                            id="token-speed"
+                            id="speed"
                             type="number"
                             min="0.5"
                             max="100"
@@ -195,14 +195,15 @@ impl Component for TokenSettings {
                         selected={*self.image}
                         sizing={api::ImageSizing::Square}
                         size={128}
-                        input_id="token-file"
+                        role={api::Role::TOKEN}
+                        input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}
                         onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
                     />
                 </div>
 
                 <div class="col-4 rows">
-                    <section class="token-preview">
+                    <section class="preview">
                         <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
                     </section>
                 </div>

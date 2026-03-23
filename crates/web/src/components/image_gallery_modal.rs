@@ -1,11 +1,19 @@
-use api::{Id, Image, PeerId};
+use api::{Id, Image, PeerId, Role};
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
 use super::Icon;
 
+static FILTER_BUTTONS: &[(&str, Role)] = &[
+    ("All", Role::NONE),
+    ("Token", Role::TOKEN),
+    ("Static", Role::STATIC),
+    ("Background", Role::BACKGROUND),
+];
+
 pub(crate) enum Msg {
     Select(Id),
+    SetFilter(Role),
     Close,
 }
 
@@ -22,16 +30,23 @@ pub(crate) struct Props {
     pub(crate) ondelete: Callback<Id>,
     /// Callback fired to close the modal.
     pub(crate) onclose: Callback<()>,
+    /// The role to pre-select in the filter. Defaults to Role::NONE (show all).
+    #[prop_or_default]
+    pub(crate) default_role: Role,
 }
 
-pub(crate) struct ImageGalleryModal;
+pub(crate) struct ImageGalleryModal {
+    filter: Role,
+}
 
 impl Component for ImageGalleryModal {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(_ctx: &Context<Self>) -> Self {
-        Self
+    fn create(ctx: &Context<Self>) -> Self {
+        Self {
+            filter: ctx.props().default_role,
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -41,6 +56,11 @@ impl Component for ImageGalleryModal {
                 ctx.props().onclose.emit(());
                 false
             }
+            Msg::SetFilter(role) => {
+                self.filter = role;
+                true
+            }
+
             Msg::Close => {
                 ctx.props().onclose.emit(());
                 false
@@ -49,28 +69,45 @@ impl Component for ImageGalleryModal {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let images = ctx.props().images.iter().map(|image| {
-            let id = image.id;
-            let on_select = ctx.link().callback(move |_| Msg::Select(id));
-
-            let on_delete = ctx.props().ondelete.reform(move |e: MouseEvent| {
-                e.stop_propagation();
-                id
-            });
-
-            let classes = classes!(
-                "token",
-                (ctx.props().selected == image.id).then_some("selected"),
-                "clickable"
-            );
+        let filter_buttons = FILTER_BUTTONS.into_iter().map(|&(label, role)| {
+            let inactive = self.filter != role;
+            let onclick = ctx.link().callback(move |_| Msg::SetFilter(role));
 
             html! {
-                <div class="image-entry">
-                    <img src={format!("/api/image/{}/{}", PeerId::ZERO, image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
-                    <button class="btn danger floating icon" onclick={on_delete} title="Remove image">{"ⓧ"}</button>
-                </div>
+                <button class={classes!("btn", "sm", inactive.then_some("inactive"))} {onclick}>
+                    {label}
+                </button>
             }
         });
+
+        let images: Vec<Html> = ctx
+            .props()
+            .images
+            .iter()
+            .filter(|image| self.filter == Role::NONE || image.role == self.filter)
+            .map(|image| {
+                let id = image.id;
+                let on_select = ctx.link().callback(move |_| Msg::Select(id));
+
+                let on_delete = ctx.props().ondelete.reform(move |e: MouseEvent| {
+                    e.stop_propagation();
+                    id
+                });
+
+                let classes = classes!(
+                    "token",
+                    (ctx.props().selected == image.id).then_some("selected"),
+                    "clickable"
+                );
+
+                html! {
+                    <div class="image-entry">
+                        <img src={format!("/api/image/{}/{}", PeerId::ZERO, image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
+                        <button class="btn danger floating icon" onclick={on_delete} title="Remove image">{"ⓧ"}</button>
+                    </div>
+                }
+            })
+            .collect();
 
         html! {
             <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::Close)}>
@@ -82,8 +119,12 @@ impl Component for ImageGalleryModal {
                             <Icon name="x-mark" />
                         </button>
                     </div>
-                    <div class="modal-body">
-                        if ctx.props().images.is_empty() {
+                    <div class="modal-body rows">
+                        <div class="control-group btn-group">
+                            {for filter_buttons}
+                        </div>
+
+                        if images.is_empty() {
                             <p class="hint">{"No images uploaded yet."}</p>
                         } else {
                             <div class="gallery">

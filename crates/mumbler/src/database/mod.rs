@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Key, Pan, PeerId, StableId, Transform, Type, Value, ValueKind,
-    ValueType, Vec3,
+    Color, ContentType, Extent, Id, Key, Pan, PeerId, Role, StableId, Transform, Type, Value,
+    ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
 use musli::alloc::Global;
@@ -84,6 +84,7 @@ pub(crate) struct Image {
     pub(crate) bytes: Vec<u8>,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) role: Role,
 }
 
 use crate::Paths;
@@ -189,8 +190,8 @@ impl Database {
         let inner = unsafe {
             Inner {
                 scratch: Vec::new(),
-                insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)")?.into_send()?,
-                select_images: c.prepare("SELECT id, content_type, data, width, height FROM images")?.into_send()?,
+                insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height, role) VALUES (?, ?, ?, ?, ?, ?)")?.into_send()?,
+                select_images: c.prepare("SELECT id, content_type, data, width, height, role FROM images")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 list_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
                 set_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
@@ -249,13 +250,14 @@ impl Database {
         data: Vec<u8>,
         width: u32,
         height: u32,
+        role: Role,
     ) -> Result<Id> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
             inner
                 .insert_image
-                .execute((id, content_type, data, width, height))?;
+                .execute((id, content_type, data, width, height, role))?;
             Ok(id)
         });
 

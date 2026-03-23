@@ -21,18 +21,30 @@ macro_rules! __ids {
             }
         }
 
-
         impl $ty {
+            $vis const NONE: Self = Self::new(0);
+
             $(
                 $(#[doc = $field_doc])*
                 $vis const $name: Self = Self::new($value);
             )*
+
+            $vis const ALL: &'static [$ty] = &[$($ty::$name),*];
+        }
+
+        impl ::core::default::Default for $ty {
+            #[inline]
+            fn default() -> Self {
+                Self::NONE
+            }
         }
 
         impl ::core::fmt::Display for $ty {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                #[allow(unreachable_patterns)]
                 match self.raw {
                     $($value => write!(f, stringify!($name))),*,
+                    0 => write!(f, "NONE"),
                     _ => write!(f, "UNKNOWN({})", self.raw),
                 }
             }
@@ -40,8 +52,10 @@ macro_rules! __ids {
 
         impl ::core::fmt::Debug for $ty {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                #[allow(unreachable_patterns)]
                 match self.raw {
                     $($value => write!(f, stringify!($name))),*,
+                    0 => write!(f, "NONE"),
                     _ => write!(f, "UNKNOWN({})", self.raw),
                 }
             }

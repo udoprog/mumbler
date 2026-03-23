@@ -256,6 +256,8 @@ pub struct UploadImageRequest {
     pub sizing: ImageSizing,
     /// The requested maximum size.
     pub size: u32,
+    /// The role of the image being uploaded.
+    pub role: Role,
 }
 
 /// A square crop region expressed in the source image's natural pixel space.
@@ -665,6 +667,8 @@ pub struct Image {
     pub id: Id,
     /// The content type of the image.
     pub content_type: ContentType,
+    /// The role of the image.
+    pub role: Role,
     /// The width of the image in pixels.
     pub width: u32,
     /// The height of the image in pixels.

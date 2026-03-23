@@ -9,8 +9,8 @@ use anyhow::Result;
 use anyhow::bail;
 use api::RemoteId;
 use api::{
-    ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, StableId, Transform, Type,
-    UpdateBody, Value,
+    ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Role, StableId, Transform,
+    Type, UpdateBody, Value,
 };
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -71,6 +71,8 @@ pub(crate) struct LocalImage {
     pub width: u32,
     /// The height of the image.
     pub height: u32,
+    /// The role of the image.
+    pub role: Role,
 }
 
 #[derive(Default)]
@@ -273,6 +275,7 @@ impl Backend {
                     bytes: image.bytes,
                     width: image.width,
                     height: image.height,
+                    role: image.role,
                 },
             );
 
@@ -577,6 +580,7 @@ impl Backend {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
+        role: Role,
     ) -> Result<Id> {
         let id = self.new_id().await?;
 
@@ -586,6 +590,7 @@ impl Backend {
             bytes,
             width,
             height,
+            role,
         };
 
         self.db()
@@ -595,6 +600,7 @@ impl Backend {
                 image.bytes.clone(),
                 image.width,
                 image.height,
+                image.role,
             )
             .await?;
 

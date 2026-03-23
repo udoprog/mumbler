@@ -99,10 +99,10 @@ impl Component for RoomSettings {
             <>
             <div id="content" class="rows">
                 <section class="input-group">
-                    <label for="room-name">{"Name:"}</label>
+                    <label for="name">{"Name:"}</label>
 
                     <input
-                        id="room-name"
+                        id="name"
                         type="text"
                         placeholder="Enter name"
                         value={(*self.name).clone().unwrap_or_default()}
@@ -116,7 +116,8 @@ impl Component for RoomSettings {
                     selected={*self.background}
                     sizing={api::ImageSizing::Crop}
                     size={1024}
-                    input_id="room-background-file"
+                    role={api::Role::BACKGROUND}
+                    input_id="background"
                     onselect={ctx.link().callback(Msg::ImageSelected)}
                     onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
                 />
