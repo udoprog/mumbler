@@ -415,7 +415,7 @@ struct State {
     /// Peers are added here initially when they connect, or when their buffers
     /// are written to.
     poll: BTreeSet<PeerId>,
-    /// Available client contexts, keyed by RoomId (owner PeerId + name).
+    /// Available rooms.
     rooms: HashMap<StableId, ServerRoom>,
     /// Peers that are currently connected.
     peers: Peers,
@@ -423,9 +423,12 @@ struct State {
 
 impl State {
     fn new() -> Self {
+        let mut rooms = HashMap::new();
+        rooms.insert(StableId::ZERO, ServerRoom::default());
+
         Self {
             poll: BTreeSet::new(),
-            rooms: HashMap::new(),
+            rooms,
             peers: Peers::new(),
         }
     }
@@ -509,12 +512,8 @@ impl State {
 
                     self.connected(this);
 
-                    let room = this.room();
-
-                    if !room.is_zero() {
-                        let room = *room;
-                        self.join_room(this, &room);
-                    }
+                    let room = *this.room();
+                    self.join_room(this, &room);
                 }
                 Event::PeerUpdate if !this.public_key.is_zero() => {
                     let body = body.decode::<PeerUpdateBody>()?;
@@ -529,13 +528,11 @@ impl State {
 
                     match body.key {
                         Key::ROOM => {
-                            if let Some(room) = old.as_stable_id().as_non_zero() {
-                                self.leave_room(this, room, this.peer_id);
-                            }
+                            let old_room = *old.as_stable_id();
+                            self.leave_room(this, &old_room, this.peer_id);
 
-                            if let Some(room) = body.value.as_stable_id().as_non_zero() {
-                                self.join_room(this, room);
-                            }
+                            let new_room = *body.value.as_stable_id();
+                            self.join_room(this, &new_room);
                         }
                         _ => {}
                     }

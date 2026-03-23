@@ -148,6 +148,16 @@ impl Component for Rooms {
             .count()
             + usize::from(self.active_room == StableId::ZERO);
 
+        let is_no_room_active = self.active_room == StableId::ZERO;
+
+        let no_room_class = classes! {
+            "list-content",
+            is_no_room_active.then_some("selected"),
+        };
+
+        let on_no_room_click =
+            (!is_no_room_active).then(|| ctx.link().callback(|_| Msg::Disconnect));
+
         html! {
             <div id="content" class="rows">
                 <div class="control-group">
@@ -161,18 +171,9 @@ impl Component for Rooms {
                 </div>
 
                 <section class="list" key="rooms-list">
-                    <div class="list-content" key="no-room">
+                    <div class={no_room_class} key="no-room" onclick={on_no_room_click}>
                         <Icon name="question-mark-circle" invert={true} />
                         <span class="list-label">{COMMON_ROOM_NAME}</span>
-
-                        if self.active_room != StableId::ZERO {
-                            <button class="btn square list-action"
-                                title={format!("Join {}", COMMON_ROOM_NAME)}
-                                onclick={ctx.link().callback(|_| Msg::Disconnect)}>
-                                <Icon name="link" />
-                            </button>
-                        }
-
                         <span class="bullet" title="Players not in a room">{no_room_count}</span>
                     </div>
 
@@ -192,7 +193,10 @@ impl Rooms {
             let id = room.id.id;
             let name = room.name.clone();
             let onrequestdelete = ctx.props().onrequestdelete.clone();
-            let onclick = Callback::from(move |_| onrequestdelete.emit((id, name.clone())));
+            let onclick = Callback::from(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                onrequestdelete.emit((id, name.clone()));
+            });
 
             html! {
                 <button class="btn square list-action" {onclick} title="Remove room">
@@ -200,28 +204,6 @@ impl Rooms {
                 </button>
             }
         });
-
-        let on_connect = if is_active {
-            ctx.link().callback(move |_| Msg::Disconnect)
-        } else {
-            let room = room.id;
-            ctx.link().callback(move |_| Msg::Connect(room))
-        };
-
-        let icon = if is_active { "link-slash" } else { "link" };
-        let class = classes! {
-            "btn",
-            "square",
-            "list-action",
-            is_active.then_some("active"),
-            is_active.then_some("primary"),
-        };
-
-        let connect_button = html! {
-            <button {class} onclick={on_connect}>
-                <Icon name={icon} />
-            </button>
-        };
 
         let room_icon = if is_local { "home" } else { "home-modern" };
 
@@ -244,7 +226,10 @@ impl Rooms {
         let settings_button = is_local.then(|| {
             let id = room.id.id;
             let onopensettings = ctx.props().onopensettings.clone();
-            let onclick = Callback::from(move |_| onopensettings.emit(id));
+            let onclick = Callback::from(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                onopensettings.emit(id);
+            });
 
             html! {
                 <button class="btn square list-action" {onclick} title="Room settings">
@@ -253,13 +238,24 @@ impl Rooms {
             }
         });
 
+        let on_row_click = if is_active {
+            ctx.link().callback(move |_| Msg::Disconnect)
+        } else {
+            let room_id = room.id;
+            ctx.link().callback(move |_| Msg::Connect(room_id))
+        };
+
+        let row_class = classes! {
+            "list-content",
+            is_active.then_some("selected"),
+        };
+
         html! {
-            <div class="list-content" key={room.id}>
+            <div class={row_class} key={room.id} onclick={on_row_click}>
                 <Icon name={room_icon} invert={true} title={title.clone()} />
                 <span class="list-label" title={title.clone()}>{&room.name}</span>
                 {settings_button}
                 {delete_button}
-                {connect_button}
                 <span class="bullet" title="Players in this room">{peer_count}</span>
             </div>
         }

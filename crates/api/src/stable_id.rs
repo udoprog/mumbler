@@ -30,16 +30,6 @@ impl StableId {
     pub fn new(public_key: PublicKey, id: Id) -> Self {
         Self { public_key, id }
     }
-
-    /// Check if the remote identifier is zero.
-    pub fn is_zero(&self) -> bool {
-        self.public_key.is_zero() && self.id.is_zero()
-    }
-
-    /// Return the stable identifier if it is non-zero.
-    pub fn as_non_zero(&self) -> Option<&Self> {
-        if self.is_zero() { None } else { Some(self) }
-    }
 }
 
 impl fmt::Debug for StableId {
