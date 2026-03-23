@@ -303,6 +303,13 @@ impl From<String> for Value {
     }
 }
 
+impl From<&[u8]> for Value {
+    #[inline]
+    fn from(value: &[u8]) -> Self {
+        Self::from(value.to_vec())
+    }
+}
+
 impl From<Vec<u8>> for Value {
     #[inline]
     fn from(value: Vec<u8>) -> Self {

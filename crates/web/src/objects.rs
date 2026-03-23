@@ -408,10 +408,38 @@ impl GroupObject {
     }
 }
 
+pub(crate) struct RoomObject {
+    pub(crate) sort: State<Vec<u8>>,
+}
+
+impl RoomObject {
+    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+        Self {
+            sort: State::new(
+                o.props
+                    .get(Key::SORT)
+                    .as_bytes()
+                    .unwrap_or_default()
+                    .to_vec(),
+            ),
+        }
+    }
+
+    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+        match key {
+            Key::SORT => self
+                .sort
+                .update(value.as_bytes().unwrap_or_default().to_vec()),
+            _ => false,
+        }
+    }
+}
+
 pub(crate) enum ObjectKind {
     Token(TokenObject),
     Static(StaticObject),
     Group(GroupObject),
+    Room(RoomObject),
 }
 
 pub(crate) struct ObjectData {
@@ -430,6 +458,7 @@ impl ObjectData {
             Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
             Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
             Type::GROUP => ObjectKind::Group(GroupObject::from_remote(o)),
+            Type::ROOM => ObjectKind::Room(RoomObject::from_remote(o)),
             _ => return None,
         };
 
@@ -456,6 +485,7 @@ impl ObjectData {
                 ObjectKind::Token(this) => this.update(key, value),
                 ObjectKind::Static(this) => this.update(key, value),
                 ObjectKind::Group(this) => this.update(key, value),
+                ObjectKind::Room(this) => this.update(key, value),
             },
         }
     }
@@ -486,6 +516,7 @@ impl ObjectData {
             ObjectKind::Token(..) => "user",
             ObjectKind::Static(..) => "squares-2x2",
             ObjectKind::Group(..) => "folder",
+            ObjectKind::Room(..) => "home",
         }
     }
 
@@ -495,6 +526,7 @@ impl ObjectData {
             ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),
             ObjectKind::Group(this) => Some((&mut self.group, &mut this.sort)),
+            ObjectKind::Room(this) => Some((&mut self.group, &mut this.sort)),
         }
     }
 
@@ -504,6 +536,7 @@ impl ObjectData {
             ObjectKind::Token(this) => &this.sort,
             ObjectKind::Static(this) => &this.sort,
             ObjectKind::Group(this) => &this.sort,
+            ObjectKind::Room(this) => &this.sort,
         }
     }
 
@@ -632,6 +665,7 @@ impl ObjectData {
             ObjectKind::Token(this) => Some(&mut this.locked),
             ObjectKind::Static(this) => Some(&mut this.locked),
             ObjectKind::Group(this) => Some(&mut this.locked),
+            ObjectKind::Room(_) => None,
         }
     }
 
@@ -641,6 +675,7 @@ impl ObjectData {
             ObjectKind::Token(this) => *this.locked,
             ObjectKind::Static(this) => *this.locked,
             ObjectKind::Group(this) => *this.locked,
+            ObjectKind::Room(_) => false,
         }
     }
 }

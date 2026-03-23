@@ -107,8 +107,11 @@ impl HierarchyRef {
     }
 
     /// Remove the given id from all groups.
-    pub(crate) fn remove(&mut self, group: RemoteId, sort: Vec<u8>, id: RemoteId) {
-        let key = Key { sort, id };
+    pub(crate) fn remove(&mut self, group: RemoteId, sort: &[u8], id: RemoteId) {
+        let key = Key {
+            sort: sort.to_vec(),
+            id,
+        };
 
         if let Some(values) = self.children.get_mut(&group) {
             values.remove(&key);
@@ -116,12 +119,42 @@ impl HierarchyRef {
         }
     }
 
-    /// Insert a child into the given group with the given sort key.
-    pub(crate) fn insert(&mut self, group: RemoteId, sort: Vec<u8>, id: RemoteId) {
-        let group = as_group(group);
-        let key = Key { sort, id };
+    /// Insert an object into the hierarchy. Does nothing if the object has no sort key.
+    pub(crate) fn insert(&mut self, object: &LocalObject) {
+        if object.sort().is_empty() {
+            return;
+        }
+
+        let group = as_group(*object.group);
+        let key = Key {
+            sort: object.sort().to_vec(),
+            id: object.id,
+        };
 
         if self.children.entry(group).or_default().insert(key) {
+            self.len = self.len.saturating_add(1);
+        }
+    }
+
+    /// Move an object from one position to another.
+    pub(crate) fn reorder(
+        &mut self,
+        old_group: RemoteId,
+        old_sort: &[u8],
+        new_group: RemoteId,
+        new_sort: &[u8],
+        id: RemoteId,
+    ) {
+        self.remove(old_group, old_sort, id);
+
+        let new_group = as_group(new_group);
+
+        let key = Key {
+            sort: new_sort.to_vec(),
+            id,
+        };
+
+        if self.children.entry(new_group).or_default().insert(key) {
             self.len = self.len.saturating_add(1);
         }
     }
@@ -129,16 +162,7 @@ impl HierarchyRef {
     /// Extend the hierarchy with the given objects.
     pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
         for object in objects {
-            let group = as_group(*object.group);
-
-            let key = Key {
-                id: object.id,
-                sort: object.sort().to_vec(),
-            };
-
-            if self.children.entry(group).or_default().insert(key) {
-                self.len = self.len.saturating_add(1);
-            }
+            self.insert(object);
         }
     }
 

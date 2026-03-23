@@ -11,7 +11,7 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::Icon;
+use super::{COMMON_ROOM_NAME, Icon};
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -201,7 +201,7 @@ impl Component for Rooms {
                     if no_room_count > 0 {
                         <div class="list-content" key="no-room">
                             <Icon name="question-mark-circle" invert={true} />
-                            <span class="list-label">{"Common Room"}</span>
+                            <span class="list-label">{COMMON_ROOM_NAME}</span>
                             if self.active_room != StableId::ZERO {
                                 <button class="btn square list-action"
                                     title="Join Common Room"

@@ -29,7 +29,10 @@ use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, ViewTransform};
-use super::{GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings, TokenSettings};
+use super::{
+    COMMON_ROOM_NAME, GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings,
+    TokenSettings,
+};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -817,8 +820,24 @@ impl Component for Map {
             }
         };
 
+        let current_room_name = if *self.config.room == StableId::ZERO {
+            String::from(COMMON_ROOM_NAME)
+        } else {
+            let objects = self.objects.borrow();
+            objects
+                .get(RemoteId::local(self.config.room.id))
+                .and_then(|o| o.name())
+                .unwrap_or("Unknown Room")
+                .to_owned()
+        };
+
         let players = html! {
             <>
+                <div class="control-group">
+                    <Icon name="link" invert={true} />
+                    <span>{current_room_name}</span>
+                </div>
+
                 <div class="control-group">
                     <Icon name="remote" invert={true} />
                     <span>{"Players"}</span>
@@ -1167,7 +1186,7 @@ impl Map {
                             continue;
                         };
 
-                        order.insert(*object.group, object.sort().to_vec(), object.id);
+                        order.insert(&object);
                         objects.insert(object.id, object);
                     }
                 }
@@ -1233,7 +1252,7 @@ impl Map {
                                 continue;
                             };
 
-                            order.insert(*object.group, object.sort().to_vec(), object.id);
+                            order.insert(&object);
                             objects.insert(object.id, object);
                         }
 
@@ -1249,7 +1268,7 @@ impl Map {
                                 continue;
                             };
 
-                            order.insert(*object.group, object.sort().to_vec(), object.id);
+                            order.insert(&object);
                             objects.insert(object.id, object);
                         }
 
@@ -1288,13 +1307,13 @@ impl Map {
                             break 'done false;
                         };
 
-                        order.insert(*object.group, object.sort().to_vec(), object.id);
+                        order.insert(&object);
                         objects.insert(object.id, object);
                         true
                     }
                     RemoteUpdateBody::ObjectRemoved { id } => {
                         if let Some(o) = objects.remove(id) {
-                            order.remove(*o.group, o.sort().to_vec(), o.id);
+                            order.remove(*o.group, o.sort(), o.id);
                         }
 
                         if self.s.selected == id {
@@ -1328,8 +1347,7 @@ impl Map {
                                     break 'done false;
                                 };
 
-                                order.remove(*o.group, old, o.id);
-                                order.insert(*o.group, o.sort().to_vec(), o.id);
+                                order.reorder(*o.group, &old, *o.group, o.sort(), o.id);
                                 true
                             }
                             _ => false,
@@ -2334,23 +2352,26 @@ impl Map {
             return Ok(true);
         };
 
-        let old_group = **o_group;
-        let old_sort = o_sort.to_vec();
+        let old_group = o_group.replace(new_group);
+        let old_sort = o_sort.replace(new_sort);
 
-        let group_changed = o_group.update(new_group);
-        let sort_changed = o_sort.update(new_sort.clone());
-
-        if group_changed {
-            self._set_group = self::object_update(ctx, id, Key::GROUP, Value::from(new_group.id));
+        if old_group.is_some() {
+            self._set_group = self::object_update(ctx, id, Key::GROUP, Value::from(o_group.id));
         }
 
-        if sort_changed {
-            self._set_sort = self::object_update(ctx, id, Key::SORT, Value::from(new_sort.clone()));
+        if old_sort.is_some() {
+            self._set_sort = self::object_update(ctx, id, Key::SORT, Value::from(&o_sort[..]));
         }
 
-        if sort_changed || group_changed {
-            order.remove(old_group, old_sort, id);
-            order.insert(new_group, new_sort, id);
+        if old_sort.is_some() || old_group.is_some() {
+            let old_group = old_group.unwrap_or(**o_group);
+
+            let old_sort = match &old_sort {
+                Some(old) => old,
+                None => &o_sort[..],
+            };
+
+            order.reorder(old_group, old_sort, **o_group, &o_sort[..], id);
         }
 
         Ok(true)
