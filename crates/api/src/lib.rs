@@ -97,6 +97,8 @@ crate::macros::keys! {
         PEER_SECRET: String = 29;
         /// The name of the room to connect to on the remote server.
         ROOM: StableId = 30;
+        /// The background image for a room.
+        ROOM_BACKGROUND: Id = 31;
     }
 }
 

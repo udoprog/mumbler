@@ -718,3 +718,11 @@ canvas#map {
     text-align: center;
     margin-left: auto;
 }
+
+.background-preview {
+    img {
+        width: 100%;
+        border-radius: $border-radius;
+        display: block;
+    }
+}

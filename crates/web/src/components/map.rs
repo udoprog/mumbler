@@ -2496,6 +2496,17 @@ impl Map {
 
         let view = ViewTransform::new(&canvas, &self.config);
 
+        if *self.config.room != StableId::ZERO {
+            let room_id = self.peers.to_remote_id(&self.config.room);
+            let objects = self.objects.borrow();
+            if let Some(ObjectKind::Room(room_obj)) = objects.get(room_id).map(|o| &o.kind) {
+                let bg_id = RemoteId::new(room_id.peer_id, *room_obj.background);
+                if let Some(img) = self.images.get(&bg_id) {
+                    render::draw_background(&cx, &view, &self.config.extent, img)?;
+                }
+            }
+        }
+
         render::draw_grid(&cx, &view, &self.config.extent, *self.config.zoom);
 
         let selected = self.s.selected;

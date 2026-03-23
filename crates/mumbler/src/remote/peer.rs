@@ -21,7 +21,7 @@ use super::api::{
 };
 use super::{Buf, Client, Scratch, VERSION};
 
-const MAX_MESSAGE: usize = 1024 * 1024;
+const MAX_MESSAGE: usize = 1024 * 1024 * 10;
 
 enum State {
     Idle,

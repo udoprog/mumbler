@@ -410,6 +410,7 @@ impl GroupObject {
 
 pub(crate) struct RoomObject {
     pub(crate) sort: State<Vec<u8>>,
+    pub(crate) background: State<Id>,
 }
 
 impl RoomObject {
@@ -422,6 +423,7 @@ impl RoomObject {
                     .unwrap_or_default()
                     .to_vec(),
             ),
+            background: State::new(o.props.get(Key::ROOM_BACKGROUND).as_id()),
         }
     }
 
@@ -430,6 +432,7 @@ impl RoomObject {
             Key::SORT => self
                 .sort
                 .update(value.as_bytes().unwrap_or_default().to_vec()),
+            Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
             _ => false,
         }
     }

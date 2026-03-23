@@ -181,6 +181,35 @@ impl ViewTransform {
     }
 }
 
+pub(crate) fn draw_background(
+    cx: &CanvasRenderingContext2d,
+    view: &ViewTransform,
+    extent: &api::Extent,
+    img: &HtmlImageElement,
+) -> Result<(), Error> {
+    let top_left = view.to_canvas(Vec3::new(extent.x.start, 0.0, extent.y.end));
+    let bottom_right = view.to_canvas(Vec3::new(extent.x.end, 0.0, extent.y.start));
+
+    let dest_w = bottom_right.x - top_left.x;
+    let dest_h = bottom_right.y - top_left.y;
+
+    let img_w = img.natural_width() as f64;
+    let img_h = img.natural_height() as f64;
+
+    if img_w == 0.0 || img_h == 0.0 {
+        return Ok(());
+    }
+
+    let scale = (dest_w / img_w).min(dest_h / img_h);
+    let draw_w = img_w * scale;
+    let draw_h = img_h * scale;
+    let draw_x = top_left.x + (dest_w - draw_w) / 2.0;
+    let draw_y = top_left.y + (dest_h - draw_h) / 2.0;
+
+    cx.draw_image_with_html_image_element_and_dw_and_dh(img, draw_x, draw_y, draw_w, draw_h)?;
+    Ok(())
+}
+
 pub(crate) fn draw_facing_arc(
     cx: &CanvasRenderingContext2d,
     x: f64,
