@@ -64,6 +64,13 @@ h6 {
     overflow-x: auto;
 }
 
+.icon-group {
+    font-size: 0.8em;
+    display: flex;
+    align-items: center;
+    gap: $control-gap;
+}
+
 .control-group {
     background-color: var(--control-color);
     border: 1px solid var(--border-color);

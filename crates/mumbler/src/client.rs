@@ -4,7 +4,7 @@ use core::time::Duration;
 use std::collections::HashSet;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, Properties, RemoteId, RemoteObject, RemoteUpdateBody, Value};
+use api::{Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
 use async_fuse::Fuse;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
@@ -100,10 +100,12 @@ async fn handle_peer(
                 state.peers.insert(body.peer_id, peer);
 
                 b.broadcast(RemoteUpdateBody::PeerConnected {
-                    peer_id: body.peer_id,
-                    public_key: body.public_key,
-                    objects: body.objects,
-                    props: body.props.clone(),
+                    peer: RemotePeer {
+                        peer_id: body.peer_id,
+                        public_key: body.public_key,
+                        objects: body.objects,
+                        props: body.props.clone(),
+                    },
                 });
             }
             Event::PeerJoin => {

@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Key, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody, StableId, UpdateBody,
-    Value, Vec3,
+    Color, Extent, Key, Pan, PeerId, RemoteId, RemoteUpdateBody, StableId, UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -363,7 +362,6 @@ pub(crate) struct Map {
     transform_requests: HashMap<RemoteId, ws::Request>,
     update_world: bool,
     look_ats: Vec<(Vec3, Color)>,
-    public_key: PublicKey,
     s: Inner,
 }
 
@@ -517,7 +515,6 @@ impl Component for Map {
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
-            public_key: PublicKey::ZERO,
             peers: Peers::default(),
             s: Inner::default(),
             state,
@@ -663,6 +660,19 @@ impl Component for Map {
                     </button>
                 </div>
             }
+        };
+
+        let current_room_name = if *self.config.room == StableId::ZERO {
+            String::from(COMMON_ROOM_NAME)
+        } else {
+            let remote_id = self.peers.to_remote_id(&self.config.room);
+            let objects = self.objects.borrow();
+
+            objects
+                .get(remote_id)
+                .and_then(|o| o.name())
+                .unwrap_or("Unknown Room")
+                .to_owned()
         };
 
         let toolbar = {
@@ -813,6 +823,10 @@ impl Component for Map {
                     {hidden}
                     {local_hidden}
                     {locked}
+                    <section class="icon-group">
+                        <Icon name="link" invert={true} />
+                        <span>{current_room_name}</span>
+                    </section>
                     <div class="fill"></div>
                     {follow}
                     {help}
@@ -820,24 +834,8 @@ impl Component for Map {
             }
         };
 
-        let current_room_name = if *self.config.room == StableId::ZERO {
-            String::from(COMMON_ROOM_NAME)
-        } else {
-            let objects = self.objects.borrow();
-            objects
-                .get(RemoteId::local(self.config.room.id))
-                .and_then(|o| o.name())
-                .unwrap_or("Unknown Room")
-                .to_owned()
-        };
-
         let players = html! {
             <>
-                <div class="control-group">
-                    <Icon name="link" invert={true} />
-                    <span>{current_room_name}</span>
-                </div>
-
                 <div class="control-group">
                     <Icon name="remote" invert={true} />
                     <span>{"Players"}</span>
@@ -1162,13 +1160,13 @@ impl Map {
 
                 tracing::debug!(?body, "Initialize");
 
-                self.public_key = body.public_key;
+                self.peers.public_key = body.public_key;
                 self.config = Config::from_config(body.props);
 
                 self.objects = body
                     .objects
                     .iter()
-                    .filter_map(|object| LocalObject::from_remote(PeerId::ZERO, object))
+                    .filter_map(|object| LocalObject::new(PeerId::ZERO, object))
                     .collect();
 
                 let mut order = self.order.borrow_mut();
@@ -1178,17 +1176,17 @@ impl Map {
 
                 self.peers.clear();
 
-                for p in body.peers {
-                    self.peers.create(p.peer_id, p.props, &self.config.room);
-
-                    for object in p.objects {
-                        let Some(object) = LocalObject::from_remote(p.peer_id, &object) else {
+                for mut peer in body.peers {
+                    for object in peer.objects.drain(..) {
+                        let Some(object) = LocalObject::new(peer.peer_id, &object) else {
                             continue;
                         };
 
                         order.insert(&object);
-                        objects.insert(object.id, object);
+                        objects.insert(object);
                     }
+
+                    self.peers.insert(peer, &self.config.room);
                 }
 
                 self.images.clear();
@@ -1218,7 +1216,7 @@ impl Map {
                         Ok(changed)
                     }
                     UpdateBody::PublicKey { public_key } => {
-                        self.public_key = public_key;
+                        self.peers.public_key = public_key;
                         Ok(true)
                     }
                 }
@@ -1239,23 +1237,17 @@ impl Map {
                         order.retain(|peer_id| peer_id == PeerId::ZERO);
                         true
                     }
-                    RemoteUpdateBody::PeerConnected {
-                        peer_id,
-                        objects: objs,
-                        props,
-                        ..
-                    } => {
-                        self.peers.create(peer_id, props, &self.config.room);
-
-                        for object in objs {
-                            let Some(object) = LocalObject::from_remote(peer_id, &object) else {
+                    RemoteUpdateBody::PeerConnected { mut peer } => {
+                        for object in peer.objects.drain(..) {
+                            let Some(object) = LocalObject::new(peer.peer_id, &object) else {
                                 continue;
                             };
 
                             order.insert(&object);
-                            objects.insert(object.id, object);
+                            objects.insert(object);
                         }
 
+                        self.peers.insert(peer, &self.config.room);
                         true
                     }
                     RemoteUpdateBody::PeerJoin {
@@ -1264,12 +1256,12 @@ impl Map {
                         images,
                     } => {
                         for object in objs {
-                            let Some(object) = LocalObject::from_remote(peer_id, &object) else {
+                            let Some(object) = LocalObject::new(peer_id, &object) else {
                                 continue;
                             };
 
                             order.insert(&object);
-                            objects.insert(object.id, object);
+                            objects.insert(object);
                         }
 
                         for id in images {
@@ -1303,17 +1295,17 @@ impl Map {
                         true
                     }
                     RemoteUpdateBody::ObjectCreated { id, object } => 'done: {
-                        let Some(object) = LocalObject::from_remote(id.peer_id, &object) else {
+                        let Some(object) = LocalObject::new(id.peer_id, &object) else {
                             break 'done false;
                         };
 
                         order.insert(&object);
-                        objects.insert(object.id, object);
+                        objects.insert(object);
                         true
                     }
                     RemoteUpdateBody::ObjectRemoved { id } => {
                         if let Some(o) = objects.remove(id) {
-                            order.remove(*o.group, o.sort(), o.id);
+                            order.remove(&o);
                         }
 
                         if self.s.selected == id {

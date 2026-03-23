@@ -53,9 +53,9 @@ pub(crate) struct LocalObject {
 }
 
 impl LocalObject {
-    pub(crate) fn from_remote(peer_id: PeerId, remote: &RemoteObject) -> Option<Self> {
+    pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
         Some(Self {
-            data: ObjectData::new(peer_id, remote)?,
+            data: ObjectData::new(peer_id, o)?,
             move_target: None,
             arrow_target: None,
         })
@@ -161,8 +161,8 @@ impl ObjectsRef {
     }
 
     #[inline]
-    pub(crate) fn insert(&mut self, id: RemoteId, object: LocalObject) -> Option<LocalObject> {
-        self.values.insert(id, object)
+    pub(crate) fn insert(&mut self, object: LocalObject) -> Option<LocalObject> {
+        self.values.insert(object.id, object)
     }
 
     #[inline]
@@ -488,6 +488,11 @@ impl ObjectData {
                 ObjectKind::Room(this) => this.update(key, value),
             },
         }
+    }
+
+    #[inline]
+    pub(crate) fn is_room(&self) -> bool {
+        matches!(self.kind, ObjectKind::Room(_))
     }
 
     #[inline]

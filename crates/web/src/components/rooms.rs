@@ -1,7 +1,6 @@
 use core::cmp::Ordering;
-use std::collections::HashMap;
 
-use api::{Id, Key, PeerId, PublicKey, RemoteId, StableId, Type, UpdateBody, Value};
+use api::{Id, Key, PeerId, StableId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -9,7 +8,7 @@ use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
-use crate::state::State;
+use crate::peers::Peers;
 
 use super::{COMMON_ROOM_NAME, Icon};
 
@@ -36,38 +35,6 @@ pub(crate) struct Props {
 struct Room {
     id: StableId,
     name: String,
-}
-
-struct Peer {
-    public_key: PublicKey,
-    room: State<StableId>,
-    name: State<String>,
-}
-
-impl Peer {
-    fn new(public_key: PublicKey, props: &api::Properties) -> Self {
-        Self {
-            public_key,
-            room: State::new(*props.get(Key::ROOM).as_stable_id()),
-            name: State::new(
-                props
-                    .get(Key::PEER_NAME)
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-        }
-    }
-
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::ROOM => self.room.update(*value.as_stable_id()),
-            Key::PEER_NAME => self
-                .name
-                .update(value.as_str().unwrap_or_default().to_owned()),
-            _ => false,
-        }
-    }
 }
 
 impl Room {
@@ -106,10 +73,8 @@ impl Room {
 
 pub(crate) struct Rooms {
     state: ws::State,
-    peers: HashMap<PeerId, Peer>,
-    public_key_to_peer: HashMap<PublicKey, PeerId>,
+    peers: Peers,
     rooms: Vec<Room>,
-    public_key: PublicKey,
     active_room: StableId,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
@@ -148,10 +113,8 @@ impl Component for Rooms {
 
         let mut this = Self {
             state,
-            peers: HashMap::new(),
-            public_key_to_peer: HashMap::new(),
+            peers: Peers::default(),
             rooms: Vec::new(),
-            public_key: PublicKey::ZERO,
             active_room: StableId::ZERO,
             log,
             _log_handle,
@@ -180,8 +143,8 @@ impl Component for Rooms {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let no_room_count = self
             .peers
-            .values()
-            .filter(|p| *p.room == StableId::ZERO)
+            .iter()
+            .filter(|p| *p.props.get(Key::ROOM).as_stable_id() == StableId::ZERO)
             .count()
             + usize::from(self.active_room == StableId::ZERO);
 
@@ -198,20 +161,20 @@ impl Component for Rooms {
                 </div>
 
                 <section class="list" key="rooms-list">
-                    if no_room_count > 0 {
-                        <div class="list-content" key="no-room">
-                            <Icon name="question-mark-circle" invert={true} />
-                            <span class="list-label">{COMMON_ROOM_NAME}</span>
-                            if self.active_room != StableId::ZERO {
-                                <button class="btn square list-action"
-                                    title="Join Common Room"
-                                    onclick={ctx.link().callback(|_| Msg::Disconnect)}>
-                                    <Icon name="link" />
-                                </button>
-                            }
-                            <span class="bullet" title="Players not in a room">{no_room_count}</span>
-                        </div>
-                    }
+                    <div class="list-content" key="no-room">
+                        <Icon name="question-mark-circle" invert={true} />
+                        <span class="list-label">{COMMON_ROOM_NAME}</span>
+
+                        if self.active_room != StableId::ZERO {
+                            <button class="btn square list-action"
+                                title={format!("Join {}", COMMON_ROOM_NAME)}
+                                onclick={ctx.link().callback(|_| Msg::Disconnect)}>
+                                <Icon name="link" />
+                            </button>
+                        }
+
+                        <span class="bullet" title="Players not in a room">{no_room_count}</span>
+                    </div>
 
                     {for self.rooms.iter().map(|room| self.view_room(ctx, room))}
                 </section>
@@ -223,7 +186,7 @@ impl Component for Rooms {
 impl Rooms {
     fn view_room(&self, ctx: &Context<Self>, room: &Room) -> Html {
         let is_active = self.active_room == room.id;
-        let is_local = room.id.public_key == self.public_key;
+        let is_local = room.id.public_key == self.peers.public_key;
 
         let delete_button = is_local.then(|| {
             let id = room.id.id;
@@ -265,17 +228,17 @@ impl Rooms {
         let title = if is_local {
             "Room owned by you".to_string()
         } else {
-            match self
-                .public_key_to_peer
-                .get(&room.id.public_key)
-                .and_then(|id| self.peers.get(id))
-            {
-                Some(peer) => format!("Room owned by '{}'", *peer.name),
+            match self.peers.by_public_key(&room.id.public_key) {
+                Some(peer) => format!("Room owned by '{}'", peer.display()),
                 None => "Remote room".to_string(),
             }
         };
 
-        let peer_count = self.peers.values().filter(|p| *p.room == room.id).count()
+        let peer_count = self
+            .peers
+            .iter()
+            .filter(|p| *p.props.get(Key::ROOM).as_stable_id() == room.id)
+            .count()
             + usize::from(self.active_room == room.id);
 
         let settings_button = is_local.then(|| {
@@ -294,9 +257,9 @@ impl Rooms {
             <div class="list-content" key={room.id}>
                 <Icon name={room_icon} invert={true} title={title.clone()} />
                 <span class="list-label" title={title.clone()}>{&room.name}</span>
-                {connect_button}
                 {settings_button}
                 {delete_button}
+                {connect_button}
                 <span class="bullet" title="Players in this room">{peer_count}</span>
             </div>
         }
@@ -312,22 +275,10 @@ impl Rooms {
                 .on_packet(ctx.link().callback(Msg::Initialized))
                 .send();
         } else {
-            self.public_key = PublicKey::ZERO;
+            self.peers = Peers::default();
             self.active_room = StableId::ZERO;
             self.rooms.clear();
         }
-    }
-
-    fn to_stable_id(&self, id: RemoteId) -> StableId {
-        if id.is_local() {
-            return StableId::new(self.public_key, id.id);
-        }
-
-        let Some(peer) = self.peers.get(&id.peer_id) else {
-            return StableId::ZERO;
-        };
-
-        StableId::new(peer.public_key, id.id)
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
@@ -342,25 +293,26 @@ impl Rooms {
                 let body = body?;
                 let body = body.decode()?;
 
-                self.public_key = body.public_key;
+                self.peers.public_key = body.public_key;
                 self.active_room = *body.props.get(Key::ROOM).as_stable_id();
                 self.rooms.clear();
                 self.peers.clear();
-                self.public_key_to_peer.clear();
 
                 for object in body.local {
-                    let id = StableId::new(self.public_key, object.id);
+                    let id = StableId::new(self.peers.public_key, object.id);
 
                     if let Some(room) = Room::from_remote(id, &object) {
                         self.rooms.push(room);
                     }
                 }
 
-                for peer in body.peers {
-                    self.add_peer(peer.peer_id, peer.public_key, &peer.props);
+                for mut peer in body.peers {
+                    let public_key = peer.public_key;
+                    let objects = std::mem::take(&mut peer.objects);
+                    self.peers.insert(peer, &self.active_room);
 
-                    for object in peer.objects {
-                        let id = StableId::new(peer.public_key, object.id);
+                    for object in objects {
+                        let id = StableId::new(public_key, object.id);
 
                         if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
@@ -377,17 +329,14 @@ impl Rooms {
 
                 match body {
                     RemoteUpdateBody::RemoteLost => {
-                        self.rooms.retain(|r| r.id.public_key != self.public_key);
+                        self.rooms
+                            .retain(|r| r.id.public_key != self.peers.public_key);
                         Ok(true)
                     }
-                    RemoteUpdateBody::PeerConnected {
-                        peer_id,
-                        public_key,
-                        objects,
-                        props,
-                        ..
-                    } => {
-                        self.add_peer(peer_id, public_key, &props);
+                    RemoteUpdateBody::PeerConnected { mut peer } => {
+                        let public_key = peer.public_key;
+                        let objects = std::mem::take(&mut peer.objects);
+                        self.peers.insert(peer, &self.active_room);
 
                         for object in objects {
                             let id = StableId::new(public_key, object.id);
@@ -402,7 +351,7 @@ impl Rooms {
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => Ok(self.remove_peer(peer_id)),
                     RemoteUpdateBody::ObjectCreated { id, object } => {
-                        let id = self.to_stable_id(id);
+                        let id = self.peers.to_stable_id(&id);
 
                         if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
@@ -413,14 +362,14 @@ impl Rooms {
                         }
                     }
                     RemoteUpdateBody::ObjectRemoved { id } => {
-                        let id = self.to_stable_id(id);
+                        let id = self.peers.to_stable_id(&id);
 
                         let prev = self.rooms.len();
                         self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
                     RemoteUpdateBody::ObjectUpdated { id, key, value } => {
-                        let id = self.to_stable_id(id);
+                        let id = self.peers.to_stable_id(&id);
 
                         let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
                             return Ok(false);
@@ -438,11 +387,14 @@ impl Rooms {
                         peer_id,
                         key,
                         value,
-                    } => Ok(self
-                        .peers
-                        .get_mut(&peer_id)
-                        .map(|p| p.update(key, value))
-                        .unwrap_or(false)),
+                    } => {
+                        let Some(peer) = self.peers.get_mut(peer_id) else {
+                            return Ok(false);
+                        };
+
+                        peer.update(key, value, &self.active_room);
+                        Ok(matches!(key, Key::ROOM | Key::PEER_NAME))
+                    }
                     _ => Ok(false),
                 }
             }
@@ -459,7 +411,7 @@ impl Rooms {
                         _ => Ok(false),
                     },
                     UpdateBody::PublicKey { public_key } => {
-                        self.public_key = public_key;
+                        self.peers.public_key = public_key;
                         Ok(true)
                     }
                 }
@@ -521,27 +473,13 @@ impl Rooms {
         }
     }
 
-    fn add_peer(
-        &mut self,
-        peer_id: PeerId,
-        public_key: PublicKey,
-        props: &api::Properties,
-    ) -> bool {
-        if let Some(old) = self.peers.insert(peer_id, Peer::new(public_key, props)) {
-            self.public_key_to_peer.remove(&old.public_key);
-        }
-
-        self.public_key_to_peer.insert(public_key, peer_id);
-        true
-    }
-
     fn remove_peer(&mut self, peer_id: PeerId) -> bool {
-        let Some(peer) = self.peers.remove(&peer_id) else {
+        let Some(public_key) = self.peers.get(peer_id).map(|p| p.public_key) else {
             return false;
         };
 
-        self.public_key_to_peer.remove(&peer.public_key);
-        self.rooms.retain(|r| r.id.public_key != peer.public_key);
+        self.peers.remove_peer(peer_id);
+        self.rooms.retain(|r| r.id.public_key != public_key);
         true
     }
 }

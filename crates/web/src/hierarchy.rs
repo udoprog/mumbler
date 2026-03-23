@@ -72,6 +72,8 @@ impl HierarchyRef {
     /// Test if the given group is empty.
     #[inline]
     pub(crate) fn is_empty(&self, group: RemoteId) -> bool {
+        let group = as_group(group);
+
         self.children
             .get(&group)
             .map(|s| s.is_empty())
@@ -80,6 +82,8 @@ impl HierarchyRef {
 
     /// Get the children of the given group, sorted by their sort key.
     pub(crate) fn iter(&self, group: RemoteId) -> impl DoubleEndedIterator<Item = RemoteId> {
+        let group = as_group(group);
+
         self.children
             .get(&group)
             .into_iter()
@@ -106,26 +110,44 @@ impl HierarchyRef {
         }
     }
 
+    pub(crate) fn remove(&mut self, object: &LocalObject) -> bool {
+        if object.is_room() {
+            return false;
+        }
+
+        self._remove(*object.group, object.sort(), object.id)
+    }
+
     /// Remove the given id from all groups.
-    pub(crate) fn remove(&mut self, group: RemoteId, sort: &[u8], id: RemoteId) {
+    #[inline]
+    fn _remove(&mut self, group: RemoteId, sort: &[u8], id: RemoteId) -> bool {
         let key = Key {
             sort: sort.to_vec(),
             id,
         };
 
-        if let Some(values) = self.children.get_mut(&group) {
-            values.remove(&key);
-            self.len = self.len.saturating_sub(1);
+        let group = as_group(group);
+
+        let Some(values) = self.children.get_mut(&group) else {
+            return false;
+        };
+
+        if !values.remove(&key) {
+            return false;
         }
+
+        self.len = self.len.saturating_sub(1);
+        true
     }
 
     /// Insert an object into the hierarchy. Does nothing if the object has no sort key.
     pub(crate) fn insert(&mut self, object: &LocalObject) {
-        if object.sort().is_empty() {
+        if object.is_room() {
             return;
         }
 
         let group = as_group(*object.group);
+
         let key = Key {
             sort: object.sort().to_vec(),
             id: object.id,
@@ -145,7 +167,9 @@ impl HierarchyRef {
         new_sort: &[u8],
         id: RemoteId,
     ) {
-        self.remove(old_group, old_sort, id);
+        if !self._remove(old_group, old_sort, id) {
+            return;
+        }
 
         let new_group = as_group(new_group);
 

@@ -781,10 +781,7 @@ pub enum RemoteUpdateBody {
     RemoteLost,
     /// Indicates that a new peer has connected.
     PeerConnected {
-        peer_id: PeerId,
-        public_key: PublicKey,
-        objects: Vec<RemoteObject>,
-        props: Properties,
+        peer: RemotePeer,
     },
     /// Indicates that a new peer has joined.
     PeerJoin {
