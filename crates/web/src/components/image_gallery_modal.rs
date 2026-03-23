@@ -69,7 +69,7 @@ impl Component for ImageGalleryModal {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let filter_buttons = FILTER_BUTTONS.into_iter().map(|&(label, role)| {
+        let filter_buttons = FILTER_BUTTONS.iter().map(|&(label, role)| {
             let inactive = self.filter != role;
             let onclick = ctx.link().callback(move |_| Msg::SetFilter(role));
 
@@ -125,7 +125,7 @@ impl Component for ImageGalleryModal {
                         </div>
 
                         if images.is_empty() {
-                            <p class="hint">{"No images uploaded yet."}</p>
+                            <p class="hint">{"No images."}</p>
                         } else {
                             <div class="gallery">
                                 {for images}
