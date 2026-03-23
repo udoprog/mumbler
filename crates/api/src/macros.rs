@@ -1,14 +1,16 @@
 macro_rules! __ids {
     (
+        $(#[doc = $doc:literal])*
         $vis:vis struct $ty:ident {
             $(
-                $(#[doc = $doc:literal])*
+                $(#[doc = $field_doc:literal])*
                 $name:ident = $value:literal;
             )*
         }
     ) => {
         #[derive(Clone, Copy, PartialEq, Eq, Hash, ::musli_core::Encode, ::musli_core::Decode)]
         #[musli(crate = ::musli_core, transparent)]
+        $(#[doc = $doc])*
         $vis struct $ty {
             raw: u32,
         }
@@ -22,7 +24,7 @@ macro_rules! __ids {
 
         impl $ty {
             $(
-                $(#[doc = $doc])*
+                $(#[doc = $field_doc])*
                 $vis const $name: Self = Self::new($value);
             )*
         }

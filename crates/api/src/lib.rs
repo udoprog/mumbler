@@ -27,10 +27,22 @@ use musli_core::{Decode, Encode};
 use musli_web::api;
 
 crate::macros::ids! {
+    /// The role of an image.
+    pub struct Role {
+        /// The token type.
+        TOKEN = 1;
+        /// The image of a static.
+        STATIC = 2;
+        /// A background image.
+        BACKGROUND = 3;
+    }
+}
+
+crate::macros::ids! {
     pub struct Type {
         /// The token type.
         TOKEN = 0x10000000;
-        /// The static object type (furniture, props, etc.).
+        /// The static object type.
         STATIC = 0x10000002;
         /// The group type.
         GROUP = 0x10000003;
