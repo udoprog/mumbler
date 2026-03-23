@@ -1,3 +1,4 @@
+use api::Id;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
 use yew_router::prelude::*;
@@ -5,7 +6,9 @@ use yew_router::prelude::*;
 use crate::error::Error;
 use crate::log;
 
-use super::{Icon, Log, Map, MumbleStatus, Navigation, RemoteStatus, Rooms, Route, Settings};
+use super::{
+    Icon, Log, Map, MumbleStatus, Navigation, RemoteStatus, RoomSettings, Rooms, Route, Settings,
+};
 
 const COMPONENT: &str = "app::update";
 
@@ -13,6 +16,7 @@ pub struct App {
     ws: ws::Service,
     state: ws::State,
     log: log::Log,
+    open_room_settings: Option<Id>,
     _state_listener: ws::StateListener,
     _notification_listener: ws::Listener,
 }
@@ -21,6 +25,8 @@ pub enum Msg {
     Error(Error),
     StateChanged(ws::State),
     Notification(Result<ws::Packet<api::Notification>, ws::Error>),
+    OpenRoomSettings(Id),
+    CloseRoomSettings,
 }
 
 impl From<Error> for Msg {
@@ -59,6 +65,7 @@ impl Component for App {
             ws,
             state,
             log: log::Log::new(),
+            open_room_settings: None,
             _state_listener,
             _notification_listener,
         }
@@ -93,27 +100,54 @@ impl Component for App {
 
                 false
             }
+            Msg::OpenRoomSettings(id) => {
+                self.open_room_settings = Some(id);
+                true
+            }
+            Msg::CloseRoomSettings => {
+                self.open_room_settings = None;
+                true
+            }
         }
     }
 
-    fn view(&self, _: &Context<Self>) -> Html {
+    fn view(&self, ctx: &Context<Self>) -> Html {
         let ws = self.ws.handle().clone();
         let state = self.state;
+        let on_open_settings = ctx.link().callback(Msg::OpenRoomSettings);
+        let open_room_settings = self.open_room_settings;
 
         html! {
             <ContextProvider<log::Log> context={self.log.clone()}>
                 <BrowserRouter>
-                    <Switch<Route> render={move |route| switch(route, &ws, state)} />
+                    <Switch<Route> render={move |route| switch(route, &ws, state, on_open_settings.clone())} />
                 </BrowserRouter>
+
+                if let Some(id) = open_room_settings {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Room Settings"}</h2>
+                                <button class="btn sm square danger" title="Close"
+                                    onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                <RoomSettings ws={self.ws.handle().clone()} {id} />
+                            </div>
+                        </div>
+                    </div>
+                }
             </ContextProvider<log::Log>>
         }
     }
 }
 
-fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
+fn switch(route: Route, ws: &ws::Handle, state: ws::State, onopensettings: Callback<Id>) -> Html {
     let component = match route {
         Route::Map => html!(<Map ws={ws.clone()} />),
-        Route::Rooms => html!(<Rooms ws={ws.clone()} />),
+        Route::Rooms => html!(<Rooms ws={ws.clone()} {onopensettings} />),
         Route::Settings => html!(<Settings ws={ws.clone()} />),
         Route::Log => html!(<Log />),
         Route::NotFound => {

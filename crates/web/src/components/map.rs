@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Key, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody, StableId, UpdateBody,
-    Value, Vec3,
+    Color, Extent, Id, Key, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody, StableId,
+    UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -29,7 +29,9 @@ use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, ViewTransform};
-use super::{GroupSettings, HelpModal, ObjectList, Rooms, StaticSettings, TokenSettings};
+use super::{
+    GroupSettings, HelpModal, ObjectList, RoomSettings, Rooms, StaticSettings, TokenSettings,
+};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -189,7 +191,7 @@ impl Config {
         if self.name.is_empty() {
             String::from("You")
         } else {
-            self.name.to_string()
+            format!("{} (You)", *self.name)
         }
     }
 
@@ -349,6 +351,7 @@ pub(crate) struct Map {
     open_help: bool,
     open_settings: Option<RemoteId>,
     open_room_selector: bool,
+    open_room_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
@@ -370,6 +373,8 @@ pub(crate) enum Msg {
     CloseHelp,
     OpenRoomSelector,
     CloseRoomSelector,
+    OpenRoomSettings(Id),
+    CloseRoomSettings,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmDelete(RemoteId),
@@ -512,6 +517,7 @@ impl Component for Map {
             open_help: false,
             open_settings: None,
             open_room_selector: false,
+            open_room_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
             public_key: PublicKey::ZERO,
@@ -835,26 +841,28 @@ impl Component for Map {
         };
 
         let players = html! {
-            <div class="list" key="players">
-                <div class="list-title">
+            <>
+                <div class="control-group">
                     <Icon name="remote" invert={true} />
                     <span>{"Players"}</span>
                 </div>
 
-                <section class="list-content">
-                    <Icon name="user" invert={true} />
-                    <span class="list-label">{self.config.display()}</span>
-                </section>
+                <div class="list" key="players">
+                    <section class="list-content">
+                        <Icon name="user" invert={true} />
+                        <span class="list-label">{self.config.display()}</span>
+                    </section>
 
-                {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
-                    html! {
-                        <section class="list-content">
-                            <Icon name="user" invert={true} />
-                            <span class="list-label">{peer.display()}</span>
-                        </section>
-                    }
-                })}
-            </div>
+                    {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
+                        html! {
+                            <section class="list-content">
+                                <Icon name="user" invert={true} />
+                                <span class="list-label">{peer.display()}</span>
+                            </section>
+                        }
+                    })}
+                </div>
+            </>
         };
 
         html! {
@@ -905,7 +913,7 @@ impl Component for Map {
                             </ContextProvider<Hierarchy>>
                         </ContextProvider<Objects>>
 
-                        <Rooms ws={&ctx.props().ws} key="rooms" />
+                        <Rooms ws={&ctx.props().ws} key="rooms" onopensettings={ctx.link().callback(Msg::OpenRoomSettings)} />
 
                         {players}
                     </div>
@@ -981,7 +989,24 @@ impl Component for Map {
                                 </button>
                             </div>
                             <div class="modal-body">
-                                <Rooms ws={ws.clone()} />
+                                <Rooms ws={ws.clone()} onopensettings={ctx.link().callback(Msg::OpenRoomSettings)} />
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                if let Some(id) = self.open_room_settings {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Room Settings"}</h2>
+                                <button class="btn sm square danger" title="Close"
+                                    onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                <RoomSettings {ws} {id} />
                             </div>
                         </div>
                     </div>
@@ -1161,6 +1186,14 @@ impl Map {
             }
             Msg::CloseRoomSelector => {
                 self.open_room_selector = false;
+                Ok(true)
+            }
+            Msg::OpenRoomSettings(id) => {
+                self.open_room_settings = Some(id);
+                Ok(true)
+            }
+            Msg::CloseRoomSettings => {
+                self.open_room_settings = None;
                 Ok(true)
             }
             Msg::ConfigResult(result) => {

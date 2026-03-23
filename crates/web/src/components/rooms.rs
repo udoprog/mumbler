@@ -5,16 +5,13 @@ use api::{Id, Key, PeerId, PublicKey, RemoteId, StableId, Type, UpdateBody, Valu
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
+use crate::state::State;
 
 use super::Icon;
-
-use super::into_target;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -28,13 +25,13 @@ pub(crate) enum Msg {
     CreateRoomResult(Result<Packet<api::CreateObject>, ws::Error>),
     DeleteRoom(Id),
     DeleteRoomResult(Result<Packet<api::RemoveObject>, ws::Error>),
-    NameChanged(Event),
     ContextUpdate(log::Log),
 }
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
+    pub(crate) onopensettings: Callback<Id>,
 }
 
 struct Room {
@@ -42,29 +39,33 @@ struct Room {
     name: String,
 }
 
-struct PeerState {
+struct Peer {
     public_key: PublicKey,
-    room_id: StableId,
+    room: State<StableId>,
+    name: State<String>,
 }
 
-impl PeerState {
+impl Peer {
     fn new(public_key: PublicKey, props: &api::Properties) -> Self {
         Self {
             public_key,
-            room_id: *props.get(Key::ROOM).as_stable_id(),
+            room: State::new(*props.get(Key::ROOM).as_stable_id()),
+            name: State::new(
+                props
+                    .get(Key::PEER_NAME)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
         }
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::ROOM => {
-                let new_room = *value.as_stable_id();
-                if self.room_id != new_room {
-                    self.room_id = new_room;
-                    return true;
-                }
-                false
-            }
+            Key::ROOM => self.room.update(*value.as_stable_id()),
+            Key::PEER_NAME => self
+                .name
+                .update(value.as_str().unwrap_or_default().to_owned()),
             _ => false,
         }
     }
@@ -106,11 +107,11 @@ impl Room {
 
 pub(crate) struct Rooms {
     state: ws::State,
-    peers: HashMap<PeerId, PeerState>,
+    peers: HashMap<PeerId, Peer>,
+    public_key_to_peer: HashMap<PublicKey, PeerId>,
     rooms: Vec<Room>,
     public_key: PublicKey,
     active_room: StableId,
-    new_room_name: String,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
@@ -150,10 +151,10 @@ impl Component for Rooms {
         let mut this = Self {
             state,
             peers: HashMap::new(),
+            public_key_to_peer: HashMap::new(),
             rooms: Vec::new(),
             public_key: PublicKey::ZERO,
             active_room: StableId::ZERO,
-            new_room_name: String::new(),
             log,
             _log_handle,
             _state_change,
@@ -180,24 +181,26 @@ impl Component for Rooms {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let on_create = ctx.link().callback(|_| Msg::CreateRoom);
-        let on_name_changed = ctx.link().callback(Msg::NameChanged);
-
         let no_room_count = self
             .peers
             .values()
-            .filter(|p| p.room_id == StableId::ZERO)
+            .filter(|p| *p.room == StableId::ZERO)
             .count()
             + usize::from(self.active_room == StableId::ZERO);
 
         html! {
             <div id="content" class="rows">
-                <section class="list" key="rooms-list">
-                    <div class="list-title">
-                        <Icon name="door-open" invert={true} />
-                        <span>{"Rooms"}</span>
-                    </div>
+                <div class="control-group">
+                    <Icon name="home" invert={true} />
+                    <span>{"Rooms"}</span>
+                    <div class="fill"></div>
+                    <button class="btn square primary" title="Add room"
+                        onclick={ctx.link().callback(|_| Msg::CreateRoom)}>
+                        <Icon name="plus-circle" />
+                    </button>
+                </div>
 
+                <section class="list" key="rooms-list">
                     if no_room_count > 0 {
                         <div class="list-content" key="no-room">
                             <Icon name="home" invert={true} />
@@ -207,19 +210,6 @@ impl Component for Rooms {
                     }
 
                     {for self.rooms.iter().map(|room| self.view_room(ctx, room))}
-                </section>
-
-                <section class="input-group" key="rooms-create">
-                    <input
-                        type="text"
-                        placeholder="New room"
-                        value={self.new_room_name.clone()}
-                        onchange={on_name_changed}
-                    />
-
-                    <button class="btn lg square" onclick={on_create}>
-                        <Icon name="plus-circle" />
-                    </button>
                 </section>
             </div>
         }
@@ -265,14 +255,41 @@ impl Rooms {
         };
 
         let room_icon = if is_local { "home" } else { "home-modern" };
-        let peer_count = self.peers.values().filter(|p| p.room_id == room.id).count()
+
+        let title = if is_local {
+            "Room owned by you".to_string()
+        } else {
+            match self
+                .public_key_to_peer
+                .get(&room.id.public_key)
+                .and_then(|id| self.peers.get(id))
+            {
+                Some(peer) => format!("Room owned by '{}'", *peer.name),
+                None => "Remote room".to_string(),
+            }
+        };
+
+        let peer_count = self.peers.values().filter(|p| *p.room == room.id).count()
             + usize::from(self.active_room == room.id);
+
+        let settings_button = is_local.then(|| {
+            let id = room.id.id;
+            let onopensettings = ctx.props().onopensettings.clone();
+            let onclick = Callback::from(move |_| onopensettings.emit(id));
+
+            html! {
+                <button class="btn square list-action" {onclick} title="Room settings">
+                    <Icon name="cog" />
+                </button>
+            }
+        });
 
         html! {
             <div class="list-content" key={room.id}>
-                <Icon name={room_icon} invert={true} />
-                <span class="list-label" title={room.id.to_string()}>{&room.name}</span>
+                <Icon name={room_icon} invert={true} title={title.clone()} />
+                <span class="list-label" title={title.clone()}>{&room.name}</span>
                 {connect_button}
+                {settings_button}
                 {delete_button}
                 <span class="bullet" title="Players in this room">{peer_count}</span>
             </div>
@@ -323,6 +340,7 @@ impl Rooms {
                 self.active_room = *body.props.get(Key::ROOM).as_stable_id();
                 self.rooms.clear();
                 self.peers.clear();
+                self.public_key_to_peer.clear();
 
                 for object in body.local {
                     let id = StableId::new(self.public_key, object.id);
@@ -333,8 +351,7 @@ impl Rooms {
                 }
 
                 for peer in body.peers {
-                    self.peers
-                        .insert(peer.peer_id, PeerState::new(peer.public_key, &peer.props));
+                    self.add_peer(peer.peer_id, peer.public_key, &peer.props);
 
                     for object in peer.objects {
                         let id = StableId::new(peer.public_key, object.id);
@@ -364,8 +381,7 @@ impl Rooms {
                         props,
                         ..
                     } => {
-                        self.peers
-                            .insert(peer_id, PeerState::new(public_key, &props));
+                        self.add_peer(peer_id, public_key, &props);
 
                         for object in objects {
                             let id = StableId::new(public_key, object.id);
@@ -474,21 +490,13 @@ impl Rooms {
                 Ok(false)
             }
             Msg::CreateRoom => {
-                let name = self.new_room_name.trim().to_owned();
-
-                if name.is_empty() {
-                    return Ok(false);
-                }
-
-                let props = api::Properties::from([(Key::OBJECT_NAME, Value::from(name))]);
-
                 self._create_room_request = ctx
                     .props()
                     .ws
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: Type::ROOM,
-                        props,
+                        props: api::Properties::from([(Key::OBJECT_NAME, Value::from("New Room"))]),
                     })
                     .on_packet(ctx.link().callback(Msg::CreateRoomResult))
                     .send();
@@ -498,7 +506,6 @@ impl Rooms {
             Msg::CreateRoomResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
-                self.new_room_name = String::new();
                 Ok(true)
             }
             Msg::DeleteRoom(id) => {
@@ -517,12 +524,6 @@ impl Rooms {
                 _ = body.decode()?;
                 Ok(false)
             }
-            Msg::NameChanged(e) => {
-                e.stop_propagation();
-                let input = into_target!(e, HtmlInputElement);
-                self.new_room_name = input.value();
-                Ok(true)
-            }
             Msg::ContextUpdate(log) => {
                 self.log = log;
                 Ok(false)
@@ -530,11 +531,26 @@ impl Rooms {
         }
     }
 
+    fn add_peer(
+        &mut self,
+        peer_id: PeerId,
+        public_key: PublicKey,
+        props: &api::Properties,
+    ) -> bool {
+        if let Some(old) = self.peers.insert(peer_id, Peer::new(public_key, props)) {
+            self.public_key_to_peer.remove(&old.public_key);
+        }
+
+        self.public_key_to_peer.insert(public_key, peer_id);
+        true
+    }
+
     fn remove_peer(&mut self, peer_id: PeerId) -> bool {
         let Some(peer) = self.peers.remove(&peer_id) else {
             return false;
         };
 
+        self.public_key_to_peer.remove(&peer.public_key);
         self.rooms.retain(|r| r.id.public_key != peer.public_key);
         true
     }

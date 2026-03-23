@@ -21,6 +21,9 @@ pub(crate) use self::settings::Settings;
 mod rooms;
 pub(crate) use self::rooms::Rooms;
 
+mod room_settings;
+pub(crate) use self::room_settings::RoomSettings;
+
 mod object_settings;
 pub(crate) use self::object_settings::TokenSettings;
 
