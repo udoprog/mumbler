@@ -377,6 +377,7 @@ pub(crate) struct Map {
     object_requests: HashMap<RemoteId, ObjectRequests>,
     objects: Objects,
     open_help: bool,
+    open_rooms: bool,
     open_settings: Option<RemoteId>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
@@ -435,6 +436,8 @@ pub(crate) enum Msg {
     ToggleLocked(RemoteId),
     ToggleMumbleObject(RemoteId),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
+    OpenRooms,
+    CloseRooms,
     Wheel(WheelEvent),
 }
 
@@ -537,6 +540,7 @@ impl Component for Map {
             object_requests: HashMap::new(),
             objects: Objects::default(),
             open_help: false,
+            open_rooms: false,
             open_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
@@ -857,8 +861,10 @@ impl Component for Map {
                     {local_hidden}
                     {locked}
                     <section class="icon-group">
-                        <Icon name="link" invert={true} />
-                        <span>{current_room_name}</span>
+                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenRooms)}>
+                            <Icon name="link" />
+                            <span>{current_room_name}</span>
+                        </button>
                     </section>
                     <div class="fill"></div>
                     {follow}
@@ -940,8 +946,6 @@ impl Component for Map {
                             </ContextProvider<Hierarchy>>
                         </ContextProvider<Objects>>
 
-                        <RoomsPage ws={&ctx.props().ws} key="rooms" />
-
                         {players}
                     </div>
                 </div>
@@ -968,6 +972,23 @@ impl Component for Map {
                                         {"Cancel"}
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                if self.open_rooms {
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRooms)}>
+                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
+                            <div class="modal-header">
+                                <h2>{"Rooms"}</h2>
+                                <button class="btn sm square danger" title="Close"
+                                    onclick={ctx.link().callback(|_| Msg::CloseRooms)}>
+                                    <Icon name="x-mark" />
+                                </button>
+                            </div>
+                            <div class="modal-body">
+                                <RoomsPage ws={ctx.props().ws.clone()} />
                             </div>
                         </div>
                     </div>
@@ -1165,6 +1186,14 @@ impl Map {
             }
             Msg::CloseSettings => {
                 self.open_settings = None;
+                Ok(true)
+            }
+            Msg::OpenRooms => {
+                self.open_rooms = true;
+                Ok(true)
+            }
+            Msg::CloseRooms => {
+                self.open_rooms = false;
                 Ok(true)
             }
             Msg::OpenHelp => {
@@ -1903,6 +1932,7 @@ impl Map {
 
                 self.open_settings = None;
                 self.open_help = false;
+                self.open_rooms = false;
 
                 self.s.delete = None;
                 self.s.selected = RemoteId::ZERO;
