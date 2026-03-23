@@ -82,7 +82,11 @@ impl Component for ObjectList {
 
         let group = ctx.props().group;
 
-        let mut it = order.iter(group).flat_map(|id| objects.get(id));
+        let mut it = order
+            .iter(group)
+            .flat_map(|id| objects.get(id))
+            .filter(|o| o.id.is_local() || o.visibility().is_remote());
+
         let last = it.next_back().map(|o| (true, o));
         let remaining = it.map(|o| (false, o));
 
