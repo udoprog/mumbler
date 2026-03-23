@@ -14,6 +14,7 @@ use super::{COMMON_ROOM, Icon};
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
+    Channel(Result<ws::Channel, ws::Error>),
     Initialized(Result<Packet<api::InitializeRooms>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
@@ -84,6 +85,8 @@ pub(crate) struct Rooms {
     _config_listener: ws::Listener,
     _connect_room_request: ws::Request,
     _create_room_request: ws::Request,
+    _channel: ws::Request,
+    channel: ws::Channel,
 }
 
 impl Component for Rooms {
@@ -124,6 +127,8 @@ impl Component for Rooms {
             _config_listener,
             _connect_room_request: ws::Request::new(),
             _create_room_request: ws::Request::new(),
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
         };
 
         this.refresh(ctx);
@@ -276,13 +281,12 @@ impl Rooms {
     }
 
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._init_request = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::InitializeRoomsRequest)
-                .on_packet(ctx.link().callback(Msg::Initialized))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
         } else {
             self.peers = Peers::default();
@@ -297,6 +301,18 @@ impl Rooms {
                 self.state = state;
                 self.rooms.clear();
                 self.refresh(ctx);
+                Ok(true)
+            }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._init_request = self
+                    .channel
+                    .request()
+                    .body(api::InitializeRoomsRequest)
+                    .on_packet(ctx.link().callback(Msg::Initialized))
+                    .send();
+
                 Ok(true)
             }
             Msg::Initialized(body) => {
@@ -378,7 +394,7 @@ impl Rooms {
                         self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
-                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
                         let id = self.peers.to_stable_id(&id);
 
                         let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
@@ -413,7 +429,7 @@ impl Rooms {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config { key, value } => match key {
+                    UpdateBody::Config { key, value, .. } => match key {
                         Key::ROOM => {
                             self.active_room = *value.as_stable_id();
                             Ok(true)
@@ -429,9 +445,8 @@ impl Rooms {
             Msg::Disconnect => {
                 let values = vec![(Key::ROOM, Value::empty())];
 
-                self._connect_room_request = ctx
-                    .props()
-                    .ws
+                self._connect_room_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest { values })
                     .on_packet(ctx.link().callback(Msg::ConnectResult))
@@ -442,9 +457,8 @@ impl Rooms {
             Msg::Connect(room) => {
                 let values = vec![(Key::ROOM, Value::from(room))];
 
-                self._connect_room_request = ctx
-                    .props()
-                    .ws
+                self._connect_room_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest { values })
                     .on_packet(ctx.link().callback(Msg::ConnectResult))
@@ -458,9 +472,8 @@ impl Rooms {
                 Ok(false)
             }
             Msg::CreateRoom => {
-                self._create_room_request = ctx
-                    .props()
-                    .ws
+                self._create_room_request = self
+                    .channel
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: Type::ROOM,

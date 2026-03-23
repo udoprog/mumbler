@@ -13,6 +13,7 @@ use super::into_target;
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
+    Channel(Result<ws::Channel, ws::Error>),
     NameChanged(Event),
     PeerSecretChanged(Event),
     ServerChanged(Event),
@@ -43,6 +44,8 @@ pub(crate) struct Settings {
     _log_handle: ContextHandle<log::Log>,
     _state_change: ws::StateListener,
     _config_update_listener: ws::Listener,
+    _channel: ws::Request,
+    channel: ws::Channel,
 }
 
 impl Component for Settings {
@@ -80,6 +83,8 @@ impl Component for Settings {
             _log_handle,
             _state_change,
             _config_update_listener,
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
         };
 
         this.refresh(ctx);
@@ -151,14 +156,15 @@ impl Component for Settings {
 
 impl Settings {
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._get_config_request = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::GetConfigRequest)
-                .on_packet(ctx.link().callback(Msg::GetConfig))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 
@@ -167,6 +173,18 @@ impl Settings {
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
+                Ok(true)
+            }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._get_config_request = self
+                    .channel
+                    .request()
+                    .body(api::GetConfigRequest)
+                    .on_packet(ctx.link().callback(Msg::GetConfig))
+                    .send();
+
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -183,9 +201,8 @@ impl Settings {
                     api::Value::from((*self.name).clone())
                 };
 
-                self._name_request = ctx
-                    .props()
-                    .ws
+                self._name_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest {
                         values: vec![(api::Key::PEER_NAME, value)],
@@ -209,9 +226,8 @@ impl Settings {
                     api::Value::from((*self.peer_secret).clone())
                 };
 
-                self._peer_secret_request = ctx
-                    .props()
-                    .ws
+                self._peer_secret_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest {
                         values: vec![(api::Key::PEER_SECRET, value)],
@@ -235,9 +251,8 @@ impl Settings {
                     api::Value::from((*self.remote_server).clone())
                 };
 
-                self._remote_server_request = ctx
-                    .props()
-                    .ws
+                self._remote_server_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest {
                         values: vec![(api::Key::REMOTE_SERVER, value)],
@@ -253,9 +268,8 @@ impl Settings {
                 let remote_server_tls = input.checked();
                 *self.remote_server_tls = remote_server_tls;
 
-                self._remote_server_tls_request = ctx
-                    .props()
-                    .ws
+                self._remote_server_tls_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest {
                         values: vec![(api::Key::REMOTE_TLS, remote_server_tls.into())],
@@ -291,7 +305,7 @@ impl Settings {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config { key, value } => self.update_config(key, value),
+                    UpdateBody::Config { key, value, .. } => self.update_config(key, value),
                     _ => Ok(false),
                 }
             }

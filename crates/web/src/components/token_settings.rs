@@ -14,6 +14,7 @@ use crate::state::State;
 use super::{ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
+    Channel(Result<ws::Channel, ws::Error>),
     ColorChanged(Event),
     ImageLoaded(ImageMessage),
     ImageSelected(Id),
@@ -56,6 +57,8 @@ pub(crate) struct TokenSettings {
     speed: State<f32>,
     state: ws::State,
     token_radius: State<f32>,
+    _channel: ws::Request,
+    channel: ws::Channel,
 }
 
 impl From<ImageMessage> for Msg {
@@ -104,6 +107,8 @@ impl Component for TokenSettings {
             preview_images: Images::new(),
             speed: State::new(5.0),
             state,
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
             token_radius: State::new(0.25),
         };
 
@@ -215,16 +220,15 @@ impl Component for TokenSettings {
 
 impl TokenSettings {
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._list_settings = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::GetObjectSettingsRequest {
-                    id: ctx.props().id.id,
-                })
-                .on_packet(ctx.link().callback(Msg::Initialize))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 
@@ -233,6 +237,20 @@ impl TokenSettings {
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
+                Ok(true)
+            }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._list_settings = self
+                    .channel
+                    .request()
+                    .body(api::GetObjectSettingsRequest {
+                        id: ctx.props().id.id,
+                    })
+                    .on_packet(ctx.link().callback(Msg::Initialize))
+                    .send();
+
                 Ok(true)
             }
             Msg::Initialize(body) => {
@@ -254,7 +272,7 @@ impl TokenSettings {
             Msg::ImageSelected(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::ColorChanged(e) => {
@@ -268,7 +286,7 @@ impl TokenSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = object_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(&self.channel, ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -281,7 +299,7 @@ impl TokenSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::RadiusChanged(e) => {
@@ -294,7 +312,8 @@ impl TokenSettings {
 
                     let radius = radius.clamp(0.05, 10.0);
                     *self.token_radius = radius;
-                    self._update_radius = object_update(ctx, Key::TOKEN_RADIUS, radius);
+                    self._update_radius =
+                        object_update(&self.channel, ctx, Key::TOKEN_RADIUS, radius);
                     true
                 };
 
@@ -310,7 +329,7 @@ impl TokenSettings {
 
                     let speed = speed.clamp(0.5, 100.0);
                     *self.speed = speed;
-                    self._update_radius = object_update(ctx, Key::SPEED, speed);
+                    self._update_radius = object_update(&self.channel, ctx, Key::SPEED, speed);
                     true
                 };
 
@@ -334,7 +353,7 @@ impl TokenSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
                         if ctx.props().id != id {
                             return Ok(false);
                         }
@@ -414,9 +433,13 @@ impl TokenSettings {
     }
 }
 
-fn object_update(ctx: &Context<TokenSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
-    ctx.props()
-        .ws
+fn object_update(
+    channel: &ws::Channel,
+    ctx: &Context<TokenSettings>,
+    key: Key,
+    value: impl Into<Value>,
+) -> ws::Request {
+    channel
         .request()
         .body(api::ObjectUpdateBody {
             id: ctx.props().id.id,

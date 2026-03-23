@@ -14,6 +14,7 @@ pub(crate) enum Msg {
     Toggle,
     ToggleResponse(Result<Packet<api::Updates>, ws::Error>),
     StateChanged(ws::State),
+    Channel(Result<ws::Channel, ws::Error>),
     LogUpdate(log::Log),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
@@ -34,6 +35,8 @@ pub(crate) struct RemoteStatus {
     _restart_request: ws::Request,
     _toggle_request: ws::Request,
     _config_update_listener: ws::Listener,
+    _channel: ws::Request,
+    channel: ws::Channel,
 }
 
 impl Component for RemoteStatus {
@@ -66,6 +69,8 @@ impl Component for RemoteStatus {
             _restart_request: ws::Request::new(),
             _toggle_request: ws::Request::new(),
             _config_update_listener,
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
         };
 
         this.refresh(ctx);
@@ -130,9 +135,8 @@ impl RemoteStatus {
                     return Ok(false);
                 }
 
-                self._restart_request = ctx
-                    .props()
-                    .ws
+                self._restart_request = self
+                    .channel
                     .request()
                     .body(api::RemoteRestartRequest)
                     .on_packet(ctx.link().callback(Msg::RestartResponse))
@@ -152,9 +156,8 @@ impl RemoteStatus {
                 let new_enabled = !*self.enabled;
                 *self.enabled = new_enabled;
 
-                self._toggle_request = ctx
-                    .props()
-                    .ws
+                self._toggle_request = self
+                    .channel
                     .request()
                     .body(api::UpdatesRequest {
                         values: Vec::from([(Key::REMOTE_ENABLED, Value::from(new_enabled))]),
@@ -195,12 +198,24 @@ impl RemoteStatus {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config { key, value } => {
+                    UpdateBody::Config { key, value, .. } => {
                         let changed = self.update_config(key, value)?;
                         Ok(changed)
                     }
                     _ => Ok(false),
                 }
+            }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._get_status = self
+                    .channel
+                    .request()
+                    .body(api::GetConfigRequest)
+                    .on_packet(ctx.link().callback(Msg::GetConfig))
+                    .send();
+
+                Ok(true)
             }
         }
     }
@@ -213,14 +228,15 @@ impl RemoteStatus {
     }
 
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._get_status = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::GetConfigRequest)
-                .on_packet(ctx.link().callback(Msg::GetConfig))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 }

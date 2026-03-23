@@ -27,6 +27,7 @@ pub(crate) enum Msg {
     SelectColor(api::Color),
     SetLog(log::Log),
     StateChanged(ws::State),
+    Channel(Result<ws::Channel, ws::Error>),
     Update(Result<Packet<api::Update>, ws::Error>),
     UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
@@ -61,6 +62,8 @@ pub(crate) struct StaticSettings {
     preview_images: Images<Self>,
     ratio: State<Option<f32>>,
     state: ws::State,
+    _channel: ws::Request,
+    channel: ws::Channel,
     width: State<f32>,
 }
 
@@ -118,6 +121,8 @@ impl Component for StaticSettings {
             preview_images: Images::new(),
             ratio: State::new(None),
             state,
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
             width: State::new(1.0),
         };
 
@@ -252,16 +257,15 @@ impl Component for StaticSettings {
 
 impl StaticSettings {
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._list_settings = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::GetObjectSettingsRequest {
-                    id: ctx.props().id.id,
-                })
-                .on_packet(ctx.link().callback(Msg::Initialize))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 
@@ -284,6 +288,20 @@ impl StaticSettings {
                 self.refresh(ctx);
                 Ok(true)
             }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._list_settings = self
+                    .channel
+                    .request()
+                    .body(api::GetObjectSettingsRequest {
+                        id: ctx.props().id.id,
+                    })
+                    .on_packet(ctx.link().callback(Msg::Initialize))
+                    .send();
+
+                Ok(true)
+            }
             Msg::ImagesRefresh => {
                 self.refresh(ctx);
                 Ok(false)
@@ -291,18 +309,19 @@ impl StaticSettings {
             Msg::ImageSelected(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::Rescale(ratio) => {
-                self._update_fixed_ratio = object_update(ctx, Key::RATIO, ratio);
+                self._update_fixed_ratio = object_update(&self.channel, ctx, Key::RATIO, ratio);
 
                 let Some(ratio) = ratio else {
                     return Ok(false);
                 };
 
                 *self.width = *self.height * ratio as f32;
-                self._update_dimensions = object_update(ctx, Key::STATIC_WIDTH, *self.width);
+                self._update_dimensions =
+                    object_update(&self.channel, ctx, Key::STATIC_WIDTH, *self.width);
 
                 Ok(true)
             }
@@ -319,7 +338,7 @@ impl StaticSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = object_update(ctx, Key::COLOR, color);
+                self._select_color = object_update(&self.channel, ctx, Key::COLOR, color);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -332,7 +351,7 @@ impl StaticSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::WidthChanged(e) => {
@@ -345,12 +364,13 @@ impl StaticSettings {
 
                     let width = width.clamp(0.05, 50.0);
                     *self.width = width;
-                    self._update_dimensions = object_update(ctx, Key::STATIC_WIDTH, width);
+                    self._update_dimensions =
+                        object_update(&self.channel, ctx, Key::STATIC_WIDTH, width);
 
                     if let Some(ratio) = *self.ratio {
                         *self.height = (*self.width / ratio).clamp(0.05, 50.0);
                         self._update_dimensions =
-                            object_update(ctx, Key::STATIC_HEIGHT, *self.height);
+                            object_update(&self.channel, ctx, Key::STATIC_HEIGHT, *self.height);
                     }
 
                     true
@@ -368,12 +388,13 @@ impl StaticSettings {
 
                     let height = height.clamp(0.05, 50.0);
                     *self.height = height;
-                    self._update_dimensions = object_update(ctx, Key::STATIC_HEIGHT, height);
+                    self._update_dimensions =
+                        object_update(&self.channel, ctx, Key::STATIC_HEIGHT, height);
 
                     if let Some(ratio) = *self.ratio {
                         *self.width = (*self.height * ratio).clamp(0.05, 50.0);
                         self._update_dimensions =
-                            object_update(ctx, Key::STATIC_WIDTH, *self.width);
+                            object_update(&self.channel, ctx, Key::STATIC_WIDTH, *self.width);
                     }
 
                     true
@@ -393,7 +414,8 @@ impl StaticSettings {
                     *self.ratio = None;
                 };
 
-                self._update_fixed_ratio = object_update(ctx, Key::RATIO, *self.ratio);
+                self._update_fixed_ratio =
+                    object_update(&self.channel, ctx, Key::RATIO, *self.ratio);
                 Ok(true)
             }
             Msg::ImageLoaded(msg) => {
@@ -414,7 +436,7 @@ impl StaticSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
                         if ctx.props().id != id {
                             return Ok(false);
                         }
@@ -508,9 +530,13 @@ impl StaticSettings {
     }
 }
 
-fn object_update(ctx: &Context<StaticSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
-    ctx.props()
-        .ws
+fn object_update(
+    channel: &ws::Channel,
+    ctx: &Context<StaticSettings>,
+    key: Key,
+    value: impl Into<Value>,
+) -> ws::Request {
+    channel
         .request()
         .body(api::ObjectUpdateBody {
             id: ctx.props().id.id,

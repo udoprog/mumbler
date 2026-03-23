@@ -18,6 +18,7 @@ use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
+use musli_web::api::ChannelId;
 use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
@@ -363,6 +364,7 @@ async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value
 }
 
 pub(crate) async fn updates(
+    channel: ChannelId,
     backend: &Backend,
     values: impl IntoIterator<Item = (Key, Value)>,
 ) -> Result<()> {
@@ -405,7 +407,11 @@ pub(crate) async fn updates(
         }
 
         backend.update(key, value.clone()).await?;
-        backend.broadcast(UpdateBody::Config { key, value });
+        backend.broadcast(UpdateBody::Config {
+            channel,
+            key,
+            value,
+        });
     }
 
     if restart_mumblelink {

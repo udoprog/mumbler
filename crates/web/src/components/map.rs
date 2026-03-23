@@ -6,6 +6,7 @@ use api::{
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -71,6 +72,7 @@ impl Inner {
 
     fn select_object(
         &mut self,
+        channel: &ws::Channel,
         ctx: &Context<Map>,
         id: RemoteId,
         config: &mut Config,
@@ -96,7 +98,8 @@ impl Inner {
         }
 
         *config.mumble_object = id;
-        self._toggle_mumble_request = updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
+        self._toggle_mumble_request =
+            channel.updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
     }
 
     fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, m: Vec3) {
@@ -365,6 +368,7 @@ pub(crate) struct Map {
     _create_static: ws::Request,
     _delete_object: ws::Request,
     _initialize: ws::Request,
+    _channel: ws::Request,
     _keydown_listener: EventListener,
     _keyup_listener: EventListener,
     _config_update_listener: ws::Listener,
@@ -381,6 +385,7 @@ pub(crate) struct Map {
     animation_interval: Option<Interval>,
     canvas_ref: NodeRef,
     canvas_sizer: NodeRef,
+    channel: ws::Channel,
     config: Config,
     drag_over: Option<DragOver>,
     drop_image: Option<DropImage>,
@@ -436,6 +441,7 @@ pub(crate) enum Msg {
     DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
     DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
     ImageMessage(ImageMessage),
+    Channel(Result<ws::Channel, ws::Error>),
     Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
@@ -524,6 +530,7 @@ impl Component for Map {
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
+            _channel: ws::Request::new(),
             _delete_object: ws::Request::new(),
             _initialize: ws::Request::new(),
             _keydown_listener,
@@ -544,6 +551,7 @@ impl Component for Map {
             canvas_ref: NodeRef::default(),
             canvas_sizer: NodeRef::default(),
             config: Config::default(),
+            channel: ws::Channel::default(),
             drag_over: None,
             drop_image: None,
             images: Images::new(),
@@ -616,7 +624,7 @@ impl Component for Map {
         }
 
         if self.update_world {
-            self._update_world = updates(ctx, self.config.world_values());
+            self._update_world = self.channel.updates(ctx, self.config.world_values());
             self.update_world = false;
         }
 
@@ -998,7 +1006,7 @@ impl Component for Map {
                                 </button>
                             </div>
                             <div class="modal-body">
-                                <RoomsPage ws={ctx.props().ws.clone()} />
+                                <RoomsPage {ws} />
                             </div>
                         </div>
                     </div>
@@ -1043,14 +1051,15 @@ impl Component for Map {
 
 impl Map {
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._initialize = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::InitializeMapRequest)
-                .on_packet(ctx.link().callback(Msg::Initialize))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 
@@ -1158,9 +1167,8 @@ impl Map {
             return Ok(false);
         };
 
-        self._upload_image = ctx
-            .props()
-            .ws
+        self._upload_image = self
+            .channel
             .request()
             .body(api::UploadImageRequest {
                 content_type: drop_image.content_type.clone(),
@@ -1227,6 +1235,18 @@ impl Map {
                 self.log = log;
                 Ok(false)
             }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._initialize = self
+                    .channel
+                    .request()
+                    .body(api::InitializeMapRequest)
+                    .on_packet(ctx.link().callback(Msg::Initialize))
+                    .send();
+
+                Ok(false)
+            }
             Msg::Initialize(body) => {
                 let body = body?;
                 let body = body.decode()?;
@@ -1277,7 +1297,15 @@ impl Map {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config { key, value } => {
+                    UpdateBody::Config {
+                        channel,
+                        key,
+                        value,
+                    } => {
+                        if channel != ChannelId::NONE && self.channel.id() == channel {
+                            return Ok(false);
+                        }
+
                         let changed = self.config.update(key, value);
 
                         if changed {
@@ -1389,14 +1417,30 @@ impl Map {
                         }
 
                         if self.s.selected == id {
-                            self.s
-                                .select_object(ctx, RemoteId::ZERO, &mut self.config, &objects);
+                            self.s.select_object(
+                                &self.channel,
+                                ctx,
+                                RemoteId::ZERO,
+                                &mut self.config,
+                                &objects,
+                            );
                         }
 
                         self.object_requests.remove(&id);
                         true
                     }
-                    RemoteUpdateBody::ObjectUpdated { id, key, value } => 'done: {
+                    RemoteUpdateBody::ObjectUpdated {
+                        channel,
+                        id,
+                        key,
+                        value,
+                    } => 'done: {
+                        tracing::warn!(?channel, this = ?self.channel.id());
+
+                        if channel != ChannelId::NONE && self.channel.id() == channel {
+                            break 'done false;
+                        }
+
                         let Some(o) = objects.get_mut(id) else {
                             break 'done false;
                         };
@@ -1506,9 +1550,8 @@ impl Map {
 
                 let transform = api::Transform::new(world_pos, api::Vec3::FORWARD);
 
-                self._create_dropped_object = ctx
-                    .props()
-                    .ws
+                self._create_dropped_object = self
+                    .channel
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::STATIC,
@@ -1551,22 +1594,22 @@ impl Map {
                 self.cancel_action();
 
                 let objects = self.objects.borrow();
-                self.s.select_object(ctx, id, &mut self.config, &objects);
+                self.s
+                    .select_object(&self.channel, ctx, id, &mut self.config, &objects);
                 Ok(true)
             }
             Msg::ToggleFollowMumbleSelection => {
                 *self.config.mumble_follow = !*self.config.mumble_follow;
 
-                self._set_mumble_follow = updates(
+                self._set_mumble_follow = self.channel.updates(
                     ctx,
                     vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
                 );
                 Ok(true)
             }
             Msg::CreateToken => {
-                self._create_object = ctx
-                    .props()
-                    .ws
+                self._create_object = self
+                    .channel
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::TOKEN,
@@ -1581,9 +1624,8 @@ impl Map {
                 Ok(false)
             }
             Msg::CreateStatic => {
-                self._create_static = ctx
-                    .props()
-                    .ws
+                self._create_static = self
+                    .channel
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::STATIC,
@@ -1600,9 +1642,8 @@ impl Map {
                 Ok(false)
             }
             Msg::CreateGroup => {
-                self._create_group = ctx
-                    .props()
-                    .ws
+                self._create_group = self
+                    .channel
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: api::Type::GROUP,
@@ -1639,9 +1680,8 @@ impl Map {
                 Ok(true)
             }
             Msg::RemoveObject(id) => {
-                self._delete_object = ctx
-                    .props()
-                    .ws
+                self._delete_object = self
+                    .channel
                     .request()
                     .body(api::RemoveObjectRequest { id: id.id })
                     .on_packet(ctx.link().callback(Msg::ObjectRemoved))
@@ -1735,7 +1775,7 @@ impl Map {
 
                 if self.s.selected.is_zero() || hit.is_token() {
                     self.s
-                        .select_object(ctx, hit.id, &mut self.config, &objects);
+                        .select_object(&self.channel, ctx, hit.id, &mut self.config, &objects);
 
                     // For token selection, we want to avoid "stutter", so we
                     // don't immediately start translating.
@@ -1862,13 +1902,18 @@ impl Map {
                 if (width - *s.width).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
                     requests._scale_width =
-                        object_update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
+                        self.channel
+                            .object_update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
                 }
 
                 if (height - *s.height).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
-                    requests._scale_height =
-                        object_update(ctx, scale.object_id, Key::STATIC_HEIGHT, height);
+                    requests._scale_height = self.channel.object_update(
+                        ctx,
+                        scale.object_id,
+                        Key::STATIC_HEIGHT,
+                        height,
+                    );
                 }
             }
             ObjectKind::Token(t) => {
@@ -1877,7 +1922,8 @@ impl Map {
                 if (radius - *t.token_radius).abs() > f32::EPSILON {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
                     requests._scale_radius =
-                        object_update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
+                        self.channel
+                            .object_update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
                 }
             }
             _ => {}
@@ -2089,7 +2135,9 @@ impl Map {
                 continue;
             };
 
-            let req = object_update(ctx, id, Key::TRANSFORM, *transform);
+            let req = self
+                .channel
+                .object_update(ctx, id, Key::TRANSFORM, *transform);
             self.transform_requests.insert(id, req);
         }
     }
@@ -2107,7 +2155,9 @@ impl Map {
                 continue;
             };
 
-            let req = object_update(ctx, id, Key::LOOK_AT, o.look_at().copied());
+            let req = self
+                .channel
+                .object_update(ctx, id, Key::LOOK_AT, o.look_at().copied());
             self.look_at_requests.insert(id, req);
         }
     }
@@ -2430,11 +2480,15 @@ impl Map {
         let old_sort = o_sort.replace(new_sort);
 
         if old_group.is_some() {
-            self._set_group = self::object_update(ctx, id, Key::GROUP, Value::from(o_group.id));
+            self._set_group =
+                self.channel
+                    .object_update(ctx, id, Key::GROUP, Value::from(o_group.id));
         }
 
         if old_sort.is_some() {
-            self._set_sort = self::object_update(ctx, id, Key::SORT, Value::from(&o_sort[..]));
+            self._set_sort =
+                self.channel
+                    .object_update(ctx, id, Key::SORT, Value::from(&o_sort[..]));
         }
 
         if old_sort.is_some() || old_group.is_some() {
@@ -2466,8 +2520,9 @@ impl Map {
 
         *self.config.mumble_object = update;
 
-        self.s._toggle_mumble_request =
-            updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update.id))]);
+        self.s._toggle_mumble_request = self
+            .channel
+            .updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update.id))]);
 
         Ok(true)
     }
@@ -2489,7 +2544,9 @@ impl Map {
 
         let new = !**locked;
         **locked = new;
-        self._toggle_locked = object_update(ctx, id, Key::LOCKED, Value::from(new));
+        self._toggle_locked = self
+            .channel
+            .object_update(ctx, id, Key::LOCKED, Value::from(new));
         self.s.redraw = true;
         Ok(true)
     }
@@ -2511,7 +2568,7 @@ impl Map {
         *object.hidden = new_hidden;
 
         let requests = self.object_requests.entry(id).or_default();
-        requests._toggle_hidden = object_update(ctx, id, Key::HIDDEN, new_hidden);
+        requests._toggle_hidden = self.channel.object_update(ctx, id, Key::HIDDEN, new_hidden);
         Ok(true)
     }
 
@@ -2532,7 +2589,9 @@ impl Map {
         *object.local_hidden = new_local_hidden;
 
         let requests = self.object_requests.entry(id).or_default();
-        requests._toggle_local_hidden = object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
+        requests._toggle_local_hidden =
+            self.channel
+                .object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
         Ok(true)
     }
 
@@ -2557,7 +2616,9 @@ impl Map {
         **expanded = new_expanded;
 
         let requests = self.object_requests.entry(id).or_default();
-        requests._expanded = object_update(ctx, id, Key::EXPANDED, new_expanded);
+        requests._expanded = self
+            .channel
+            .object_update(ctx, id, Key::EXPANDED, new_expanded);
         Ok(true)
     }
 
@@ -2648,29 +2709,40 @@ impl Map {
     }
 }
 
-fn object_update(
-    ctx: &Context<Map>,
-    id: RemoteId,
-    key: Key,
-    value: impl Into<Value>,
-) -> ws::Request {
-    ctx.props()
-        .ws
-        .request()
-        .body(api::ObjectUpdateBody {
-            id: id.id,
-            key,
-            value: value.into(),
-        })
-        .on_packet(ctx.link().callback(Msg::UpdateResult))
-        .send()
+trait ChannelExt {
+    fn object_update(
+        &self,
+        ctx: &Context<Map>,
+        id: RemoteId,
+        key: Key,
+        value: impl Into<Value>,
+    ) -> ws::Request;
+
+    fn updates(&self, ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request;
 }
 
-fn updates(ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
-    ctx.props()
-        .ws
-        .request()
-        .body(api::UpdatesRequest { values })
-        .on_packet(ctx.link().callback(Msg::ConfigResult))
-        .send()
+impl ChannelExt for ws::Channel {
+    fn object_update(
+        &self,
+        ctx: &Context<Map>,
+        id: RemoteId,
+        key: Key,
+        value: impl Into<Value>,
+    ) -> ws::Request {
+        self.request()
+            .body(api::ObjectUpdateBody {
+                id: id.id,
+                key,
+                value: value.into(),
+            })
+            .on_packet(ctx.link().callback(Msg::UpdateResult))
+            .send()
+    }
+
+    fn updates(&self, ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
+        self.request()
+            .body(api::UpdatesRequest { values })
+            .on_packet(ctx.link().callback(Msg::ConfigResult))
+            .send()
+    }
 }

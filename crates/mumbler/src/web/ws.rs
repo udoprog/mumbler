@@ -66,26 +66,26 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UpdatesRequest>()
                     .context("missing request")?;
 
-                super::updates(&self.backend, request.values).await?;
+                super::updates(incoming.channel(), &self.backend, request.values).await?;
                 outgoing.write(api::Empty);
             }
             api::Request::ObjectUpdate => {
-                let request = incoming
+                let body = incoming
                     .read::<api::ObjectUpdateBody>()
                     .context("missing request")?;
 
-                super::object_update(&self.backend, request.id, request.key, &request.value)
-                    .await?;
+                super::object_update(&self.backend, body.id, body.key, &body.value).await?;
 
                 self.database_updates
-                    .insert((request.id, request.key), request.value.clone());
+                    .insert((body.id, body.key), body.value.clone());
 
                 self.database_updates_notify.notify_one();
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
-                    id: RemoteId::local(request.id),
-                    key: request.key,
-                    value: request.value,
+                    channel: incoming.channel(),
+                    id: RemoteId::local(body.id),
+                    key: body.key,
+                    value: body.value,
                 });
 
                 outgoing.write(api::Empty);

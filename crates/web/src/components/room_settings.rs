@@ -12,6 +12,8 @@ use crate::state::State;
 use super::{ImageUpload, into_target};
 
 pub(crate) enum Msg {
+    StateChanged(ws::State),
+    Channel(Result<ws::Channel, ws::Error>),
     ExtentXMinChanged(Event),
     ExtentXMaxChanged(Event),
     ExtentYMinChanged(Event),
@@ -23,7 +25,6 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SetLog(log::Log),
     ShowGridChanged(Event),
-    StateChanged(ws::State),
     UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
@@ -50,6 +51,8 @@ pub(crate) struct RoomSettings {
     name: State<Option<String>>,
     show_grid: State<bool>,
     state: ws::State,
+    _channel: ws::Request,
+    channel: ws::Channel,
 }
 
 impl Component for RoomSettings {
@@ -88,6 +91,8 @@ impl Component for RoomSettings {
             name: State::new(None),
             show_grid: State::new(true),
             state,
+            _channel: ws::Request::new(),
+            channel: ws::Channel::default(),
         };
 
         this.refresh(ctx);
@@ -178,7 +183,7 @@ impl Component for RoomSettings {
                 </section>
 
                 <ImageUpload
-                    ws={ctx.props().ws.clone()}
+                    ws={&ctx.props().ws}
                     images={self.images.clone()}
                     selected={*self.background}
                     sizing={api::ImageSizing::Crop}
@@ -202,14 +207,15 @@ impl Component for RoomSettings {
 
 impl RoomSettings {
     fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._list_settings = ctx
+        if self.state.is_open() {
+            self._channel = ctx
                 .props()
                 .ws
-                .request()
-                .body(api::GetObjectSettingsRequest { id: ctx.props().id })
-                .on_packet(ctx.link().callback(Msg::GetObjectSettings))
+                .channel()
+                .on_open(ctx.link().callback(Msg::Channel))
                 .send();
+        } else {
+            self.channel = ws::Channel::default();
         }
     }
 
@@ -218,6 +224,18 @@ impl RoomSettings {
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
+                Ok(true)
+            }
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+
+                self._list_settings = self
+                    .channel
+                    .request()
+                    .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                    .on_packet(ctx.link().callback(Msg::GetObjectSettings))
+                    .send();
+
                 Ok(true)
             }
             Msg::GetObjectSettings(result) => {
@@ -237,42 +255,47 @@ impl RoomSettings {
             }
             Msg::ImageSelected(id) => {
                 *self.background = id;
-                self._select_background = object_update(ctx, Key::ROOM_BACKGROUND, id);
+                self._select_background =
+                    object_update(&self.channel, ctx, Key::ROOM_BACKGROUND, id);
                 Ok(true)
             }
             Msg::ShowGridChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let value = input.checked();
                 *self.show_grid = value;
-                self._update_show_grid = object_update(ctx, Key::SHOW_GRID, value);
+                self._update_show_grid = object_update(&self.channel, ctx, Key::SHOW_GRID, value);
                 Ok(true)
             }
             Msg::ExtentXMinChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
                 self.extent.x.start = v.min(self.extent.x.end);
-                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                self._update_extent =
+                    object_update(&self.channel, ctx, Key::ROOM_EXTENT, *self.extent);
                 Ok(true)
             }
             Msg::ExtentXMaxChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
                 self.extent.x.end = v.max(self.extent.x.start);
-                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                self._update_extent =
+                    object_update(&self.channel, ctx, Key::ROOM_EXTENT, *self.extent);
                 Ok(true)
             }
             Msg::ExtentYMinChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
                 self.extent.y.start = v.min(self.extent.y.end);
-                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                self._update_extent =
+                    object_update(&self.channel, ctx, Key::ROOM_EXTENT, *self.extent);
                 Ok(true)
             }
             Msg::ExtentYMaxChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
                 self.extent.y.end = v.max(self.extent.y.start);
-                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                self._update_extent =
+                    object_update(&self.channel, ctx, Key::ROOM_EXTENT, *self.extent);
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -284,7 +307,7 @@ impl RoomSettings {
             }
             Msg::UpdateName(name) => {
                 *self.name = name.clone();
-                self._update_name = object_update(ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
                 Ok(true)
             }
             Msg::RemoteUpdate(body) => {
@@ -292,7 +315,7 @@ impl RoomSettings {
                 let body = body.decode()?;
 
                 let changed = match body {
-                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
                         if id.id != ctx.props().id {
                             return Ok(false);
                         }
@@ -329,9 +352,13 @@ impl RoomSettings {
     }
 }
 
-fn object_update(ctx: &Context<RoomSettings>, key: Key, value: impl Into<Value>) -> ws::Request {
-    ctx.props()
-        .ws
+fn object_update(
+    channel: &ws::Channel,
+    ctx: &Context<RoomSettings>,
+    key: Key,
+    value: impl Into<Value>,
+) -> ws::Request {
+    channel
         .request()
         .body(api::ObjectUpdateBody {
             id: ctx.props().id,

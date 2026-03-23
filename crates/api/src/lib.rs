@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
 use musli_core::{Decode, Encode};
-use musli_web::api;
+use musli_web::api::{self, ChannelId};
 
 crate::macros::ids! {
     /// The role of an image.
@@ -787,7 +787,11 @@ pub enum NotificationBody {
 #[musli(crate = musli_core)]
 pub enum UpdateBody {
     /// A configuration change has occured.
-    Config { key: Key, value: Value },
+    Config {
+        channel: ChannelId,
+        key: Key,
+        value: Value,
+    },
     /// The local peer id has been updated, likely because of a configuration
     /// change.
     PublicKey { public_key: PublicKey },
@@ -824,6 +828,8 @@ pub enum RemoteUpdateBody {
         peer_id: PeerId,
     },
     ObjectUpdated {
+        /// The channel from which this update originated.
+        channel: ChannelId,
         id: RemoteId,
         key: Key,
         value: Value,

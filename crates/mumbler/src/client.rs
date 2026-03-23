@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use anyhow::{Context as _, Result, anyhow, bail};
 use api::{Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
 use async_fuse::Fuse;
+use musli_web::api::ChannelId;
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Sleep};
 
@@ -197,6 +198,7 @@ async fn handle_peer(
                 object.props.insert(body.key, body.value.clone());
 
                 b.broadcast(RemoteUpdateBody::ObjectUpdated {
+                    channel: ChannelId::NONE,
                     id: RemoteId::new(body.peer_id, body.object_id),
                     key: body.key,
                     value: body.value,
@@ -255,7 +257,7 @@ async fn handle_peer(
                 }
 
                 if remove_room {
-                    crate::web::updates(b, [(Key::ROOM, Value::empty())]).await?;
+                    crate::web::updates(ChannelId::NONE, b, [(Key::ROOM, Value::empty())]).await?;
                 }
             }
             Event::ImageRemoved => {
