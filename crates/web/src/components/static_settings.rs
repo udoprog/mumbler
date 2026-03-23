@@ -1,43 +1,33 @@
 use api::{Color, Id, Key, PublicKey, RemoteId, RemoteUpdateBody, UpdateBody, Value};
-use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement};
 use yew::prelude::*;
 
-use crate::components::Icon;
 use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::state::State;
 
-use super::{CropModal, ImageGalleryModal, into_target, render};
+use super::{ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
-    CloseGallery,
     ColorChanged(Event),
-    CropCancelled,
-    CropConfirmed(api::CropRegion),
-    DeleteImage(Id),
-    DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
     FixedRatioChanged(Event),
-    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     HeightChanged(Event),
-    ImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
     ImageLoaded(ImageMessage),
-    ImageSelected(Event),
-    ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    Update(Result<Packet<api::Update>, ws::Error>),
+    ImageSelected(Id),
+    ImagesRefresh,
+    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     NameChanged(Event),
-    OpenGallery,
+    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    SelectImage(Id),
     SetLog(log::Log),
     StateChanged(ws::State),
+    Update(Result<Packet<api::Update>, ws::Error>),
     UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     WidthChanged(Event),
@@ -50,8 +40,6 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct StaticSettings {
-    _delete_image: ws::Request,
-    _file_reader: Option<FileReader>,
     _list_settings: ws::Request,
     _remote_update_listener: ws::Listener,
     _update_listener: ws::Listener,
@@ -63,11 +51,7 @@ pub(crate) struct StaticSettings {
     _update_fixed_ratio: ws::Request,
     _update_name: ws::Request,
     color: State<Option<api::Color>>,
-    crop_source_data: Option<(String, Vec<u8>)>,
-    crop_source_url: Option<String>,
-    gallery_open: bool,
     height: State<f32>,
-    image_uploading: bool,
     image: State<Id>,
     images: Vec<api::Image>,
     public_key: PublicKey,
@@ -77,7 +61,6 @@ pub(crate) struct StaticSettings {
     preview_images: Images<Self>,
     ratio: State<Option<f32>>,
     state: ws::State,
-    upload_image: ws::Request,
     width: State<f32>,
 }
 
@@ -114,8 +97,6 @@ impl Component for StaticSettings {
             .on_broadcast::<api::Update>(ctx.link().callback(Msg::Update));
 
         let mut this = Self {
-            _delete_image: ws::Request::new(),
-            _file_reader: None,
             _list_settings: ws::Request::new(),
             _remote_update_listener,
             _update_listener,
@@ -127,11 +108,7 @@ impl Component for StaticSettings {
             _update_fixed_ratio: ws::Request::new(),
             _update_name: ws::Request::new(),
             color: State::new(None),
-            crop_source_data: None,
-            crop_source_url: None,
-            gallery_open: false,
             height: State::new(1.0),
-            image_uploading: false,
             image: State::new(Id::ZERO),
             images: Vec::new(),
             public_key: PublicKey::ZERO,
@@ -141,7 +118,6 @@ impl Component for StaticSettings {
             preview_images: Images::new(),
             ratio: State::new(None),
             state,
-            upload_image: ws::Request::new(),
             width: State::new(1.0),
         };
 
@@ -248,26 +224,18 @@ impl Component for StaticSettings {
                         {current_ratio}
                     </section>
 
-                    <section class="btn-group">
-                        <label for="static-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
-                            {"Upload"}
-                            <Icon name="arrow-up-on-square" />
-                        </label>
-
-                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            {"Gallery"}
-                            <Icon name="photo" />
-                        </button>
-
-                        <input
-                            id="static-file"
-                            class="hidden"
-                            title="Upload image"
-                            type="file"
-                            accept="image/*"
-                            onchange={ctx.link().callback(Msg::ImageSelected)}
-                            />
-                    </section>
+                    <ImageUpload
+                        ws={ctx.props().ws.clone()}
+                        images={self.images.clone()}
+                        selected={*self.image}
+                        sizing={api::ImageSizing::Crop}
+                        size={512}
+                        crop_ratio={Some((*self.width / *self.height) as f64)}
+                        input_id="static-file"
+                        onselect={ctx.link().callback(Msg::ImageSelected)}
+                        onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
+                        onrescale={ctx.link().callback(Msg::Rescale)}
+                    />
                 </div>
 
                 <div class="col-4 rows">
@@ -276,26 +244,6 @@ impl Component for StaticSettings {
                     </section>
                 </div>
             </div>
-
-            if self.gallery_open {
-                <ImageGalleryModal
-                    images={self.images.clone()}
-                    selected={*self.image}
-                    onselect={ctx.link().callback(Msg::SelectImage)}
-                    ondelete={ctx.link().callback(Msg::DeleteImage)}
-                    onclose={ctx.link().callback(|_| Msg::CloseGallery)}
-                />
-            }
-
-            if let Some(src) = &self.crop_source_url {
-                <CropModal
-                    source_url={src.clone()}
-                    ratio={(*self.width / *self.height) as f64}
-                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
-                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
-                    rescale={ctx.link().callback(Msg::Rescale)}
-                />
-            }
             </>
         }
     }
@@ -335,66 +283,14 @@ impl StaticSettings {
                 self.refresh(ctx);
                 Ok(true)
             }
-            Msg::ImageSelected(e) => {
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                self.crop_source_data = None;
-
-                let input = into_target!(e, HtmlInputElement);
-
-                let files = input.files().ok_or("no file list")?;
-                let file = files.get(0).ok_or("no file selected")?;
-
-                if let Ok(url) = Url::create_object_url_with_blob(&file) {
-                    self.crop_source_url = Some(url);
-                }
-
-                let content_type = file.type_();
-                let gloo_file = gloo::file::File::from(file);
-                let link = ctx.link().clone();
-                self._file_reader = Some(read_as_bytes(&gloo_file, move |res| {
-                    link.send_message(Msg::ImageData(content_type.clone(), res));
-                }));
-
-                Ok(true)
-            }
-            Msg::ImageData(content_type, result) => {
-                self._file_reader = None;
-                let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
-                self.crop_source_data = Some((content_type, data));
+            Msg::ImagesRefresh => {
+                self.refresh(ctx);
                 Ok(false)
             }
-            Msg::CropConfirmed(crop) => {
-                let Some((content_type, data)) = self.crop_source_data.take() else {
-                    return Err("image data not ready".into());
-                };
-
-                self.upload_image = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UploadImageRequest {
-                        content_type,
-                        data,
-                        crop,
-                        sizing: api::ImageSizing::Crop,
-                        size: 512,
-                    })
-                    .on_packet(ctx.link().callback(Msg::ImageUploaded))
-                    .send();
-
-                self.image_uploading = true;
-                Ok(true)
-            }
-            Msg::CropCancelled => {
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                self.crop_source_data = None;
-                self._file_reader = None;
+            Msg::ImageSelected(id) => {
+                *self.image = id;
+                self.load_preview_image(ctx);
+                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
             Msg::Rescale(ratio) => {
@@ -408,41 +304,6 @@ impl StaticSettings {
                 self._update_dimensions = object_update(ctx, Key::STATIC_WIDTH, *self.width);
 
                 Ok(true)
-            }
-            Msg::ImageUploaded(body) => {
-                let body = body?;
-                let body = body.decode()?;
-
-                self.image_uploading = false;
-
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                ctx.link().send_message(Msg::SelectImage(body.id));
-                self.refresh(ctx);
-                Ok(false)
-            }
-            Msg::SelectImage(id) => {
-                *self.image = id;
-                self.load_preview_image(ctx);
-                self._select_image = object_update(ctx, Key::IMAGE_ID, id);
-                Ok(true)
-            }
-            Msg::DeleteImage(id) => {
-                self._delete_image = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::DeleteImageRequest { id })
-                    .on_packet(ctx.link().callback(Msg::DeleteImageResult))
-                    .send();
-                Ok(false)
-            }
-            Msg::DeleteImageResult(result) => {
-                result?;
-                self.refresh(ctx);
-                Ok(false)
             }
             Msg::ColorChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -575,14 +436,6 @@ impl StaticSettings {
                     }
                     _ => Ok(false),
                 }
-            }
-            Msg::OpenGallery => {
-                self.gallery_open = true;
-                Ok(true)
-            }
-            Msg::CloseGallery => {
-                self.gallery_open = false;
-                Ok(true)
             }
         }
     }

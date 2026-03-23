@@ -33,6 +33,9 @@ pub(crate) use self::object_settings::TokenSettings;
 mod static_settings;
 pub(crate) use self::static_settings::StaticSettings;
 
+mod image_upload;
+pub(crate) use self::image_upload::ImageUpload;
+
 mod group_settings;
 pub(crate) use self::group_settings::GroupSettings;
 

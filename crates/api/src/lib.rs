@@ -214,7 +214,7 @@ pub struct UpdateLookAtRequest {
     pub look_at: Option<Vec3>,
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub enum ImageSizing {
     /// The crop region determines the sizing.

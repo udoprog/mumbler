@@ -1,40 +1,28 @@
 use api::{Color, Id, Image, Key, PublicKey, RemoteId, RemoteUpdateBody, Value};
-use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement, Url};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement};
 use yew::prelude::*;
 
-use crate::components::Icon;
 use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
 use crate::images::{ImageMessage, Images};
 use crate::log;
 use crate::state::State;
 
-use super::CropModal;
-use super::ImageGalleryModal;
-use super::{into_target, render};
+use super::{ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
-    AvatarImageData(String, Result<Vec<u8>, gloo::file::FileReadError>),
-    AvatarImageSelected(Event),
-    CloseGallery,
     ColorChanged(Event),
-    CropCancelled,
-    CropConfirmed(api::CropRegion),
-    DeleteImage(Id),
-    DeleteImageResult(Result<Packet<api::DeleteImage>, ws::Error>),
-    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageLoaded(ImageMessage),
-    ImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
+    ImageSelected(Id),
+    ImagesRefresh,
+    Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     NameChanged(Event),
-    OpenGallery,
     RadiusChanged(Event),
+    RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectColor(api::Color),
-    SelectImage(Id),
     SetLog(log::Log),
     SpeedChanged(Event),
     StateChanged(ws::State),
@@ -49,8 +37,6 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct TokenSettings {
-    _delete_image: ws::Request,
-    _file_reader: Option<FileReader>,
     _list_settings: ws::Request,
     _remote_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
@@ -60,10 +46,6 @@ pub(crate) struct TokenSettings {
     _update_name: ws::Request,
     _update_radius: ws::Request,
     color: State<Option<api::Color>>,
-    crop_source_data: Option<(String, Vec<u8>)>,
-    crop_source_url: Option<String>,
-    gallery_open: bool,
-    image_uploading: bool,
     image: State<Id>,
     images: Vec<Image>,
     public_key: PublicKey,
@@ -74,7 +56,6 @@ pub(crate) struct TokenSettings {
     speed: State<f32>,
     state: ws::State,
     token_radius: State<f32>,
-    upload_image: ws::Request,
 }
 
 impl From<ImageMessage> for Msg {
@@ -105,8 +86,6 @@ impl Component for TokenSettings {
             .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
 
         let mut this = Self {
-            _delete_image: ws::Request::new(),
-            _file_reader: None,
             _list_settings: ws::Request::new(),
             _remote_update_listener,
             _log_handle,
@@ -116,10 +95,6 @@ impl Component for TokenSettings {
             _update_name: ws::Request::new(),
             _update_radius: ws::Request::new(),
             color: State::new(None),
-            crop_source_data: None,
-            crop_source_url: None,
-            gallery_open: false,
-            image_uploading: false,
             image: State::new(Id::ZERO),
             images: Vec::new(),
             public_key: PublicKey::ZERO,
@@ -130,7 +105,6 @@ impl Component for TokenSettings {
             speed: State::new(5.0),
             state,
             token_radius: State::new(0.25),
-            upload_image: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -215,26 +189,16 @@ impl Component for TokenSettings {
                             />
                     </section>
 
-                    <section class="input-group">
-                        <label for="token-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
-                            {"Upload"}
-                            <Icon name="arrow-up-on-square" />
-                        </label>
-
-                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                            {"Gallery"}
-                            <Icon name="photo" />
-                        </button>
-
-                        <input
-                            id="token-file"
-                            class="hidden"
-                            title="Upload image"
-                            type="file"
-                            accept="image/*"
-                            onchange={ctx.link().callback(Msg::AvatarImageSelected)}
-                            />
-                    </section>
+                    <ImageUpload
+                        ws={ctx.props().ws.clone()}
+                        images={self.images.clone()}
+                        selected={*self.image}
+                        sizing={api::ImageSizing::Square}
+                        size={128}
+                        input_id="token-file"
+                        onselect={ctx.link().callback(Msg::ImageSelected)}
+                        onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
+                    />
                 </div>
 
                 <div class="col-4 rows">
@@ -243,25 +207,6 @@ impl Component for TokenSettings {
                     </section>
                 </div>
             </div>
-
-            if self.gallery_open {
-                <ImageGalleryModal
-                    images={self.images.clone()}
-                    selected={*self.image}
-                    onselect={ctx.link().callback(Msg::SelectImage)}
-                    ondelete={ctx.link().callback(Msg::DeleteImage)}
-                    onclose={ctx.link().callback(|_| Msg::CloseGallery)}
-                />
-            }
-
-            if let Some(src) = &self.crop_source_url {
-                <CropModal
-                    source_url={src.clone()}
-                    ratio={1.0}
-                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
-                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
-                />
-            }
             </>
         }
     }
@@ -301,101 +246,15 @@ impl TokenSettings {
                 self.public_key = body.public_key;
                 Ok(true)
             }
-            Msg::AvatarImageSelected(e) => {
-                let input = into_target!(e, HtmlInputElement);
-
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                self.crop_source_data = None;
-
-                let files = input.files().ok_or("no file list")?;
-                let file = files.get(0).ok_or("no file selected")?;
-
-                if let Ok(url) = Url::create_object_url_with_blob(&file) {
-                    self.crop_source_url = Some(url);
-                }
-
-                let content_type = file.type_();
-                let gloo_file = gloo::file::File::from(file);
-                let link = ctx.link().clone();
-                self._file_reader = Some(read_as_bytes(&gloo_file, move |res| {
-                    link.send_message(Msg::AvatarImageData(content_type.clone(), res));
-                }));
-
-                Ok(true)
-            }
-            Msg::AvatarImageData(content_type, result) => {
-                self._file_reader = None;
-                let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
-                self.crop_source_data = Some((content_type, data));
-                Ok(false)
-            }
-            Msg::CropConfirmed(crop) => {
-                let Some((content_type, data)) = self.crop_source_data.take() else {
-                    return Err("image data not ready".into());
-                };
-
-                self.upload_image = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::UploadImageRequest {
-                        content_type,
-                        data,
-                        crop,
-                        sizing: api::ImageSizing::Square,
-                        size: 128,
-                    })
-                    .on_packet(ctx.link().callback(Msg::ImageUploaded))
-                    .send();
-
-                self.image_uploading = true;
-                Ok(true)
-            }
-            Msg::CropCancelled => {
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-                self.crop_source_data = None;
-                self._file_reader = None;
-                Ok(true)
-            }
-            Msg::ImageUploaded(body) => {
-                let body = body?;
-                let body = body.decode()?;
-
-                self.image_uploading = false;
-
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
-                ctx.link().send_message(Msg::SelectImage(body.id));
+            Msg::ImagesRefresh => {
                 self.refresh(ctx);
                 Ok(false)
             }
-            Msg::SelectImage(id) => {
+            Msg::ImageSelected(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
                 self._select_image = object_update(ctx, Key::IMAGE_ID, id);
                 Ok(true)
-            }
-            Msg::DeleteImage(id) => {
-                self._delete_image = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::DeleteImageRequest { id })
-                    .on_packet(ctx.link().callback(Msg::DeleteImageResult))
-                    .send();
-                Ok(false)
-            }
-            Msg::DeleteImageResult(result) => {
-                result?;
-                self.refresh(ctx);
-                Ok(false)
             }
             Msg::ColorChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -485,14 +344,6 @@ impl TokenSettings {
                 };
 
                 Ok(changed)
-            }
-            Msg::OpenGallery => {
-                self.gallery_open = true;
-                Ok(true)
-            }
-            Msg::CloseGallery => {
-                self.gallery_open = false;
-                Ok(true)
             }
         }
     }
