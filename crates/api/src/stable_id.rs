@@ -27,8 +27,15 @@ impl StableId {
     };
 
     /// Construct a new room.
+    #[inline]
     pub fn new(public_key: PublicKey, id: Id) -> Self {
         Self { public_key, id }
+    }
+
+    /// Whether the stable identifier is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.public_key.is_zero() && self.id.is_zero()
     }
 }
 

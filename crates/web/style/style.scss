@@ -108,10 +108,10 @@ h6 {
     display: flex;
     align-items: center;
     flex-direction: row;
-    gap: 0.25em;
+    gap: $text-gap;
     cursor: pointer;
     font-size: 14px;
-    padding: 0.25em 0.75em;
+    padding: 0.25em 0.5em;
     border: none;
     border-radius: $border-radius;
     box-sizing: border-box;
@@ -167,7 +167,7 @@ h6 {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 0.5em;
+        padding: 0.25em;
         aspect-ratio: 1;
 
         &.sm {
@@ -475,7 +475,7 @@ canvas#map {
     }
 
     &.static {
-        gap: 0.25em;
+        gap: $text-gap;
     }
 
     &.dragging {
@@ -488,7 +488,7 @@ canvas#map {
         user-select: none;
         display: flex;
         align-items: center;
-        gap: 0.25em;
+        gap: $text-gap;
         padding: 0.25em;
         user-select: none;
         font-size: 0.8em;
@@ -527,7 +527,7 @@ canvas#map {
         cursor: pointer;
         display: flex;
         align-items: center;
-        gap: 0.25em;
+        gap: $text-gap;
         padding: 0.25em;
         user-select: none;
         font-size: 0.8em;
@@ -549,12 +549,22 @@ canvas#map {
     }
 
     &-label {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
         flex: 1;
+        gap: $text-gap;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
         min-width: 0;
     }
+}
+
+.sublabel {
+    font-size: 0.85em;
+    color: var(--text-color-muted);
+    white-space: nowrap;
 }
 
 .crop-area {

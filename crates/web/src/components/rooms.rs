@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::log;
 use crate::peers::Peers;
 
-use super::{COMMON_ROOM_NAME, Icon};
+use super::{COMMON_ROOM, Icon};
 
 pub(crate) enum Msg {
     StateChanged(ws::State),
@@ -173,7 +173,7 @@ impl Component for Rooms {
                 <section class="list" key="rooms-list">
                     <div class={no_room_class} key="no-room" onclick={on_no_room_click}>
                         <Icon name="question-mark-circle" invert={true} />
-                        <span class="list-label">{COMMON_ROOM_NAME}</span>
+                        <span class="list-label">{COMMON_ROOM}</span>
                         <span class="bullet" title="Players not in a room">{no_room_count}</span>
                     </div>
 
@@ -206,6 +206,14 @@ impl Rooms {
         });
 
         let room_icon = if is_local { "home" } else { "home-modern" };
+
+        let owner = if is_local {
+            Some("you".to_string())
+        } else {
+            self.peers
+                .by_public_key(&room.id.public_key)
+                .map(|peer| peer.display())
+        };
 
         let title = if is_local {
             "Room owned by you".to_string()
@@ -253,7 +261,13 @@ impl Rooms {
         html! {
             <div class={row_class} key={room.id} onclick={on_row_click}>
                 <Icon name={room_icon} invert={true} title={title.clone()} />
-                <span class="list-label" title={title.clone()}>{&room.name}</span>
+                <span class="list-label" title={title.clone()}>
+                    <span>{&room.name}</span>
+
+                    if let Some(owner) = &owner {
+                        <span class="sublabel">{owner.clone()}</span>
+                    }
+                </span>
                 {settings_button}
                 {delete_button}
                 <span class="bullet" title="Players in this room">{peer_count}</span>

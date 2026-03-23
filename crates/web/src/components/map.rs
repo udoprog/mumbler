@@ -29,8 +29,8 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    COMMON_ROOM_NAME, GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings,
-    TokenSettings,
+    COMMON_ROOM, GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings, TokenSettings,
+    UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -699,17 +699,24 @@ impl Component for Map {
             }
         };
 
-        let current_room_name = if *self.config.room == StableId::ZERO {
-            String::from(COMMON_ROOM_NAME)
-        } else {
-            let remote_id = self.peers.to_remote_id(&self.config.room);
-            let objects = self.objects.borrow();
+        let (room_icon, room_name) = 'done: {
+            if self.config.room.is_zero() {
+                break 'done ("question-mark-circle", String::from(COMMON_ROOM));
+            }
 
-            objects
-                .get(remote_id)
-                .and_then(|o| o.name())
-                .unwrap_or("Unknown Room")
-                .to_owned()
+            let remote_id = self.peers.to_remote_id(&self.config.room);
+
+            let Some(o) = objects.get(remote_id) else {
+                break 'done ("question-mark-circle", String::from(UNKNOWN_ROOM));
+            };
+
+            let icon = if o.id.is_local() {
+                "home"
+            } else {
+                "home-modern"
+            };
+
+            (icon, o.name().unwrap_or(UNKNOWN_ROOM).to_owned())
         };
 
         let toolbar = {
@@ -862,8 +869,8 @@ impl Component for Map {
                     {locked}
                     <section class="icon-group">
                         <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenRooms)}>
-                            <Icon name="link" />
-                            <span>{current_room_name}</span>
+                            <Icon name={room_icon} />
+                            <span>{room_name}</span>
                         </button>
                     </section>
                     <div class="fill"></div>

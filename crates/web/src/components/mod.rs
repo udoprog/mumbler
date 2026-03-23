@@ -59,7 +59,8 @@ use self::help_modal::HelpModal;
 
 use yew::prelude::*;
 
-const COMMON_ROOM_NAME: &str = "Foyer";
+const UNKNOWN_ROOM: &str = "Unknown Room";
+const COMMON_ROOM: &str = "Foyer";
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct IconProps {
