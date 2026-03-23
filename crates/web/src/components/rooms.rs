@@ -23,8 +23,6 @@ pub(crate) enum Msg {
     ConnectResult(Result<Packet<api::Updates>, ws::Error>),
     CreateRoom,
     CreateRoomResult(Result<Packet<api::CreateObject>, ws::Error>),
-    DeleteRoom(Id),
-    DeleteRoomResult(Result<Packet<api::RemoveObject>, ws::Error>),
     ContextUpdate(log::Log),
 }
 
@@ -32,6 +30,7 @@ pub(crate) enum Msg {
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
     pub(crate) onopensettings: Callback<Id>,
+    pub(crate) onrequestdelete: Callback<(Id, String)>,
 }
 
 struct Room {
@@ -120,7 +119,6 @@ pub(crate) struct Rooms {
     _config_listener: ws::Listener,
     _connect_room_request: ws::Request,
     _create_room_request: ws::Request,
-    _delete_room_request: ws::Request,
 }
 
 impl Component for Rooms {
@@ -163,7 +161,6 @@ impl Component for Rooms {
             _config_listener,
             _connect_room_request: ws::Request::new(),
             _create_room_request: ws::Request::new(),
-            _delete_room_request: ws::Request::new(),
         };
 
         this.refresh(ctx);
@@ -203,8 +200,15 @@ impl Component for Rooms {
                 <section class="list" key="rooms-list">
                     if no_room_count > 0 {
                         <div class="list-content" key="no-room">
-                            <Icon name="home" invert={true} />
-                            <span class="list-label">{"No Room"}</span>
+                            <Icon name="question-mark-circle" invert={true} />
+                            <span class="list-label">{"Common Room"}</span>
+                            if self.active_room != StableId::ZERO {
+                                <button class="btn square list-action"
+                                    title="Join Common Room"
+                                    onclick={ctx.link().callback(|_| Msg::Disconnect)}>
+                                    <Icon name="link" />
+                                </button>
+                            }
                             <span class="bullet" title="Players not in a room">{no_room_count}</span>
                         </div>
                     }
@@ -223,7 +227,9 @@ impl Rooms {
 
         let delete_button = is_local.then(|| {
             let id = room.id.id;
-            let onclick = ctx.link().callback(move |_| Msg::DeleteRoom(id));
+            let name = room.name.clone();
+            let onrequestdelete = ctx.props().onrequestdelete.clone();
+            let onclick = Callback::from(move |_| onrequestdelete.emit((id, name.clone())));
 
             html! {
                 <button class="btn square list-action" {onclick} title="Remove room">
@@ -507,22 +513,6 @@ impl Rooms {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(true)
-            }
-            Msg::DeleteRoom(id) => {
-                self._delete_room_request = ctx
-                    .props()
-                    .ws
-                    .request()
-                    .body(api::RemoveObjectRequest { id })
-                    .on_packet(ctx.link().callback(Msg::DeleteRoomResult))
-                    .send();
-
-                Ok(false)
-            }
-            Msg::DeleteRoomResult(body) => {
-                let body = body?;
-                _ = body.decode()?;
-                Ok(false)
             }
             Msg::ContextUpdate(log) => {
                 self.log = log;

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Id, Key, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody, StableId,
-    UpdateBody, Value, Vec3,
+    Color, Extent, Key, Pan, PeerId, PublicKey, RemoteId, RemoteUpdateBody, StableId, UpdateBody,
+    Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -29,9 +29,7 @@ use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, ViewTransform};
-use super::{
-    GroupSettings, HelpModal, ObjectList, RoomSettings, Rooms, StaticSettings, TokenSettings,
-};
+use super::{GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings, TokenSettings};
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
@@ -48,7 +46,7 @@ struct Inner {
     transforms: HashSet<RemoteId>,
     selected: RemoteId,
     context_menu: Option<ContextMenu>,
-    delete: RemoteId,
+    delete: Option<(RemoteId, String)>,
     _toggle_mumble_request: ws::Request,
     redraw: bool,
 }
@@ -78,8 +76,12 @@ impl Inner {
         self.selected = id;
         self.context_menu = None;
 
-        if self.delete == id {
-            self.delete = RemoteId::ZERO;
+        if self
+            .delete
+            .as_ref()
+            .is_some_and(|(delete_id, _)| *delete_id == id)
+        {
+            self.delete = None;
         }
 
         if !*config.mumble_follow || *config.mumble_object == id {
@@ -350,8 +352,6 @@ pub(crate) struct Map {
     objects: Objects,
     open_help: bool,
     open_settings: Option<RemoteId>,
-    open_room_selector: bool,
-    open_room_settings: Option<Id>,
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
@@ -371,10 +371,6 @@ pub(crate) enum Msg {
     CloseSettings,
     OpenHelp,
     CloseHelp,
-    OpenRoomSelector,
-    CloseRoomSelector,
-    OpenRoomSettings(Id),
-    CloseRoomSettings,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmDelete(RemoteId),
@@ -516,8 +512,6 @@ impl Component for Map {
             objects: Objects::default(),
             open_help: false,
             open_settings: None,
-            open_room_selector: false,
-            open_room_settings: None,
             order: Hierarchy::default(),
             pan_anchor: None,
             public_key: PublicKey::ZERO,
@@ -810,25 +804,8 @@ impl Component for Map {
                 }
             };
 
-            let room_selector = {
-                let current_room = *self.config.room;
-                let room_text = if current_room == StableId::ZERO {
-                    "No Room".to_string()
-                } else {
-                    format!("Room ({})", current_room.id)
-                };
-
-                html! {
-                    <button class="btn" title="Select room" onclick={ctx.link().callback(|_| Msg::OpenRoomSelector)}>
-                        <Icon name="home-modern" />
-                        <span>{room_text}</span>
-                    </button>
-                }
-            };
-
             html! {
                 <div class="control-group">
-                    {room_selector}
                     {mumble}
                     {hidden}
                     {local_hidden}
@@ -913,13 +890,13 @@ impl Component for Map {
                             </ContextProvider<Hierarchy>>
                         </ContextProvider<Objects>>
 
-                        <Rooms ws={&ctx.props().ws} key="rooms" onopensettings={ctx.link().callback(Msg::OpenRoomSettings)} />
+                        <RoomsPage ws={&ctx.props().ws} key="rooms" />
 
                         {players}
                     </div>
                 </div>
 
-                if let Some(id) = self.s.delete.as_non_zero() {
+                if let Some((id, ref name)) = self.s.delete {
                     <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
@@ -930,7 +907,7 @@ impl Component for Map {
                                 </button>
                             </div>
                             <div class="modal-body rows">
-                                <p>{format!("Remove \"{}\"?", objects.get(id).and_then(|o| o.name()).unwrap_or("unnamed"))}</p>
+                                <p>{format!("Remove \"{}\"?", name)}</p>
                                 <div class="btn-group">
                                     <button class="btn danger"
                                         onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
@@ -978,39 +955,6 @@ impl Component for Map {
                     <HelpModal onclose={ctx.link().callback(|_| Msg::CloseHelp)} />
                 }
 
-                if self.open_room_selector {
-                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRoomSelector)}>
-                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                            <div class="modal-header">
-                                <h2>{"Rooms"}</h2>
-                                <button class="btn sm square danger" title="Close"
-                                    onclick={ctx.link().callback(|_| Msg::CloseRoomSelector)}>
-                                    <Icon name="x-mark" />
-                                </button>
-                            </div>
-                            <div class="modal-body">
-                                <Rooms ws={ws.clone()} onopensettings={ctx.link().callback(Msg::OpenRoomSettings)} />
-                            </div>
-                        </div>
-                    </div>
-                }
-
-                if let Some(id) = self.open_room_settings {
-                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
-                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                            <div class="modal-header">
-                                <h2>{"Room Settings"}</h2>
-                                <button class="btn sm square danger" title="Close"
-                                    onclick={ctx.link().callback(|_| Msg::CloseRoomSettings)}>
-                                    <Icon name="x-mark" />
-                                </button>
-                            </div>
-                            <div class="modal-body">
-                                <RoomSettings {ws} {id} />
-                            </div>
-                        </div>
-                    </div>
-                }
             </>
         }
     }
@@ -1178,22 +1122,6 @@ impl Map {
             }
             Msg::CloseHelp => {
                 self.open_help = false;
-                Ok(true)
-            }
-            Msg::OpenRoomSelector => {
-                self.open_room_selector = true;
-                Ok(true)
-            }
-            Msg::CloseRoomSelector => {
-                self.open_room_selector = false;
-                Ok(true)
-            }
-            Msg::OpenRoomSettings(id) => {
-                self.open_room_settings = Some(id);
-                Ok(true)
-            }
-            Msg::CloseRoomSettings => {
-                self.open_room_settings = None;
                 Ok(true)
             }
             Msg::ConfigResult(result) => {
@@ -1605,11 +1533,18 @@ impl Map {
             }
             Msg::ConfirmDelete(id) => {
                 self.s.context_menu = None;
-                self.s.delete = id;
+                let name = self
+                    .objects
+                    .borrow()
+                    .get(id)
+                    .and_then(|o| o.name())
+                    .unwrap_or("unnamed")
+                    .to_string();
+                self.s.delete = Some((id, name));
                 Ok(true)
             }
             Msg::CancelDelete => {
-                self.s.delete = RemoteId::ZERO;
+                self.s.delete = None;
                 Ok(true)
             }
             Msg::RemoveObject(id) => {
@@ -1621,7 +1556,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectRemoved))
                     .send();
 
-                self.s.delete = RemoteId::ZERO;
+                self.s.delete = None;
                 Ok(false)
             }
             Msg::ObjectRemoved(result) => {
@@ -1865,19 +1800,31 @@ impl Map {
 
         match key.as_str() {
             "Delete" => {
-                if self.s.delete == self.s.selected {
+                if self
+                    .s
+                    .delete
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == self.s.selected)
+                {
                     return Ok(false);
                 }
 
                 ev.prevent_default();
                 self.s.context_menu = None;
-                self.s.delete = self.s.selected;
+                let name = self
+                    .objects
+                    .borrow()
+                    .get(self.s.selected)
+                    .and_then(|o| o.name())
+                    .unwrap_or("unnamed")
+                    .to_string();
+                self.s.delete = Some((self.s.selected, name));
                 Ok(true)
             }
             "Enter" => {
-                if !self.s.delete.is_zero() {
+                if let Some((id, _)) = self.s.delete.take() {
                     ev.prevent_default();
-                    ctx.link().send_message(Msg::RemoveObject(self.s.delete));
+                    ctx.link().send_message(Msg::RemoveObject(id));
                 }
 
                 Ok(false)
@@ -1910,7 +1857,7 @@ impl Map {
                 self.open_settings = None;
                 self.open_help = false;
 
-                self.s.delete = RemoteId::ZERO;
+                self.s.delete = None;
                 self.s.selected = RemoteId::ZERO;
                 self.s.context_menu = None;
                 Ok(true)
