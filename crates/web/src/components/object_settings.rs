@@ -258,8 +258,8 @@ impl Component for TokenSettings {
                 <CropModal
                     source_url={src.clone()}
                     ratio={1.0}
-                    on_confirm={ctx.link().callback(Msg::CropConfirmed)}
-                    on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
+                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
+                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
                 />
             }
             </>

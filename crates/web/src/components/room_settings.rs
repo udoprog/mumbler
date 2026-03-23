@@ -134,8 +134,8 @@ impl Component for RoomSettings {
                 </section>
 
                 <section class="input-group">
-                    <label for="room-bg-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
-                        {"Upload Background"}
+                    <label for="room-background-file" class={classes!("btn", "primary", self.image_uploading.then_some("disabled"))}>
+                        {"Upload"}
                         <Icon name="arrow-up-on-square" />
                     </label>
 
@@ -145,7 +145,7 @@ impl Component for RoomSettings {
                     </button>
 
                     <input
-                        id="room-bg-file"
+                        id="room-background-file"
                         class="hidden"
                         title="Upload background image"
                         type="file"
@@ -174,8 +174,8 @@ impl Component for RoomSettings {
             if let Some(src) = &self.crop_source_url {
                 <CropModal
                     source_url={src.clone()}
-                    on_confirm={ctx.link().callback(Msg::CropConfirmed)}
-                    on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
+                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
+                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
                 />
             }
             </>

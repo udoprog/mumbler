@@ -291,8 +291,8 @@ impl Component for StaticSettings {
                 <CropModal
                     source_url={src.clone()}
                     ratio={(*self.width / *self.height) as f64}
-                    on_confirm={ctx.link().callback(Msg::CropConfirmed)}
-                    on_cancel={ctx.link().callback(|_| Msg::CropCancelled)}
+                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
+                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
                     rescale={ctx.link().callback(Msg::Rescale)}
                 />
             }

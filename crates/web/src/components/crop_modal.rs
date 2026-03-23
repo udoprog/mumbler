@@ -292,8 +292,8 @@ struct ResizeState {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) source_url: AttrValue,
-    pub(crate) on_confirm: Callback<api::CropRegion>,
-    pub(crate) on_cancel: Callback<()>,
+    pub(crate) onconfirm: Callback<api::CropRegion>,
+    pub(crate) oncancel: Callback<()>,
     #[prop_or_default]
     pub(crate) rescale: Option<Callback<Option<f64>>>,
     #[prop_or_default]
@@ -352,6 +352,15 @@ impl Component for CropModal {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let sel = self.selection();
         let confirm_disabled = sel.is_none();
+
+        let confirm_class = classes! {
+            "btn",
+            "primary",
+            confirm_disabled.then_some("disabled"),
+        };
+
+        let confirm_onclick = (!confirm_disabled).then(|| ctx.link().callback(|_| Msg::Confirm));
+
         let rs = |dir: Dir| {
             ctx.link()
                 .callback(move |e: PointerEvent| Msg::ResizeStart(e, dir))
@@ -397,26 +406,27 @@ impl Component for CropModal {
                                 }
                             </div>
                         </div>
+
                         <div class="control-group" onclick={|e: MouseEvent| e.stop_propagation()}>
-                            <button class="btn primary" disabled={confirm_disabled}
-                                onclick={ctx.link().callback(|_| Msg::Confirm)}>
+                            <button class={confirm_class} onclick={confirm_onclick}>
                                 {"Upload"}
                             </button>
                             {if ctx.props().rescale.is_some() {
                                 html! {
-                                    <button class="btn" title="Rescale to original aspect ratio"
+                                    <button class="btn secondary" title="Rescale to original aspect ratio"
                                         onclick={ctx.link().callback(|_| Msg::Rescale)}>
                                         {"Select All"}
                                     </button>
                                 }
                             } else {
                                 html! {
-                                    <button class="btn" title="Select the largest region"
+                                    <button class="btn secondary" title="Select the largest region"
                                         onclick={ctx.link().callback(|_| Msg::SelectAll)}>
-                                        {"Select Centered"}
+                                        {"Select All"}
                                     </button>
                                 }
                             }}
+                            <section class="fill" />
                             <button class="btn danger right"
                                 onclick={ctx.link().callback(|_| Msg::Cancel)}>
                                 {"Cancel"}
@@ -487,7 +497,7 @@ impl CropModal {
                 Ok(false)
             }
             Msg::Cancel => {
-                ctx.props().on_cancel.emit(());
+                ctx.props().oncancel.emit(());
                 Ok(false)
             }
         }
@@ -609,12 +619,15 @@ impl CropModal {
             .ok_or("no crop image")?;
 
         let sel = self.selection().ok_or("no crop selection")?;
+
         let client = Vec2::new(img.client_width() as f64, img.client_height() as f64);
         let natural = Vec2::new(img.natural_width() as f64, img.natural_height() as f64);
+
         let region = sel
             .to_crop_region(client, natural)
             .ok_or("crop region empty")?;
-        ctx.props().on_confirm.emit(region);
+
+        ctx.props().onconfirm.emit(region);
         Ok(())
     }
 }
