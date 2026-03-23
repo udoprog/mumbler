@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use api::{Color, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
+use api::{Color, Extent, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -411,6 +411,8 @@ impl GroupObject {
 pub(crate) struct RoomObject {
     pub(crate) sort: State<Vec<u8>>,
     pub(crate) background: State<Id>,
+    pub(crate) extent: State<Extent>,
+    pub(crate) show_grid: State<bool>,
 }
 
 impl RoomObject {
@@ -424,6 +426,13 @@ impl RoomObject {
                     .to_vec(),
             ),
             background: State::new(o.props.get(Key::ROOM_BACKGROUND).as_id()),
+            extent: State::new(
+                o.props
+                    .get(Key::ROOM_EXTENT)
+                    .as_extent()
+                    .unwrap_or_else(Extent::arena),
+            ),
+            show_grid: State::new(o.props.get(Key::SHOW_GRID).as_bool().unwrap_or(true)),
         }
     }
 
@@ -433,6 +442,10 @@ impl RoomObject {
                 .sort
                 .update(value.as_bytes().unwrap_or_default().to_vec()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
+            Key::ROOM_EXTENT => self
+                .extent
+                .update(value.as_extent().unwrap_or_else(Extent::arena)),
+            Key::SHOW_GRID => self.show_grid.update(value.as_bool().unwrap_or(true)),
             _ => false,
         }
     }

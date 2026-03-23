@@ -1,3 +1,4 @@
+use core::num::ParseIntError;
 use std::fmt;
 use std::str::Utf8Error;
 
@@ -24,6 +25,15 @@ impl From<anyhow::Error> for Error {
     #[inline]
     fn from(error: anyhow::Error) -> Self {
         Self { error }
+    }
+}
+
+impl From<ParseIntError> for Error {
+    #[inline]
+    fn from(error: ParseIntError) -> Self {
+        Self {
+            error: anyhow::Error::from(error),
+        }
     }
 }
 

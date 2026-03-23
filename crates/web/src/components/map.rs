@@ -51,6 +51,7 @@ struct Inner {
     delete: Option<(RemoteId, String)>,
     _toggle_mumble_request: ws::Request,
     redraw: bool,
+    update_room: bool,
 }
 
 impl Inner {
@@ -180,10 +181,38 @@ enum Action {
     Scale(Scale),
 }
 
+struct RoomView {
+    extent: Extent,
+    show_grid: bool,
+    background: RemoteId,
+}
+
+impl RoomView {
+    fn recalculate(&mut self, room_id: RemoteId, objects: &ObjectsRef) {
+        *self = match objects.get(room_id).map(|o| &o.kind) {
+            Some(ObjectKind::Room(room)) => Self {
+                extent: *room.extent,
+                show_grid: *room.show_grid,
+                background: RemoteId::new(room_id.peer_id, *room.background),
+            },
+            _ => Self::default(),
+        };
+    }
+}
+
+impl Default for RoomView {
+    fn default() -> Self {
+        Self {
+            extent: Extent::arena(),
+            show_grid: false,
+            background: RemoteId::ZERO,
+        }
+    }
+}
+
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
     pub(crate) pan: State<Pan>,
-    pub(crate) extent: State<Extent>,
     pub(crate) mumble_object: State<RemoteId>,
     pub(crate) mumble_follow: State<bool>,
     pub(crate) room: State<StableId>,
@@ -213,9 +242,6 @@ impl Config {
         match key {
             Key::WORLD_SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
-            Key::WORLD_EXTENT => self
-                .extent
-                .update(value.as_extent().unwrap_or_else(Extent::arena)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool().unwrap_or(false)),
             Key::ROOM => self.room.update(*value.as_stable_id()),
@@ -230,7 +256,6 @@ impl Config {
         let mut values = Vec::new();
         values.push((Key::WORLD_SCALE, Value::from(*self.zoom)));
         values.push((Key::WORLD_PAN, Value::from(*self.pan)));
-        values.push((Key::WORLD_EXTENT, Value::from(*self.extent)));
         values
     }
 }
@@ -240,7 +265,6 @@ impl Default for Config {
         Self {
             zoom: State::new(2.0),
             pan: State::new(Pan::zero()),
-            extent: State::new(Extent::arena()),
             mumble_object: State::new(RemoteId::ZERO),
             mumble_follow: State::new(false),
             room: State::new(StableId::ZERO),
@@ -357,6 +381,7 @@ pub(crate) struct Map {
     order: Hierarchy,
     pan_anchor: Option<(f64, f64)>,
     peers: Peers,
+    room_view: RoomView,
     action: Option<Action>,
     state: ws::State,
     transform_requests: HashMap<RemoteId, ws::Request>,
@@ -516,6 +541,7 @@ impl Component for Map {
             order: Hierarchy::default(),
             pan_anchor: None,
             peers: Peers::default(),
+            room_view: RoomView::default(),
             s: Inner::default(),
             state,
             transform_requests: HashMap::new(),
@@ -566,6 +592,13 @@ impl Component for Map {
         if self.update_world {
             self._update_world = updates(ctx, self.config.world_values());
             self.update_world = false;
+        }
+
+        if self.s.update_room {
+            let room_id = self.peers.to_remote_id(&self.config.room);
+            let objects = self.objects.borrow();
+            self.room_view.recalculate(room_id, &objects);
+            self.s.update_room = false;
         }
 
         if self.s.redraw {
@@ -1002,7 +1035,7 @@ impl Map {
             return Ok(false);
         };
 
-        let t = ViewTransform::new(&canvas, &self.config);
+        let t = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
         let world_pos = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let world_pos = t.to_world(world_pos);
 
@@ -1196,6 +1229,7 @@ impl Map {
                     self.images.load(ctx, &id);
                 }
 
+                self.s.update_room = true;
                 self.s.redraw = true;
                 Ok(true)
             }
@@ -1211,6 +1245,7 @@ impl Map {
                             for peer in self.peers.iter_mut() {
                                 peer.update_config(&self.config.room);
                             }
+                            self.s.update_room = true;
                         }
 
                         self.s.redraw = changed;
@@ -1358,6 +1393,7 @@ impl Map {
                     }
                 };
 
+                self.s.update_room = true;
                 self.s.redraw = true;
                 Ok(update)
             }
@@ -2036,7 +2072,7 @@ impl Map {
             return Ok(());
         };
 
-        let t = ViewTransform::new(&canvas, &self.config);
+        let t = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
 
         let w = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let w = t.to_world(w);
@@ -2139,7 +2175,7 @@ impl Map {
                     return Ok(());
                 };
 
-                let view = ViewTransform::new(&canvas, &self.config);
+                let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
@@ -2160,7 +2196,7 @@ impl Map {
                     return Ok(());
                 };
 
-                let view = ViewTransform::new(&canvas, &self.config);
+                let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
                 let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
                 let e = view.to_world(e);
 
@@ -2184,7 +2220,7 @@ impl Map {
             return Ok(());
         };
 
-        let v = ViewTransform::new(&canvas, &self.config);
+        let v = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
 
         if let Some((ax, ay)) = self.pan_anchor {
             let dx = ev.client_x() as f64 - ax;
@@ -2261,9 +2297,9 @@ impl Map {
             1.0 / ZOOM_FACTOR
         };
 
-        let view_before = ViewTransform::new(&canvas, &self.config);
+        let view_before = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
-        let view_after = ViewTransform::new(&canvas, &self.config);
+        let view_after = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
 
         let c1 = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
         let c2 = view_after.to_canvas(view_before.to_world(c1));
@@ -2495,25 +2531,20 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        let view = ViewTransform::new(&canvas, &self.config);
-
-        if *self.config.room != StableId::ZERO {
-            let room_id = self.peers.to_remote_id(&self.config.room);
-            let objects = self.objects.borrow();
-            if let Some(ObjectKind::Room(room_obj)) = objects.get(room_id).map(|o| &o.kind) {
-                let bg_id = RemoteId::new(room_id.peer_id, *room_obj.background);
-                if let Some(img) = self.images.get(&bg_id) {
-                    render::draw_background(&cx, &view, &self.config.extent, img)?;
-                }
-            }
-        }
-
-        render::draw_grid(&cx, &view, &self.config.extent, *self.config.zoom);
-
-        let selected = self.s.selected;
-
         let order = self.order.borrow();
         let objects = self.objects.borrow();
+
+        let view = ViewTransform::new(&canvas, &self.config, &self.room_view.extent);
+
+        if let Some(img) = self.images.get(&self.room_view.background) {
+            render::draw_background(&cx, &view, &self.room_view.extent, img)?;
+        }
+
+        if self.room_view.show_grid {
+            render::draw_grid(&cx, &view, &self.room_view.extent, *self.config.zoom);
+        }
+
+        let selected = self.s.selected;
 
         for id in order.walk().rev() {
             let Some(data) = objects.get(id) else {

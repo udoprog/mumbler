@@ -145,17 +145,17 @@ impl ViewTransform {
         }
     }
 
-    pub(crate) fn new(canvas: &HtmlCanvasElement, w: &Config) -> Self {
+    pub(crate) fn new(canvas: &HtmlCanvasElement, w: &Config, extent: &Extent) -> Self {
         let width = canvas.width();
         let height = canvas.height();
 
         let canvas_min = width.min(height) as f64;
-        let world_w = (w.extent.x.end - w.extent.x.start) as f64;
-        let world_h = (w.extent.y.end - w.extent.y.start) as f64;
+        let world_w = (extent.x.end - extent.x.start) as f64;
+        let world_h = (extent.y.end - extent.y.start) as f64;
         let scale = (canvas_min / world_w.max(world_h)) * *w.zoom as f64;
 
-        let world_mid_x = ((w.extent.x.start + w.extent.x.end) / 2.0) as f64;
-        let world_mid_y = ((w.extent.y.start + w.extent.y.end) / 2.0) as f64;
+        let world_mid_x = ((extent.x.start + extent.x.end) / 2.0) as f64;
+        let world_mid_y = ((extent.y.start + extent.y.end) / 2.0) as f64;
         let center_x = width as f64 / 2.0 + w.pan.x - world_mid_x * scale;
         let center_y = height as f64 / 2.0 + w.pan.y - world_mid_y * scale;
 

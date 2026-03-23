@@ -74,7 +74,7 @@ crate::macros::keys! {
         REMOTE_TLS: Boolean = 11;
         WORLD_ZOOM: Float = 9;
         WORLD_PAN: Pan = 10;
-        WORLD_EXTENT: Extent = 12;
+        ROOM_EXTENT: Extent = 12;
         /// The object which is used for mumble link.
         MUMBLE_OBJECT: Id = 14;
         /// Whether the object is hidden from remote peers.
@@ -111,6 +111,8 @@ crate::macros::keys! {
         ROOM: StableId = 30;
         /// The background image for a room.
         ROOM_BACKGROUND: Id = 31;
+        /// Whether the grid is visible for a room.
+        SHOW_GRID: Boolean = 32;
     }
 }
 
@@ -323,12 +325,12 @@ impl Extent {
     pub const fn arena() -> Self {
         Self {
             x: Span {
-                start: -10.0,
-                end: 10.0,
+                start: -5.0,
+                end: 5.0,
             },
             y: Span {
-                start: -10.0,
-                end: 10.0,
+                start: -5.0,
+                end: 5.0,
             },
         }
     }

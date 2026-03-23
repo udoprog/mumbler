@@ -1,4 +1,4 @@
-use api::{Id, Image, Key, PeerId, RemoteUpdateBody, Value};
+use api::{Extent, Id, Image, Key, PeerId, RemoteUpdateBody, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -12,12 +12,17 @@ use crate::state::State;
 use super::{ImageUpload, into_target};
 
 pub(crate) enum Msg {
+    ExtentXMinChanged(Event),
+    ExtentXMaxChanged(Event),
+    ExtentYMinChanged(Event),
+    ExtentYMaxChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageSelected(Id),
     ImagesRefresh,
     NameChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SetLog(log::Log),
+    ShowGridChanged(Event),
     StateChanged(ws::State),
     UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
@@ -35,11 +40,15 @@ pub(crate) struct RoomSettings {
     _remote_update_listener: ws::Listener,
     _select_background: ws::Request,
     _state_change: ws::StateListener,
+    _update_extent: ws::Request,
     _update_name: ws::Request,
+    _update_show_grid: ws::Request,
     background: State<Id>,
+    extent: State<Extent>,
     images: Vec<Image>,
     log: log::Log,
     name: State<Option<String>>,
+    show_grid: State<bool>,
     state: ws::State,
 }
 
@@ -69,11 +78,15 @@ impl Component for RoomSettings {
             _remote_update_listener,
             _select_background: ws::Request::new(),
             _state_change,
+            _update_extent: ws::Request::new(),
             _update_name: ws::Request::new(),
+            _update_show_grid: ws::Request::new(),
             background: State::new(Id::ZERO),
+            extent: State::new(Extent::arena()),
             images: Vec::new(),
             log,
             name: State::new(None),
+            show_grid: State::new(true),
             state,
         };
 
@@ -95,6 +108,8 @@ impl Component for RoomSettings {
         let background_src = (!self.background.is_zero())
             .then(|| format!("/api/image/{}/{}", PeerId::ZERO, *self.background));
 
+        let extent = *self.extent;
+
         html! {
             <>
             <div id="content" class="rows">
@@ -107,6 +122,58 @@ impl Component for RoomSettings {
                         placeholder="Enter name"
                         value={(*self.name).clone().unwrap_or_default()}
                         onchange={ctx.link().callback(Msg::NameChanged)}
+                    />
+                </section>
+
+                <section class="input-group">
+                    <label for="show-grid">{"Show Grid:"}</label>
+                    <input
+                        id="show-grid"
+                        type="checkbox"
+                        checked={*self.show_grid}
+                        onchange={ctx.link().callback(Msg::ShowGridChanged)}
+                    />
+                </section>
+
+                <section class="input-group">
+                    <label for="extent-x-min">{"X Extents:"}</label>
+                    <input
+                        id="extent-x-min"
+                        type="number"
+                        step="1"
+                        value={extent.x.start.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentXMinChanged)}
+                    />
+
+                    {" - "}
+
+                    <input
+                        id="extent-x-max"
+                        type="number"
+                        step="1"
+                        value={extent.x.end.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentXMaxChanged)}
+                    />
+                </section>
+
+                <section class="input-group">
+                    <label for="extent-y-min">{"Y Extents:"}</label>
+                    <input
+                        id="extent-y-min"
+                        type="number"
+                        step="1"
+                        value={extent.y.start.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentYMinChanged)}
+                    />
+
+                    {" - "}
+
+                    <input
+                        id="extent-y-max"
+                        type="number"
+                        step="1"
+                        value={extent.y.end.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentYMaxChanged)}
                     />
                 </section>
 
@@ -173,6 +240,41 @@ impl RoomSettings {
                 self._select_background = object_update(ctx, Key::ROOM_BACKGROUND, id);
                 Ok(true)
             }
+            Msg::ShowGridChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+                let value = input.checked();
+                *self.show_grid = value;
+                self._update_show_grid = object_update(ctx, Key::SHOW_GRID, value);
+                Ok(true)
+            }
+            Msg::ExtentXMinChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+                let v = input.value().parse::<i32>()? as f32;
+                self.extent.x.start = v.min(self.extent.x.end);
+                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                Ok(true)
+            }
+            Msg::ExtentXMaxChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+                let v = input.value().parse::<i32>()? as f32;
+                self.extent.x.end = v.max(self.extent.x.start);
+                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                Ok(true)
+            }
+            Msg::ExtentYMinChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+                let v = input.value().parse::<i32>()? as f32;
+                self.extent.y.start = v.min(self.extent.y.end);
+                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                Ok(true)
+            }
+            Msg::ExtentYMaxChanged(e) => {
+                let input = into_target!(e, HtmlInputElement);
+                let v = input.value().parse::<i32>()? as f32;
+                self.extent.y.end = v.max(self.extent.y.start);
+                self._update_extent = object_update(ctx, Key::ROOM_EXTENT, *self.extent);
+                Ok(true)
+            }
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let value = input.value();
@@ -218,6 +320,10 @@ impl RoomSettings {
         match key {
             Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
+            Key::ROOM_EXTENT => self
+                .extent
+                .update(value.as_extent().unwrap_or_else(Extent::arena)),
+            Key::SHOW_GRID => self.show_grid.update(value.as_bool().unwrap_or(true)),
             _ => false,
         }
     }
