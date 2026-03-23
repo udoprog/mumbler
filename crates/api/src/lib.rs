@@ -29,13 +29,13 @@ use musli_web::api;
 crate::macros::ids! {
     pub struct Type {
         /// The token type.
-        TOKEN = 0x1000;
+        TOKEN = 0x10000000;
         /// The static object type (furniture, props, etc.).
-        STATIC = 0x1001;
+        STATIC = 0x10000002;
         /// The group type.
-        GROUP = 0x1002;
+        GROUP = 0x10000003;
         /// A saved room bookmark.
-        ROOM = 0x1003;
+        ROOM = 0x80000001;
     }
 }
 
@@ -44,7 +44,7 @@ impl Type {
     /// peers regardless of room.
     #[inline]
     pub fn is_global(&self) -> bool {
-        matches!(*self, Self::ROOM)
+        self.raw & 0x80000000 != 0
     }
 }
 
