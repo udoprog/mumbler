@@ -243,12 +243,12 @@ pub(super) async fn entry(
                         let event = match event {
                             Ok(event) => event,
                             Err(error) => {
-                                tracing::error!(%error, "Backend event");
+                                tracing::error!(%error, "event");
                                 break;
                             }
                         };
 
-                        tracing::debug!(?event, "Backend event");
+                        tracing::debug!(?event, "event");
 
                         let result = match event {
                             Broadcast::Update(body) => {

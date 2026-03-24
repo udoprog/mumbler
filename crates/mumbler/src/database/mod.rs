@@ -406,7 +406,7 @@ impl Database {
             while let Some((id, ty, group_id)) =
                 inner.list_objects.next::<(Id, Type, Option<Id>)>()?
             {
-                tracing::debug!(?id, ?ty, "Loading object");
+                tracing::debug!(?id, ?ty, "loading object");
                 objects.push((id, ty, group_id));
             }
 
@@ -429,7 +429,7 @@ impl Database {
                     continue;
                 };
 
-                tracing::debug!(?id, ?key, "Loading property");
+                tracing::debug!(?id, ?key, "loading property");
                 let value =
                     value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
                 props.push((key, value));

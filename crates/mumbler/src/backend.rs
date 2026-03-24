@@ -185,7 +185,7 @@ impl Backend {
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
 
-        tracing::debug!("Loading objects from database");
+        tracing::debug!("loading objects from database");
 
         let mut ids = HashSet::new();
         let mut objects = HashMap::new();
@@ -282,7 +282,7 @@ impl Backend {
             ids.insert(image.id);
         }
 
-        tracing::debug!("Loaded {} objects", objects.len());
+        tracing::debug!("loaded {} objects", objects.len());
 
         Ok(Self {
             inner: Arc::new(Inner {

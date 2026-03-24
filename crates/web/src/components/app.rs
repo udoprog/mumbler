@@ -43,6 +43,7 @@ impl Component for App {
 
     fn create(ctx: &Context<Self>) -> Self {
         let ws = ws::connect(ws::Connect::location("/ws"))
+            .close_before_unload()
             .on_error(ctx.link().callback(Msg::Error).reform(Into::into))
             .build();
 
@@ -54,7 +55,6 @@ impl Component for App {
             .handle()
             .on_broadcast::<api::Notification>(ctx.link().callback(Msg::Notification));
 
-        ws.connect();
         Self {
             ws,
             state,

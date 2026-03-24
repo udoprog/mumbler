@@ -1435,8 +1435,6 @@ impl Map {
                         key,
                         value,
                     } => 'done: {
-                        tracing::warn!(?channel, this = ?self.channel.id());
-
                         if channel != ChannelId::NONE && self.channel.id() == channel {
                             break 'done false;
                         }

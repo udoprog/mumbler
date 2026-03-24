@@ -186,9 +186,12 @@ impl Peers {
 
     #[inline]
     fn remove(&mut self, id: &PeerId) -> Option<Pin<Box<ServerPeer>>> {
-        let peer = self.peers.remove(id)?;
+        self.peers.remove(id)
+    }
+
+    #[inline]
+    fn free(&mut self, id: PeerId) {
         self.ids.free(id.raw());
-        Some(peer)
     }
 }
 
@@ -281,6 +284,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                     continue;
                 };
 
+                tracing::info!(?peer_id, ?addr, "new peer");
                 let peer_state = ServerPeer::new(addr, peer, peer_id);
                 state.peers.insert(peer_id, peer_state);
                 state.poll.insert(peer_id);
@@ -312,8 +316,11 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                 };
 
                 if remove {
+                    tracing::info!("disconnecting peer");
+                    state.peers.free(id);
                     state.remove_peer(peer, &mut wakers);
                 } else {
+                    tracing::trace!("reinserting peer");
                     state.peers.insert(peer.state.peer_id, peer);
                 }
             }
