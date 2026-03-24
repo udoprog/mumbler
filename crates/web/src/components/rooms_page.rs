@@ -12,10 +12,10 @@ use super::{Icon, RoomSettings, Rooms};
 pub(crate) enum Msg {
     OpenSettings(RemoteId),
     CloseSettings,
-    RequestDelete(RemoteId, String),
-    CancelDelete,
-    ConfirmDelete(RemoteId),
-    DeleteResult(Result<Packet<api::RemoveObject>, ws::Error>),
+    RequestRemove(RemoteId, String),
+    CancelRemove,
+    ConfirmRemove(RemoteId),
+    RemoveResult(Result<Packet<api::RemoveObject>, ws::Error>),
     ContextUpdate(log::Log),
 }
 
@@ -61,15 +61,15 @@ impl Component for RoomsPage {
                 self.open_settings = None;
                 true
             }
-            Msg::RequestDelete(id, name) => {
+            Msg::RequestRemove(id, name) => {
                 self.confirm_delete = Some((id, name));
                 true
             }
-            Msg::CancelDelete => {
+            Msg::CancelRemove => {
                 self.confirm_delete = None;
                 true
             }
-            Msg::ConfirmDelete(id) => {
+            Msg::ConfirmRemove(id) => {
                 self.confirm_delete = None;
 
                 self._delete_request = ctx
@@ -77,12 +77,12 @@ impl Component for RoomsPage {
                     .ws
                     .request()
                     .body(api::RemoveObjectRequest { id: id.id })
-                    .on_packet(ctx.link().callback(Msg::DeleteResult))
+                    .on_packet(ctx.link().callback(Msg::RemoveResult))
                     .send();
 
                 true
             }
-            Msg::DeleteResult(result) => {
+            Msg::RemoveResult(result) => {
                 if let Err(e) = result.and_then(|p| p.decode()) {
                     self.log.error("rooms_page", Error::from(e));
                 }
@@ -103,16 +103,16 @@ impl Component for RoomsPage {
                 <Rooms
                     {ws}
                     onopensettings={ctx.link().callback(Msg::OpenSettings)}
-                    onrequestdelete={ctx.link().callback(|(id, name)| Msg::RequestDelete(id, name))}
+                    onrequestdelete={ctx.link().callback(|(id, name)| Msg::RequestRemove(id, name))}
                 />
 
                 if let Some((id, ref name)) = self.confirm_delete {
-                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
                                 <h2>{"Confirm Deletion"}</h2>
                                 <button class="btn sm square danger" title="Cancel"
-                                    onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                    onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                     <Icon name="x-mark" />
                                 </button>
                             </div>
@@ -120,11 +120,11 @@ impl Component for RoomsPage {
                                 <p>{format!("Remove \"{}\"?", name)}</p>
                                 <div class="btn-group">
                                     <button class="btn danger"
-                                        onclick={ctx.link().callback(move |_| Msg::ConfirmDelete(id))}>
-                                        {"Delete"}
+                                        onclick={ctx.link().callback(move |_| Msg::ConfirmRemove(id))}>
+                                        {"Remove"}
                                     </button>
                                     <button class="btn"
-                                        onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                        onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                         {"Cancel"}
                                     </button>
                                 </div>

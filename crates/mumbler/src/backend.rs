@@ -8,10 +8,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use anyhow::bail;
 use api::RemoteId;
+use api::RemoteUpdateBody;
 use api::{
     ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Role, StableId, Transform,
     Type, UpdateBody, Value,
 };
+use musli_web::api::ChannelId;
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -545,16 +547,16 @@ impl Backend {
         Ok(RemoteObject { ty, id, props })
     }
 
-    /// Delete a local object, removing it from the database and in-memory state.
+    /// Remove a local object, removing it from the database and in-memory state.
     pub(crate) async fn remove_object(&self, id: Id) -> Result<()> {
-        // If the mumble object is deleted, clear the mumble object setting to
+        // If the mumble object is removed, clear the mumble object setting to
         // avoid dangling references.
         if self.mumble_object() == id {
             self.store_mumble_object(Id::ZERO);
             self.set_mumblelink_transform(None).await;
         }
 
-        self.db().delete_object(id).await?;
+        self.db().remove_object(id).await?;
 
         let mut state = self.inner.client_state.lock().await;
 
@@ -619,16 +621,50 @@ impl Backend {
         Ok(id)
     }
 
-    /// Delete a local image.
-    pub(crate) async fn delete_image(&self, id: Id) -> Result<()> {
+    /// Remove a local image.
+    pub(crate) async fn remove_image(&self, id: Id) -> Result<()> {
         let mut state = self.inner.client_state.lock().await;
+        let state = &mut *state;
 
-        self.db().delete_image(id).await?;
+        self.db().remove_image(id).await?;
 
         state.images.remove(&id);
         state.images_added.remove(&id);
         state.images_deleted.insert(id);
         self.inner.client_notify.notify_one();
+
+        let mut any = false;
+
+        // For any object that has the image set as a property, remove the property.
+        for object in state.objects.values_mut() {
+            for key in [Key::IMAGE_ID, Key::ROOM_BACKGROUND] {
+                let image_id = object.props.get(key).as_id();
+
+                if image_id != id {
+                    continue;
+                }
+
+                any = true;
+
+                object.props.remove(key);
+                object.changed.insert(key);
+                state.objects_changed.insert(object.id);
+
+                self.db().delete_property(object.id, key).await?;
+
+                self.broadcast(RemoteUpdateBody::ObjectUpdated {
+                    channel: ChannelId::NONE,
+                    id: RemoteId::local(object.id),
+                    key,
+                    value: Value::empty(),
+                });
+            }
+        }
+
+        if any {
+            self.inner.client_notify.notify_one();
+        }
+
         Ok(())
     }
 }

@@ -6,7 +6,6 @@ use api::{
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -423,14 +422,14 @@ pub(crate) struct Map {
 
 pub(crate) enum Msg {
     AnimationFrame,
-    CancelDelete,
+    CancelRemove,
     CloseContextMenu,
     CloseSettings,
     OpenHelp,
     CloseHelp,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
-    ConfirmDelete(RemoteId),
+    ConfirmRemove(RemoteId),
     ContextMenu(MouseEvent),
     CreateToken,
     CreateStatic,
@@ -701,7 +700,7 @@ impl Component for Map {
 
             let delete_click = o.map(|o| {
                 let id = o.id;
-                ctx.link().callback(move |_| Msg::ConfirmDelete(id))
+                ctx.link().callback(move |_| Msg::ConfirmRemove(id))
             });
 
             let delete_classes = classes! {
@@ -726,7 +725,7 @@ impl Component for Map {
                     <button class={settings_classes} title="Object settings" onclick={settings_click}>
                         <Icon name="cog" />
                     </button>
-                    <button class={delete_classes} title="Delete object" onclick={delete_click}>
+                    <button class={delete_classes} title="Remove object" onclick={delete_click}>
                         <Icon name="x-mark" />
                     </button>
                 </div>
@@ -982,12 +981,12 @@ impl Component for Map {
                 </div>
 
                 if let Some((id, ref name)) = self.s.delete {
-                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
                                 <h2>{"Confirm Deletion"}</h2>
                                 <button class="btn sm square danger" title="Cancel"
-                                    onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                    onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                     <Icon name="x-mark" />
                                 </button>
                             </div>
@@ -996,10 +995,10 @@ impl Component for Map {
                                 <div class="btn-group">
                                     <button class="btn danger"
                                         onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
-                                        {"Delete"}
+                                        {"Remove"}
                                     </button>
                                     <button class="btn"
-                                        onclick={ctx.link().callback(|_| Msg::CancelDelete)}>
+                                        onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                         {"Cancel"}
                                     </button>
                                 </div>
@@ -1310,191 +1309,12 @@ impl Map {
             Msg::ConfigUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-
-                match body {
-                    UpdateBody::Config {
-                        channel,
-                        key,
-                        value,
-                    } => {
-                        if channel != ChannelId::NONE && self.channel.id() == channel {
-                            return Ok(false);
-                        }
-
-                        let changed = self.config.update(key, value);
-
-                        if changed {
-                            for peer in self.peers.iter_mut() {
-                                peer.update_config(&self.config.room);
-                            }
-
-                            self.s.update_cache = true;
-                        }
-
-                        self.s.redraw = changed;
-                        Ok(changed)
-                    }
-                    UpdateBody::PublicKey { public_key } => {
-                        self.peers.public_key = public_key;
-                        Ok(true)
-                    }
-                }
+                self.config_update(body)
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-
-                let mut objects = self.objects.borrow_mut();
-                let mut order = self.order.borrow_mut();
-
-                tracing::debug!(?body, "Remote update");
-
-                let update = match body {
-                    RemoteUpdateBody::RemoteLost => {
-                        self.peers.clear();
-                        objects.retain(|id, _| id.peer_id == PeerId::ZERO);
-                        order.retain(|peer_id| peer_id == PeerId::ZERO);
-                        true
-                    }
-                    RemoteUpdateBody::PeerConnected { mut peer } => {
-                        for object in peer.objects.drain(..) {
-                            let Some(object) = LocalObject::new(peer.peer_id, &object) else {
-                                continue;
-                            };
-
-                            order.insert(&object);
-                            objects.insert(object);
-                        }
-
-                        self.peers.insert(peer, &self.config.room);
-                        true
-                    }
-                    RemoteUpdateBody::PeerJoin {
-                        peer_id,
-                        objects: objs,
-                        images,
-                    } => {
-                        for object in objs {
-                            let Some(object) = LocalObject::new(peer_id, &object) else {
-                                continue;
-                            };
-
-                            order.insert(&object);
-                            objects.insert(object);
-                        }
-
-                        for id in images {
-                            let id = RemoteId::new(peer_id, id);
-                            self.images.load(ctx, &id);
-                        }
-
-                        true
-                    }
-                    RemoteUpdateBody::PeerLeave { peer_id } => {
-                        // When a peer leaves our room, we remove all of their
-                        // local objects.
-                        objects.retain(|id, global| global || id.peer_id != peer_id);
-                        order.retain(|this| this != peer_id);
-                        true
-                    }
-                    RemoteUpdateBody::PeerDisconnect { peer_id } => {
-                        self.peers.remove_peer(peer_id);
-                        // We remove all objects associated with a peer when
-                        // that peer disconnects.
-                        objects.retain(|id, _| id.peer_id != peer_id);
-                        order.retain(|this| this != peer_id);
-                        true
-                    }
-                    RemoteUpdateBody::PeerUpdate {
-                        peer_id,
-                        key,
-                        value,
-                    } => 'done: {
-                        let Some(peer) = self.peers.get_mut(peer_id) else {
-                            break 'done false;
-                        };
-
-                        peer.update(key, value, &self.config.room);
-                        true
-                    }
-                    RemoteUpdateBody::ObjectCreated { id, object } => 'done: {
-                        let Some(object) = LocalObject::new(id.peer_id, &object) else {
-                            break 'done false;
-                        };
-
-                        order.insert(&object);
-                        objects.insert(object);
-                        true
-                    }
-                    RemoteUpdateBody::ObjectRemoved { id } => {
-                        if let Some(o) = objects.remove(id) {
-                            order.remove(&o);
-                        }
-
-                        if self.s.selected == id {
-                            self.s.select_object(
-                                &self.channel,
-                                ctx,
-                                RemoteId::ZERO,
-                                &mut self.config,
-                                &objects,
-                            );
-                        }
-
-                        self.object_requests.remove(&id);
-                        true
-                    }
-                    RemoteUpdateBody::ObjectUpdated {
-                        channel,
-                        id,
-                        key,
-                        value,
-                    } => 'done: {
-                        if channel != ChannelId::NONE && self.channel.id() == channel {
-                            break 'done false;
-                        }
-
-                        let Some(o) = objects.get_mut(id) else {
-                            break 'done false;
-                        };
-
-                        let update = match key {
-                            // Don't support local updates of transform and
-                            // look at because they cause feedback loops
-                            // which are laggy.
-                            Key::TRANSFORM | Key::LOOK_AT if id.is_local() => {
-                                break 'done false;
-                            }
-                            Key::SORT => {
-                                let Some((_, sort)) = o.sort_mut() else {
-                                    break 'done false;
-                                };
-
-                                let new = value.as_bytes().unwrap_or_default().to_vec();
-
-                                let Some(old) = sort.replace(new) else {
-                                    break 'done false;
-                                };
-
-                                order.reorder(*o.group, &old, *o.group, o.sort(), o.id);
-                                true
-                            }
-                            _ => false,
-                        };
-
-                        o.update(key, value) || update
-                    }
-                    RemoteUpdateBody::ImageAdded { id } => {
-                        self.images.load(ctx, &id);
-                        true
-                    }
-                    RemoteUpdateBody::ImageRemoved { id } => {
-                        self.images.remove(&id);
-                        true
-                    }
-                };
-
-                self.s.update_cache = true;
+                let update = self.remote_update(ctx, body)?;
                 self.s.redraw = true;
                 Ok(update)
             }
@@ -1563,22 +1383,18 @@ impl Map {
 
                 let transform = api::Transform::new(world_pos, api::Vec3::FORWARD);
 
-                self._create_dropped_object = self
-                    .channel
-                    .request()
-                    .body(api::CreateObjectRequest {
-                        ty: api::Type::STATIC,
-                        props: api::Properties::from([
-                            (Key::OBJECT_NAME, Value::from("Image")),
-                            (Key::HIDDEN, Value::from(true)),
-                            (Key::IMAGE_ID, Value::from(body.id)),
-                            (Key::TRANSFORM, Value::from(transform)),
-                            (Key::STATIC_WIDTH, Value::from(width)),
-                            (Key::STATIC_HEIGHT, Value::from(height)),
-                        ]),
-                    })
-                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
-                    .send();
+                self._create_dropped_object = self.create_remote_object(
+                    ctx,
+                    api::Type::STATIC,
+                    [
+                        (Key::OBJECT_NAME, Value::from("Image")),
+                        (Key::HIDDEN, Value::from(true)),
+                        (Key::IMAGE_ID, Value::from(body.id)),
+                        (Key::TRANSFORM, Value::from(transform)),
+                        (Key::STATIC_WIDTH, Value::from(width)),
+                        (Key::STATIC_HEIGHT, Value::from(height)),
+                    ],
+                );
 
                 Ok(false)
             }
@@ -1621,53 +1437,41 @@ impl Map {
                 Ok(true)
             }
             Msg::CreateToken => {
-                self._create_object = self
-                    .channel
-                    .request()
-                    .body(api::CreateObjectRequest {
-                        ty: api::Type::TOKEN,
-                        props: api::Properties::from([
-                            (Key::OBJECT_NAME, Value::from("Owlbear")),
-                            (Key::HIDDEN, Value::from(true)),
-                        ]),
-                    })
-                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
-                    .send();
+                self._create_object = self.create_remote_object(
+                    ctx,
+                    api::Type::TOKEN,
+                    [
+                        (Key::OBJECT_NAME, Value::from("Owlbear")),
+                        (Key::HIDDEN, Value::from(true)),
+                    ],
+                );
 
                 Ok(false)
             }
             Msg::CreateStatic => {
-                self._create_static = self
-                    .channel
-                    .request()
-                    .body(api::CreateObjectRequest {
-                        ty: api::Type::STATIC,
-                        props: api::Properties::from([
-                            (Key::OBJECT_NAME, Value::from("Object")),
-                            (Key::HIDDEN, Value::from(true)),
-                            (Key::STATIC_WIDTH, Value::from(1.0_f32)),
-                            (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
-                        ]),
-                    })
-                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
-                    .send();
+                self._create_static = self.create_remote_object(
+                    ctx,
+                    api::Type::STATIC,
+                    [
+                        (Key::OBJECT_NAME, Value::from("Object")),
+                        (Key::HIDDEN, Value::from(true)),
+                        (Key::STATIC_WIDTH, Value::from(1.0_f32)),
+                        (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
+                    ],
+                );
 
                 Ok(false)
             }
             Msg::CreateGroup => {
-                self._create_group = self
-                    .channel
-                    .request()
-                    .body(api::CreateObjectRequest {
-                        ty: api::Type::GROUP,
-                        props: api::Properties::from([
-                            (Key::OBJECT_NAME, Value::from("Group")),
-                            (Key::HIDDEN, Value::from(false)),
-                            (Key::EXPANDED, Value::from(true)),
-                        ]),
-                    })
-                    .on_packet(ctx.link().callback(Msg::ObjectCreated))
-                    .send();
+                self._create_group = self.create_remote_object(
+                    ctx,
+                    api::Type::GROUP,
+                    [
+                        (Key::OBJECT_NAME, Value::from("Group")),
+                        (Key::HIDDEN, Value::from(false)),
+                        (Key::EXPANDED, Value::from(true)),
+                    ],
+                );
 
                 Ok(false)
             }
@@ -1676,7 +1480,7 @@ impl Map {
                 _ = result.decode()?;
                 Ok(true)
             }
-            Msg::ConfirmDelete(id) => {
+            Msg::ConfirmRemove(id) => {
                 self.s.context_menu = None;
                 let name = self
                     .objects
@@ -1688,7 +1492,7 @@ impl Map {
                 self.s.delete = Some((id, name));
                 Ok(true)
             }
-            Msg::CancelDelete => {
+            Msg::CancelRemove => {
                 self.s.delete = None;
                 Ok(true)
             }
@@ -1700,8 +1504,7 @@ impl Map {
                     .on_packet(ctx.link().callback(Msg::ObjectRemoved))
                     .send();
 
-                self.s.delete = None;
-                Ok(false)
+                Ok(self.remove_object(ctx, id))
             }
             Msg::ObjectRemoved(result) => {
                 let result = result?;
@@ -1718,6 +1521,246 @@ impl Map {
                 Ok(true)
             }
         }
+    }
+
+    fn config_update(&mut self, body: UpdateBody) -> Result<bool, Error> {
+        tracing::debug!(?body, "Config update");
+
+        match body {
+            UpdateBody::Config {
+                channel,
+                key,
+                value,
+            } => {
+                if self.channel.id() == channel {
+                    return Ok(false);
+                }
+
+                let changed = self.config.update(key, value);
+
+                if changed {
+                    for peer in self.peers.iter_mut() {
+                        peer.update_config(&self.config.room);
+                    }
+
+                    self.s.update_cache = true;
+                }
+
+                self.s.redraw = changed;
+                Ok(changed)
+            }
+            UpdateBody::PublicKey { public_key } => {
+                self.peers.public_key = public_key;
+                Ok(true)
+            }
+        }
+    }
+
+    fn remote_update(
+        &mut self,
+        ctx: &Context<Self>,
+        body: RemoteUpdateBody,
+    ) -> Result<bool, Error> {
+        tracing::debug!(?body, "Remote update");
+
+        match body {
+            RemoteUpdateBody::RemoteLost => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                objects.retain(|id, _| id.peer_id == PeerId::ZERO);
+                order.retain(|peer_id| peer_id == PeerId::ZERO);
+                self.peers.clear();
+                Ok(true)
+            }
+            RemoteUpdateBody::PeerConnected { mut peer } => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                for object in peer.objects.drain(..) {
+                    let Some(object) = LocalObject::new(peer.peer_id, &object) else {
+                        continue;
+                    };
+
+                    order.insert(&object);
+                    objects.insert(object);
+                }
+
+                self.peers.insert(peer, &self.config.room);
+                Ok(true)
+            }
+            RemoteUpdateBody::PeerJoin {
+                peer_id,
+                objects: objs,
+                images,
+            } => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                for object in objs {
+                    let Some(object) = LocalObject::new(peer_id, &object) else {
+                        continue;
+                    };
+
+                    order.insert(&object);
+                    objects.insert(object);
+                }
+
+                for id in images {
+                    let id = RemoteId::new(peer_id, id);
+                    self.images.load(ctx, &id);
+                }
+
+                Ok(true)
+            }
+            RemoteUpdateBody::PeerLeave { peer_id } => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                // When a peer leaves our room, we remove all of their
+                // local objects.
+                objects.retain(|id, global| global || id.peer_id != peer_id);
+                order.retain(|this| this != peer_id);
+                Ok(true)
+            }
+            RemoteUpdateBody::PeerDisconnect { peer_id } => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                // We remove all objects associated with a peer when
+                // that peer disconnects.
+                objects.retain(|id, _| id.peer_id != peer_id);
+                order.retain(|this| this != peer_id);
+                self.peers.remove_peer(peer_id);
+                Ok(true)
+            }
+            RemoteUpdateBody::PeerUpdate {
+                peer_id,
+                key,
+                value,
+            } => {
+                let Some(peer) = self.peers.get_mut(peer_id) else {
+                    return Ok(false);
+                };
+
+                peer.update(key, value, &self.config.room);
+                Ok(true)
+            }
+            RemoteUpdateBody::ObjectCreated { id, object, .. } => {
+                Ok(self.create_object(id, object))
+            }
+            RemoteUpdateBody::ObjectRemoved { channel, id } => {
+                if self.channel.id() == channel {
+                    return Ok(false);
+                }
+
+                self.remove_object(ctx, id);
+                Ok(true)
+            }
+            RemoteUpdateBody::ObjectUpdated {
+                channel,
+                id,
+                key,
+                value,
+            } => {
+                let mut objects = self.objects.borrow_mut();
+                let mut order = self.order.borrow_mut();
+
+                if self.channel.id() == channel {
+                    return Ok(false);
+                }
+
+                let Some(o) = objects.get_mut(id) else {
+                    return Ok(false);
+                };
+
+                let update = match key {
+                    Key::SORT => {
+                        let Some((_, sort)) = o.sort_mut() else {
+                            return Ok(false);
+                        };
+
+                        let new = value.as_bytes().unwrap_or_default().to_vec();
+
+                        let Some(old) = sort.replace(new) else {
+                            return Ok(false);
+                        };
+
+                        order.reorder(*o.group, &old, *o.group, o.sort(), o.id);
+                        true
+                    }
+                    _ => false,
+                };
+
+                Ok(o.update(key, value) || update)
+            }
+            RemoteUpdateBody::ImageAdded { id } => {
+                self.images.load(ctx, &id);
+                Ok(true)
+            }
+            RemoteUpdateBody::ImageRemoved { id } => {
+                self.images.remove(&id);
+                Ok(true)
+            }
+        }
+    }
+
+    fn create_remote_object(
+        &mut self,
+        ctx: &Context<Self>,
+        ty: api::Type,
+        props: impl IntoIterator<Item = (Key, Value)>,
+    ) -> ws::Request {
+        let body = api::CreateObjectRequest {
+            ty,
+            props: api::Properties::from_iter(props),
+        };
+
+        self.channel
+            .request()
+            .body(body)
+            .on_packet(ctx.link().callback(Msg::ObjectCreated))
+            .send()
+    }
+
+    fn create_object(&mut self, id: RemoteId, object: api::RemoteObject) -> bool {
+        let mut objects = self.objects.borrow_mut();
+        let mut order = self.order.borrow_mut();
+
+        let Some(object) = LocalObject::new(id.peer_id, &object) else {
+            return false;
+        };
+
+        order.insert(&object);
+        objects.insert(object);
+        self.s.update_cache = true;
+        true
+    }
+
+    fn remove_object(&mut self, ctx: &Context<Map>, id: RemoteId) -> bool {
+        let mut objects = self.objects.borrow_mut();
+        let mut order = self.order.borrow_mut();
+
+        let Some(o) = objects.remove(id) else {
+            return false;
+        };
+
+        order.remove(&o);
+
+        if self.s.selected == id {
+            self.s.select_object(
+                &self.channel,
+                ctx,
+                RemoteId::ZERO,
+                &mut self.config,
+                &objects,
+            );
+        }
+
+        self.s.delete = None;
+        self.object_requests.remove(&id);
+        self.s.update_cache = true;
+        true
     }
 
     fn on_key_up(&mut self, _ctx: &Context<Self>, ev: KeyboardEvent) -> Result<bool, Error> {
@@ -2223,9 +2266,7 @@ impl Map {
 
         let objects = self.objects.borrow();
 
-        let Some(o) = objects.get(object_id) else {
-            return None;
-        };
+        let o = objects.get(object_id)?;
 
         let is_hidden = o.is_hidden();
         let hidden_icon = if is_hidden { "link-slash" } else { "link" };
@@ -2268,9 +2309,9 @@ impl Map {
                     </button>
                     <div class="context-menu-separator" />
                     <button class="context-menu-item danger"
-                        onclick={ctx.link().callback(move |_| Msg::ConfirmDelete(object_id))}>
+                        onclick={ctx.link().callback(move |_| Msg::ConfirmRemove(object_id))}>
                         <Icon name="x-mark" invert={true} />
-                        {"Delete"}
+                        {"Remove"}
                     </button>
                 </div>
             </div>

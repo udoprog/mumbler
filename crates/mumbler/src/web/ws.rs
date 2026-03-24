@@ -113,6 +113,7 @@ impl ws::Handler for Handler<'_> {
                 let object = self.backend.create_object(body.ty, body.props).await?;
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectCreated {
+                    channel: incoming.channel(),
                     id: RemoteId::local(object.id),
                     object,
                 });
@@ -127,6 +128,7 @@ impl ws::Handler for Handler<'_> {
                 self.backend.remove_object(request.id).await?;
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectRemoved {
+                    channel: incoming.channel(),
                     id: RemoteId::local(request.id),
                 });
 
@@ -143,9 +145,9 @@ impl ws::Handler for Handler<'_> {
                     id: RemoteId::local(id),
                 });
             }
-            api::Request::DeleteImage => {
+            api::Request::RemoveImage => {
                 let request = incoming
-                    .read::<api::DeleteImageRequest>()
+                    .read::<api::RemoveImageRequest>()
                     .context("missing request")?;
 
                 super::delete_image(&self.backend, request.id).await?;

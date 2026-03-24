@@ -1,7 +1,7 @@
-/// Bijective 32-bit mixing functions. Each step is invertible, so the
-/// composition is a bijection over u32.
-///
-/// See: <https://github.com/skeeto/hash-prospector?tab=readme-ov-file#three-round-functions>
+//! Bijective 32-bit mixing functions. Each step is invertible, so the
+//! composition is a bijection over u32.
+//!
+//! See: <https://github.com/skeeto/hash-prospector?tab=readme-ov-file#three-round-functions>
 
 #[cfg(test)]
 const fn mod_inverse(a: u32) -> u32 {

@@ -200,6 +200,7 @@ impl Component for TokenSettings {
                         selected={*self.image}
                         sizing={api::ImageSizing::Square}
                         size={128}
+                        ratio={1.0}
                         role={api::Role::TOKEN}
                         input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}

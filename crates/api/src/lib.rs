@@ -438,15 +438,26 @@ impl IntoIterator for Properties {
     }
 }
 
-impl<const N: usize> From<[(Key, Value); N]> for Properties {
-    fn from(values: [(Key, Value); N]) -> Self {
+impl FromIterator<(Key, Value)> for Properties {
+    #[inline]
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = (Key, Value)>,
+    {
         let mut properties = Properties::new();
 
-        for (key, value) in values {
+        for (key, value) in iter {
             properties.insert(key, value);
         }
 
         properties
+    }
+}
+
+impl<const N: usize> From<[(Key, Value); N]> for Properties {
+    #[inline]
+    fn from(values: [(Key, Value); N]) -> Self {
+        Self::from_iter(values)
     }
 }
 
@@ -731,7 +742,7 @@ pub struct RemoveObjectRequest {
 /// Request to delete a stored image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct DeleteImageRequest {
+pub struct RemoveImageRequest {
     pub id: Id,
 }
 
@@ -835,10 +846,12 @@ pub enum RemoteUpdateBody {
         value: Value,
     },
     ObjectCreated {
+        channel: ChannelId,
         id: RemoteId,
         object: RemoteObject,
     },
     ObjectRemoved {
+        channel: ChannelId,
         id: RemoteId,
     },
     ImageAdded {
@@ -906,10 +919,10 @@ api::define! {
         type Response<'de> = Empty;
     }
 
-    pub type DeleteImage;
+    pub type RemoveImage;
 
-    impl Endpoint for DeleteImage {
-        impl Request for DeleteImageRequest;
+    impl Endpoint for RemoveImage {
+        impl Request for RemoveImageRequest;
         type Response<'de> = Empty;
     }
 

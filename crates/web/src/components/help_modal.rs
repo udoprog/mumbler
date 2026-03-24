@@ -24,11 +24,11 @@ pub(crate) fn help_modal(props: &Props) -> Html {
                         <dt><kbd>{"F1"}</kbd>{" / "}<kbd>{"?"}</kbd></dt>
                         <dd>{"Show this help"}</dd>
 
-                        <dt><kbd>{"Escape"}</kbd></dt>
+                        <dt><kbd>{"esc"}</kbd></dt>
                         <dd>{"Close dialogs / Cancel"}</dd>
 
-                        <dt><kbd>{"Delete"}</kbd></dt>
-                        <dd>{"Delete selected"}</dd>
+                        <dt><kbd>{"del"}</kbd></dt>
+                        <dd>{"Remove selected"}</dd>
 
                         <dt><kbd>{"LMB"}</kbd></dt>
                         <dd>{"Select / Drag"}</dd>

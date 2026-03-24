@@ -380,7 +380,15 @@ impl Rooms {
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => Ok(self.remove_peer(peer_id)),
-                    RemoteUpdateBody::ObjectCreated { id, object } => {
+                    RemoteUpdateBody::ObjectCreated {
+                        channel,
+                        id,
+                        object,
+                    } => {
+                        if self.channel.id() == channel {
+                            return Ok(false);
+                        }
+
                         let id = self.peers.to_stable_id(&id);
 
                         if let Some(room) = Room::from_remote(id, &object) {
@@ -391,14 +399,27 @@ impl Rooms {
                             Ok(false)
                         }
                     }
-                    RemoteUpdateBody::ObjectRemoved { id } => {
+                    RemoteUpdateBody::ObjectRemoved { channel, id } => {
+                        if self.channel.id() == channel {
+                            return Ok(false);
+                        }
+
                         let id = self.peers.to_stable_id(&id);
 
                         let prev = self.rooms.len();
                         self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
-                    RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
+                    RemoteUpdateBody::ObjectUpdated {
+                        channel,
+                        id,
+                        key,
+                        value,
+                    } => {
+                        if self.channel.id() == channel {
+                            return Ok(false);
+                        }
+
                         let id = self.peers.to_stable_id(&id);
 
                         let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
@@ -433,13 +454,23 @@ impl Rooms {
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config { key, value, .. } => match key {
-                        Key::ROOM => {
-                            self.active_room = *value.as_stable_id();
-                            Ok(true)
+                    UpdateBody::Config {
+                        channel,
+                        key,
+                        value,
+                    } => {
+                        if self.channel.id() == channel {
+                            return Ok(false);
                         }
-                        _ => Ok(false),
-                    },
+
+                        match key {
+                            Key::ROOM => {
+                                self.active_room = *value.as_stable_id();
+                                Ok(true)
+                            }
+                            _ => Ok(false),
+                        }
+                    }
                     UpdateBody::PublicKey { public_key } => {
                         self.peers.public_key = public_key;
                         Ok(true)
@@ -448,6 +479,7 @@ impl Rooms {
             }
             Msg::Disconnect => {
                 let values = vec![(Key::ROOM, Value::empty())];
+                self.active_room = StableId::ZERO;
 
                 self._connect_room_request = self
                     .channel
@@ -460,6 +492,7 @@ impl Rooms {
             }
             Msg::Connect(room) => {
                 let values = vec![(Key::ROOM, Value::from(room))];
+                self.active_room = room;
 
                 self._connect_room_request = self
                     .channel

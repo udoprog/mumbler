@@ -20,8 +20,8 @@ pub(crate) enum Msg {
     OpenGallery,
     CloseGallery,
     SelectImage(Id),
-    DeleteImage(Id),
-    DeleteResult(Result<Packet<api::DeleteImage>, ws::Error>),
+    RemoveImage(Id),
+    RemoveResult(Result<Packet<api::RemoveImage>, ws::Error>),
     SetLog(log::Log),
 }
 
@@ -33,7 +33,7 @@ pub(crate) struct Props {
     pub(crate) sizing: api::ImageSizing,
     pub(crate) size: u32,
     #[prop_or_default]
-    pub(crate) crop_ratio: Option<f64>,
+    pub(crate) ratio: Option<f64>,
     pub(crate) input_id: AttrValue,
     pub(crate) role: Role,
     pub(crate) onselect: Callback<Id>,
@@ -118,7 +118,7 @@ impl Component for ImageUpload {
                     selected={ctx.props().selected}
                     default_role={ctx.props().role}
                     onselect={ctx.link().callback(Msg::SelectImage)}
-                    ondelete={ctx.link().callback(Msg::DeleteImage)}
+                    ondelete={ctx.link().callback(Msg::RemoveImage)}
                     onclose={ctx.link().callback(|_| Msg::CloseGallery)}
                 />
             }
@@ -126,7 +126,7 @@ impl Component for ImageUpload {
             if let Some(src) = &self.crop_source_url {
                 <CropModal
                     source_url={src.clone()}
-                    ratio={ctx.props().crop_ratio}
+                    ratio={ctx.props().ratio}
                     onconfirm={ctx.link().callback(Msg::CropConfirmed)}
                     oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
                     rescale={ctx.props().onrescale.clone()}
@@ -222,17 +222,17 @@ impl ImageUpload {
                 self.gallery_open = false;
                 Ok(true)
             }
-            Msg::DeleteImage(id) => {
+            Msg::RemoveImage(id) => {
                 self._delete_image = ctx
                     .props()
                     .ws
                     .request()
-                    .body(api::DeleteImageRequest { id })
-                    .on_packet(ctx.link().callback(Msg::DeleteResult))
+                    .body(api::RemoveImageRequest { id })
+                    .on_packet(ctx.link().callback(Msg::RemoveResult))
                     .send();
                 Ok(false)
             }
-            Msg::DeleteResult(body) => {
+            Msg::RemoveResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 ctx.props().onrefresh.emit(());

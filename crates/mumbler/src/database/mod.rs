@@ -230,8 +230,8 @@ impl Database {
         task.await?
     }
 
-    /// Delete an image from the database by its unique identifier.
-    pub(crate) async fn delete_image(&self, id: Id) -> Result<()> {
+    /// Remove an image from the database by its unique identifier.
+    pub(crate) async fn remove_image(&self, id: Id) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -382,8 +382,8 @@ impl Database {
         task.await?
     }
 
-    /// Delete an object in the database.
-    pub(crate) async fn delete_object(&self, id: Id) -> Result<()> {
+    /// Remove an object in the database.
+    pub(crate) async fn remove_object(&self, id: Id) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {

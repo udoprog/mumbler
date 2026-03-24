@@ -235,7 +235,7 @@ impl Component for StaticSettings {
                         selected={*self.image}
                         sizing={api::ImageSizing::Crop}
                         size={512}
-                        crop_ratio={Some((*self.width / *self.height) as f64)}
+                        ratio={Some((*self.width / *self.height) as f64)}
                         role={api::Role::STATIC}
                         input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}

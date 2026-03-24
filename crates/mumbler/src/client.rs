@@ -119,6 +119,8 @@ async fn handle_peer(
                     continue;
                 };
 
+                peer.images.clear();
+
                 if !body.images.is_empty() {
                     let mut images = b.write_images().await;
 
@@ -158,8 +160,8 @@ async fn handle_peer(
                     continue;
                 };
 
-                peer.objects.retain(|_, o| o.ty.is_global());
                 peer.images.clear();
+                peer.objects.retain(|_, o| o.ty.is_global());
 
                 b.broadcast(RemoteUpdateBody::PeerLeave { peer_id: body.id });
             }
@@ -217,6 +219,7 @@ async fn handle_peer(
                 peer.objects.insert(body.object.id, body.object.clone());
 
                 b.broadcast(RemoteUpdateBody::ObjectCreated {
+                    channel: ChannelId::NONE,
                     id: RemoteId::new(body.peer_id, body.object.id),
                     object: body.object,
                 });
@@ -225,8 +228,16 @@ async fn handle_peer(
                 let body = body.decode::<ImageCreatedBody>()?;
                 tracing::debug!(?id, ?body.peer_id, image_id = ?body.image.id, "ImageAdded");
 
-                let id = RemoteId::new(body.peer_id, body.image.id);
+                let mut state = b.client_state().await;
                 let mut images = b.write_images().await;
+
+                let Some(peer) = state.peers.get_mut(&body.peer_id) else {
+                    continue;
+                };
+
+                peer.images.insert(body.image.id);
+
+                let id = RemoteId::new(body.peer_id, body.image.id);
                 images.store(id, body.image.bytes.clone());
 
                 b.broadcast(RemoteUpdateBody::ImageAdded { id });
@@ -252,6 +263,7 @@ async fn handle_peer(
 
                 if removed {
                     b.broadcast(RemoteUpdateBody::ObjectRemoved {
+                        channel: ChannelId::NONE,
                         id: RemoteId::new(body.peer_id, body.object_id),
                     });
                 }

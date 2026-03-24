@@ -264,7 +264,7 @@ async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<
 }
 
 async fn delete_image(backend: &Backend, id: Id) -> Result<()> {
-    backend.delete_image(id).await?;
+    backend.remove_image(id).await?;
     Ok(())
 }
 
