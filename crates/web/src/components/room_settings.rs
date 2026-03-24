@@ -1,4 +1,4 @@
-use api::{Extent, Id, Image, Key, PeerId, RemoteUpdateBody, Value};
+use api::{Extent, Id, Image, Key, PeerId, RemoteId, RemoteUpdateBody, Value};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -32,7 +32,7 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) id: Id,
+    pub(crate) id: RemoteId,
 }
 
 pub(crate) struct RoomSettings {
@@ -232,7 +232,9 @@ impl RoomSettings {
                 self._list_settings = self
                     .channel
                     .request()
-                    .body(api::GetObjectSettingsRequest { id: ctx.props().id })
+                    .body(api::GetObjectSettingsRequest {
+                        id: ctx.props().id.id,
+                    })
                     .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                     .send();
 
@@ -316,7 +318,7 @@ impl RoomSettings {
 
                 let changed = match body {
                     RemoteUpdateBody::ObjectUpdated { id, key, value, .. } => {
-                        if id.id != ctx.props().id {
+                        if id != ctx.props().id {
                             return Ok(false);
                         }
 
@@ -361,7 +363,7 @@ fn object_update(
     channel
         .request()
         .body(api::ObjectUpdateBody {
-            id: ctx.props().id,
+            id: ctx.props().id.id,
             key,
             value: value.into(),
         })

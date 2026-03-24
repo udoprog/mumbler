@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use api::{Id, Key, PeerId, StableId, Type, UpdateBody, Value};
+use api::{Key, PeerId, RemoteId, StableId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -29,8 +29,8 @@ pub(crate) enum Msg {
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
-    pub(crate) onopensettings: Callback<Id>,
-    pub(crate) onrequestdelete: Callback<(Id, String)>,
+    pub(crate) onopensettings: Callback<RemoteId>,
+    pub(crate) onrequestdelete: Callback<(RemoteId, String)>,
 }
 
 struct Room {
@@ -195,9 +195,11 @@ impl Rooms {
         let is_local = room.id.public_key == self.peers.public_key;
 
         let delete_button = is_local.then(|| {
-            let id = room.id.id;
+            let id = self.peers.to_remote_id(&room.id);
             let name = room.name.clone();
+
             let onrequestdelete = ctx.props().onrequestdelete.clone();
+
             let onclick = Callback::from(move |ev: MouseEvent| {
                 ev.stop_propagation();
                 onrequestdelete.emit((id, name.clone()));
@@ -237,8 +239,10 @@ impl Rooms {
             + usize::from(self.active_room == room.id);
 
         let settings_button = is_local.then(|| {
-            let id = room.id.id;
+            let id = self.peers.to_remote_id(&room.id);
+
             let onopensettings = ctx.props().onopensettings.clone();
+
             let onclick = Callback::from(move |ev: MouseEvent| {
                 ev.stop_propagation();
                 onopensettings.emit(id);

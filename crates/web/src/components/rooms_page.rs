@@ -1,4 +1,4 @@
-use api::Id;
+use api::RemoteId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use web_sys::MouseEvent;
@@ -10,11 +10,11 @@ use crate::log;
 use super::{Icon, RoomSettings, Rooms};
 
 pub(crate) enum Msg {
-    OpenSettings(Id),
+    OpenSettings(RemoteId),
     CloseSettings,
-    RequestDelete(Id, String),
+    RequestDelete(RemoteId, String),
     CancelDelete,
-    ConfirmDelete(Id),
+    ConfirmDelete(RemoteId),
     DeleteResult(Result<Packet<api::RemoveObject>, ws::Error>),
     ContextUpdate(log::Log),
 }
@@ -25,8 +25,8 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct RoomsPage {
-    open_settings: Option<Id>,
-    confirm_delete: Option<(Id, String)>,
+    open_settings: Option<RemoteId>,
+    confirm_delete: Option<(RemoteId, String)>,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _delete_request: ws::Request,
@@ -71,13 +71,15 @@ impl Component for RoomsPage {
             }
             Msg::ConfirmDelete(id) => {
                 self.confirm_delete = None;
+
                 self._delete_request = ctx
                     .props()
                     .ws
                     .request()
-                    .body(api::RemoveObjectRequest { id })
+                    .body(api::RemoveObjectRequest { id: id.id })
                     .on_packet(ctx.link().callback(Msg::DeleteResult))
                     .send();
+
                 true
             }
             Msg::DeleteResult(result) => {

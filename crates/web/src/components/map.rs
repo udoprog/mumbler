@@ -30,8 +30,8 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    COMMON_ROOM, GroupSettings, HelpModal, ObjectList, RoomsPage, StaticSettings, TokenSettings,
-    UNKNOWN_ROOM,
+    COMMON_ROOM, GroupSettings, HelpModal, ObjectList, RoomSettings, RoomsPage, StaticSettings,
+    TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -185,6 +185,7 @@ enum Action {
 }
 
 struct Cache {
+    room_id: RemoteId,
     extent: Extent,
     show_grid: bool,
     background: RemoteId,
@@ -214,6 +215,7 @@ impl Cache {
         };
 
         *self = Self {
+            room_id,
             extent: *room.extent,
             show_grid: *room.show_grid,
             background: RemoteId::new(room_id.peer_id, *room.background),
@@ -226,6 +228,7 @@ impl Cache {
 impl Default for Cache {
     fn default() -> Self {
         Self {
+            room_id: RemoteId::ZERO,
             extent: Extent::arena(),
             show_grid: false,
             background: RemoteId::ZERO,
@@ -447,7 +450,7 @@ pub(crate) enum Msg {
     KeyUp(KeyboardEvent),
     ObjectCreated(Result<Packet<api::CreateObject>, ws::Error>),
     ObjectRemoved(Result<Packet<api::RemoveObject>, ws::Error>),
-    OpenObjectSettings(RemoteId),
+    OpenSettings(RemoteId),
     PointerDown(PointerEvent),
     PointerLeave(PointerEvent),
     PointerMove(PointerEvent),
@@ -693,7 +696,7 @@ impl Component for Map {
 
             let settings_click = o.map(|o| {
                 let id = o.id;
-                ctx.link().callback(move |_| Msg::OpenObjectSettings(id))
+                ctx.link().callback(move |_| Msg::OpenSettings(id))
             });
 
             let delete_click = o.map(|o| {
@@ -872,18 +875,28 @@ impl Component for Map {
                 }
             };
 
+            let room_id = self.cache.room_id;
+
             html! {
                 <div class="control-group">
                     {mumble}
                     {hidden}
                     {local_hidden}
                     {locked}
+
                     <section class="icon-group">
                         <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenRooms)}>
                             <Icon name={self.cache.room_icon} />
                             <span>{self.cache.room_name.clone()}</span>
                         </button>
                     </section>
+
+                    if room_id.is_local() {
+                        <button class="btn" title="Room settings" onclick={ctx.link().callback(move |_| Msg::OpenSettings(room_id))}>
+                            <Icon name="cog" />
+                        </button>
+                    }
+
                     <div class="fill"></div>
                     {follow}
                     {help}
@@ -1032,6 +1045,9 @@ impl Component for Map {
                                     }
                                     Some(ObjectKind::Token(..)) => {
                                         html! { <TokenSettings {ws} {id} /> }
+                                    }
+                                    Some(ObjectKind::Room(..)) => {
+                                        html! { <RoomSettings {ws} {id} /> }
                                     }
                                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
                                 }}
@@ -1196,8 +1212,7 @@ impl Map {
                 Ok(true)
             }
             Msg::DragEnd(id) => self.drag_end(ctx, id),
-            // Removed misplaced enum variants
-            Msg::OpenObjectSettings(id) => {
+            Msg::OpenSettings(id) => {
                 self.s.context_menu = None;
                 self.open_settings = Some(id);
                 Ok(true)
@@ -2197,14 +2212,19 @@ impl Map {
         Ok(())
     }
 
-    fn render_context_menu(&self, ctx: &Context<Self>, menu: &ContextMenu) -> Html {
+    fn render_context_menu(&self, ctx: &Context<Self>, menu: &ContextMenu) -> Option<Html> {
         let object_id = menu.object_id;
+
+        if !object_id.is_local() {
+            return None;
+        }
+
         let style = format!("left: {}px; top: {}px;", menu.x, menu.y);
 
         let objects = self.objects.borrow();
 
         let Some(o) = objects.get(object_id) else {
-            return html! {};
+            return None;
         };
 
         let is_hidden = o.is_hidden();
@@ -2223,11 +2243,11 @@ impl Map {
             "Set as MumbleLink"
         };
 
-        html! {
+        Some(html! {
             <div class="context-menu-backdrop" onclick={ctx.link().callback(|_| Msg::CloseContextMenu)}>
                 <div class="context-menu" {style} onclick={|ev: MouseEvent| ev.stop_propagation()}>
                     <button class="context-menu-item"
-                        onclick={ctx.link().callback(move |_| Msg::OpenObjectSettings(object_id))}>
+                        onclick={ctx.link().callback(move |_| Msg::OpenSettings(object_id))}>
                         <Icon name="cog" invert={true} />
                         {"Settings"}
                     </button>
@@ -2254,7 +2274,7 @@ impl Map {
                     </button>
                 </div>
             </div>
-        }
+        })
     }
 
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
