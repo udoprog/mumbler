@@ -441,7 +441,7 @@ pub(crate) struct Map {
     _create_group: ws::Request,
     _create_object: ws::Request,
     _create_static: ws::Request,
-    _delete_object: ws::Request,
+    _remove_object: ws::Request,
     _initialize: ws::Request,
     _channel: ws::Request,
     _keydown_listener: EventListener,
@@ -600,7 +600,7 @@ impl Component for Map {
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
             _channel: ws::Request::new(),
-            _delete_object: ws::Request::new(),
+            _remove_object: ws::Request::new(),
             _initialize: ws::Request::new(),
             _keydown_listener,
             _keyup_listener,
@@ -1279,17 +1279,17 @@ impl Map {
 
                 self.peers.clear();
 
-                for mut peer in body.peers {
-                    for object in peer.objects.drain(..) {
-                        let Some(object) = LocalObject::new(peer.peer_id, &object) else {
-                            continue;
-                        };
-
-                        order.insert(&object);
-                        objects.insert(object);
-                    }
-
+                for peer in body.peers {
                     self.peers.insert(peer, &self.config.room);
+                }
+
+                for (peer_id, object) in body.peer_objects {
+                    let Some(object) = LocalObject::new(peer_id, &object) else {
+                        continue;
+                    };
+
+                    order.insert(&object);
+                    objects.insert(object);
                 }
 
                 self.images.clear();
@@ -1499,7 +1499,7 @@ impl Map {
                 Ok(true)
             }
             Msg::RemoveObject(id) => {
-                self._delete_object = self
+                self._remove_object = self
                     .channel
                     .request()
                     .body(api::RemoveObjectRequest { id: id.id })
@@ -1572,29 +1572,18 @@ impl Map {
 
                 objects.retain(|id, _| id.peer_id == PeerId::ZERO);
                 order.retain(|peer_id| peer_id == PeerId::ZERO);
+                self.images.retain(|peer_id| peer_id == PeerId::ZERO);
                 self.peers.clear();
+                self.s.update_cache = true;
                 Ok(true)
             }
-            RemoteUpdateBody::PeerConnected { mut peer } => {
-                let mut objects = self.objects.borrow_mut();
-                let mut order = self.order.borrow_mut();
-
-                for object in peer.objects.drain(..) {
-                    let Some(object) = LocalObject::new(peer.peer_id, &object) else {
-                        continue;
-                    };
-
-                    order.insert(&object);
-                    objects.insert(object);
-                }
-
+            RemoteUpdateBody::PeerConnected { peer } => {
                 self.peers.insert(peer, &self.config.room);
                 Ok(true)
             }
             RemoteUpdateBody::PeerJoin {
                 peer_id,
                 objects: objs,
-                images,
             } => {
                 let mut objects = self.objects.borrow_mut();
                 let mut order = self.order.borrow_mut();
@@ -1606,11 +1595,6 @@ impl Map {
 
                     order.insert(&object);
                     objects.insert(object);
-                }
-
-                for id in images {
-                    let id = RemoteId::new(peer_id, id);
-                    self.images.load(ctx, &id);
                 }
 
                 Ok(true)
@@ -1694,6 +1678,7 @@ impl Map {
                     _ => false,
                 };
 
+                self.s.update_cache = o.ty() == Type::ROOM;
                 Ok(o.update(key, value) || update)
             }
             RemoteUpdateBody::ImageAdded { id } => {

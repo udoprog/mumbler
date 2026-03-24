@@ -12,12 +12,13 @@ use musli::storage;
 use musli_core::Decode;
 use musli_web::api::{ErrorMessage, MessageId};
 
+use crate::remote::api::{ImageCreatedBodyRef, ObjectCreatedBodyRef};
+
 use super::api::{
-    ChallengeBodyRef, ConnectBodyRef, Header, HelloBody, ImageCreateBody, ImageCreatedBody,
-    ImageRemoveBody, ImageRemovedBody, ObjectCreateBody, ObjectCreatedBody, ObjectRemoveBody,
-    ObjectRemovedBody, ObjectUpdateBodyRef, ObjectUpdatedBodyRef, PeerConnectedBodyRef,
-    PeerDisconnectBody, PeerJoinBodyRef, PeerLeaveBody, PeerUpdateBodyRef, PeerUpdatedBodyRef,
-    PingBody, PongBody, RemoteImage, Signature,
+    ChallengeBodyRef, ConnectBodyRef, Header, HelloBody, ImageCreateBody, ImageRemoveBody,
+    ImageRemovedBody, ObjectCreateBody, ObjectRemoveBody, ObjectRemovedBody, ObjectUpdateBodyRef,
+    ObjectUpdatedBodyRef, PeerConnectedBodyRef, PeerDisconnectBody, PeerJoinBodyRef, PeerLeaveBody,
+    PeerUpdateBodyRef, PeerUpdatedBodyRef, PingBody, PongBody, RemoteImage, Signature,
 };
 use super::{Buf, Client, Scratch, VERSION};
 
@@ -173,13 +174,11 @@ impl Peer {
         &mut self,
         public_key: PublicKey,
         peer_id: PeerId,
-        objects: &[RemoteObject],
         props: &Properties,
     ) -> Result<()> {
         self.scratch.send(PeerConnectedBodyRef {
             public_key,
             peer_id,
-            objects,
             props,
         })?;
         self.write.write_message(&mut self.scratch);
@@ -187,17 +186,8 @@ impl Peer {
     }
 
     /// Mark the given peer as having joined the room.
-    pub fn peer_join(
-        &mut self,
-        peer_id: PeerId,
-        objects: &[RemoteObject],
-        images: &[RemoteImage],
-    ) -> Result<()> {
-        self.scratch.send(PeerJoinBodyRef {
-            peer_id,
-            objects,
-            images,
-        })?;
+    pub fn peer_join(&mut self, peer_id: PeerId, objects: &[RemoteObject]) -> Result<()> {
+        self.scratch.send(PeerJoinBodyRef { peer_id, objects })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -286,8 +276,9 @@ impl Peer {
     }
 
     /// Broadcast that a peer has added an object.
-    pub fn object_created(&mut self, peer_id: PeerId, object: RemoteObject) -> Result<()> {
-        self.scratch.send(ObjectCreatedBody { peer_id, object })?;
+    pub fn object_created(&mut self, peer_id: PeerId, object: &RemoteObject) -> Result<()> {
+        self.scratch
+            .send(ObjectCreatedBodyRef { peer_id, object })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }
@@ -300,8 +291,8 @@ impl Peer {
     }
 
     /// Broadcast that a peer has added an image.
-    pub fn image_created(&mut self, peer_id: PeerId, image: RemoteImage) -> Result<()> {
-        self.scratch.send(ImageCreatedBody { peer_id, image })?;
+    pub fn image_created(&mut self, peer_id: PeerId, image: &RemoteImage) -> Result<()> {
+        self.scratch.send(ImageCreatedBodyRef { peer_id, image })?;
         self.write.write_message(&mut self.scratch);
         Ok(())
     }

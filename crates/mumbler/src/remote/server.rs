@@ -498,11 +498,20 @@ impl State {
                             continue;
                         }
 
-                        for object in peer.state.objects.values().filter(|o| o.ty.is_global()) {
+                        for object in peer.state.objects.values() {
+                            if !object.ty.is_global() {
+                                continue;
+                            }
+
                             tracing::debug!(?object.id, ?object.ty, ?object.props, "global create object to new peer");
 
-                            this.peer
-                                .object_created(peer.state.peer_id, object.clone())?;
+                            this.peer.object_created(peer.state.peer_id, object)?;
+                        }
+
+                        for image in peer.state.images.values() {
+                            tracing::debug!(?image.id, ?image.content_type, ?image.width, ?image.height, "global create image to new peer");
+
+                            this.peer.image_created(peer.state.peer_id, image)?;
                         }
                     }
 
@@ -541,9 +550,8 @@ impl State {
 
                     this.objects.insert(object.id, object);
 
-                    let action = |this: &mut ServerPeerState, peer: Pin<&mut ServerPeer>| {
-                        peer.peer_mut()
-                            .object_created(this.peer_id, body.object.clone())
+                    let action = |this: &ServerPeerState, peer: Pin<&mut ServerPeer>| {
+                        peer.peer_mut().object_created(this.peer_id, &body.object)
                     };
 
                     match body.object.ty {
@@ -569,7 +577,7 @@ impl State {
 
                     object.props.insert(body.key, body.value.clone());
 
-                    let action = |this: &mut ServerPeerState, peer: Pin<&mut ServerPeer>| {
+                    let action = |this: &ServerPeerState, peer: Pin<&mut ServerPeer>| {
                         peer.peer_mut().object_updated(
                             this.peer_id,
                             body.object_id,
@@ -594,7 +602,7 @@ impl State {
 
                     tracing::debug!(?message, ?object.id, ?object.ty, "removing object");
 
-                    let action = |this: &mut ServerPeerState, peer: Pin<&mut ServerPeer>| {
+                    let action = |this: &ServerPeerState, peer: Pin<&mut ServerPeer>| {
                         peer.peer_mut().object_removed(this.peer_id, body.object_id)
                     };
 
@@ -620,8 +628,7 @@ impl State {
                     this.images.insert(image.id, image);
 
                     self.send_to_room(this, |data, peer| {
-                        peer.peer_mut()
-                            .image_created(data.peer_id, body.image.clone())
+                        peer.peer_mut().image_created(data.peer_id, &body.image)
                     });
                 }
                 Event::ImageRemove if !this.public_key.is_zero() => {
@@ -675,35 +682,59 @@ impl State {
     }
 
     fn connected(&mut self, this: &mut ServerPeerState) {
-        let objects = this
-            .objects
-            .values()
-            .filter(|o| o.ty.is_global())
-            .cloned()
-            .collect::<Vec<_>>();
-
         self.send_to_all(this, |data, peer| {
             peer.peer_mut()
-                .peer_connected(data.public_key, data.peer_id, &objects, &data.props)
+                .peer_connected(data.public_key, data.peer_id, &data.props)
         });
 
-        for (id, peer) in self.peers.iter_mut() {
-            let objects = peer
-                .state
-                .objects
-                .values()
-                .filter(|o| o.ty.is_global())
-                .cloned()
-                .collect::<Vec<_>>();
+        for object in this.objects.values() {
+            if !object.ty.is_global() {
+                continue;
+            }
 
+            self.send_to_all(this, |data, peer| {
+                peer.peer_mut().object_created(data.peer_id, object)
+            });
+        }
+
+        for image in this.images.values() {
+            self.send_to_all(this, |data, peer| {
+                peer.peer_mut().image_created(data.peer_id, image)
+            });
+        }
+
+        for (id, peer) in self.peers.iter_mut() {
             let props = &peer.state.props;
 
-            if let Err(error) = this
-                .peer
-                .peer_connected(peer.state.public_key, id, &objects, props)
-            {
+            let mut any = false;
+
+            if let Err(error) = this.peer.peer_connected(peer.state.public_key, id, props) {
                 tracing::error!(?id, %error, "sending connected");
             } else {
+                any = true;
+            }
+
+            for object in peer.state.objects.values() {
+                if !object.ty.is_global() {
+                    continue;
+                }
+
+                if let Err(error) = this.peer.object_created(id, object) {
+                    tracing::error!(?id, %error, "sending connected");
+                } else {
+                    any = true;
+                }
+            }
+
+            for image in peer.state.images.values() {
+                if let Err(error) = this.peer.image_created(id, image) {
+                    tracing::error!(?id, %error, "sending connected");
+                } else {
+                    any = true;
+                }
+            }
+
+            if any {
                 self.poll.insert(this.peer_id);
             }
         }
@@ -734,13 +765,7 @@ impl State {
                 .cloned()
                 .collect::<Vec<_>>();
 
-            let images = this.images.values().cloned().collect::<Vec<_>>();
-
-            if let Err(error) = peer
-                .as_mut()
-                .peer_mut()
-                .peer_join(this.peer_id, &objects, &images)
-            {
+            if let Err(error) = peer.as_mut().peer_mut().peer_join(this.peer_id, &objects) {
                 tracing::error!(?id, %error, "sending join");
             } else {
                 self.poll.insert(peer.state.peer_id);
@@ -754,9 +779,7 @@ impl State {
                 .cloned()
                 .collect::<Vec<_>>();
 
-            let images = peer.state.images.values().cloned().collect::<Vec<_>>();
-
-            if let Err(error) = this.peer.peer_join(peer.state.peer_id, &objects, &images) {
+            if let Err(error) = this.peer.peer_join(peer.state.peer_id, &objects) {
                 tracing::error!(?id, %error, "sending join");
             } else {
                 self.poll.insert(this.peer_id);
@@ -797,9 +820,9 @@ impl State {
     }
 
     /// Send to the room this peer belongs to, if any.
-    fn send_to_room<F>(&mut self, this: &mut ServerPeerState, mut f: F)
+    fn send_to_room<F>(&mut self, this: &ServerPeerState, mut f: F)
     where
-        F: FnMut(&mut ServerPeerState, Pin<&mut ServerPeer>) -> Result<()>,
+        F: FnMut(&ServerPeerState, Pin<&mut ServerPeer>) -> Result<()>,
     {
         let Some(room) = self.rooms.get(this.room()) else {
             return;
@@ -821,9 +844,9 @@ impl State {
     }
 
     /// Send to all other peers.
-    fn send_to_all<F>(&mut self, this: &mut ServerPeerState, mut f: F)
+    fn send_to_all<F>(&mut self, this: &ServerPeerState, mut f: F)
     where
-        F: FnMut(&mut ServerPeerState, Pin<&mut ServerPeer>) -> Result<()>,
+        F: FnMut(&ServerPeerState, Pin<&mut ServerPeer>) -> Result<()>,
     {
         for (id, peer) in self.peers.iter_mut() {
             if this.peer_id == id {

@@ -131,10 +131,6 @@ impl RemoteStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Restart => {
-                if !matches!(self.state, ws::State::Open) {
-                    return Ok(false);
-                }
-
                 self._restart_request = self
                     .channel
                     .request()
@@ -149,10 +145,6 @@ impl RemoteStatus {
                 Ok(false)
             }
             Msg::Toggle => {
-                if !matches!(self.state, ws::State::Open) {
-                    return Ok(false);
-                }
-
                 let new_enabled = !*self.enabled;
                 *self.enabled = new_enabled;
 

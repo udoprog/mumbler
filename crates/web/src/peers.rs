@@ -88,20 +88,20 @@ impl Peers {
 
     /// Insert a new peer.
     pub(crate) fn insert(&mut self, p: RemotePeer, room: &StableId) {
-        if let Some(old) = self.public_keys.insert(p.public_key, p.peer_id) {
+        if let Some(old) = self.public_keys.insert(p.public_key, p.id) {
             self.peers.remove(&old);
         }
 
         let in_room = *p.props.get(Key::ROOM).as_stable_id() == *room;
 
         let peer = Peer {
-            id: p.peer_id,
+            id: p.id,
             props: p.props,
             public_key: p.public_key,
             in_room,
         };
 
-        if let Some(old) = self.peers.insert(p.peer_id, peer) {
+        if let Some(old) = self.peers.insert(p.id, peer) {
             self.public_keys.remove(&old.public_key);
         }
     }

@@ -43,7 +43,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct ImageUpload {
-    _delete_image: ws::Request,
+    _remove_image: ws::Request,
     _file_reader: Option<FileReader>,
     _upload_image: ws::Request,
     crop_source_data: Option<(String, Vec<u8>)>,
@@ -65,7 +65,7 @@ impl Component for ImageUpload {
             .expect("ErrorLog context not found");
 
         Self {
-            _delete_image: ws::Request::new(),
+            _remove_image: ws::Request::new(),
             _file_reader: None,
             _upload_image: ws::Request::new(),
             crop_source_data: None,
@@ -223,7 +223,7 @@ impl ImageUpload {
                 Ok(true)
             }
             Msg::RemoveImage(id) => {
-                self._delete_image = ctx
+                self._remove_image = ctx
                     .props()
                     .ws
                     .request()

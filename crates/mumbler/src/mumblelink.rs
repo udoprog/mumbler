@@ -95,10 +95,13 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
 /// whenever a restart is signalled by [`Backend::restart_mumblelink`].
 pub async fn managed(b: Backend) -> Result<()> {
     let settings = async || -> Result<bool> {
-        Ok(b.db()
-            .config::<bool>(Key::MUMBLE_ENABLED)
-            .await?
-            .unwrap_or_default())
+        let state = b.client_state().await;
+        let enabled = state
+            .props
+            .get(Key::MUMBLE_ENABLED)
+            .as_bool()
+            .unwrap_or_default();
+        Ok(enabled)
     };
 
     let mut enabled = settings().await?;

@@ -194,7 +194,7 @@ impl Rooms {
         let is_active = self.active_room == room.id;
         let is_local = room.id.public_key == self.peers.public_key;
 
-        let delete_button = is_local.then(|| {
+        let remove_button = is_local.then(|| {
             let id = self.peers.to_remote_id(&room.id);
 
             let onclick = ctx.props().onrequestdelete.reform(move |ev: MouseEvent| {
@@ -273,7 +273,7 @@ impl Rooms {
                     }
                 </span>
                 {settings_button}
-                {delete_button}
+                {remove_button}
                 <span class="bullet" title="Players in this room">{peer_count}</span>
             </div>
         }
@@ -331,17 +331,16 @@ impl Rooms {
                     }
                 }
 
-                for mut peer in body.peers {
-                    let public_key = peer.public_key;
-                    let objects = std::mem::take(&mut peer.objects);
+                for peer in body.peers {
                     self.peers.insert(peer, &self.active_room);
+                }
 
-                    for object in objects {
-                        let id = StableId::new(public_key, object.id);
+                for (peer_id, object) in body.peer_objects {
+                    let id = RemoteId::new(peer_id, object.id);
+                    let id = self.peers.to_stable_id(&id);
 
-                        if let Some(room) = Room::from_remote(id, &object) {
-                            self.rooms.push(room);
-                        }
+                    if let Some(room) = Room::from_remote(id, &object) {
+                        self.rooms.push(room);
                     }
                 }
 
@@ -352,26 +351,16 @@ impl Rooms {
                 let body = body?;
                 let body = body.decode()?;
 
+                tracing::debug!(?body);
+
                 match body {
                     RemoteUpdateBody::RemoteLost => {
                         self.rooms
                             .retain(|r| r.id.public_key != self.peers.public_key);
                         Ok(true)
                     }
-                    RemoteUpdateBody::PeerConnected { mut peer } => {
-                        let public_key = peer.public_key;
-                        let objects = std::mem::take(&mut peer.objects);
+                    RemoteUpdateBody::PeerConnected { peer, .. } => {
                         self.peers.insert(peer, &self.active_room);
-
-                        for object in objects {
-                            let id = StableId::new(public_key, object.id);
-
-                            if let Some(room) = Room::from_remote(id, &object) {
-                                self.rooms.push(room);
-                                self.rooms.sort_by(Room::cmp);
-                            }
-                        }
-
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => Ok(self.remove_peer(peer_id)),

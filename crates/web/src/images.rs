@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use std::collections::HashMap;
 
-use api::RemoteId;
+use api::{PeerId, RemoteId};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::HtmlImageElement;
@@ -18,7 +18,6 @@ struct ImageState {
     image: HtmlImageElement,
     load: Option<Closure<dyn FnMut()>>,
     error: Option<Closure<dyn FnMut()>>,
-    users: usize,
 }
 
 /// Collection of images loaded for rendering.
@@ -37,6 +36,11 @@ where
             inner: HashMap::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Retain only images matching the given predicate.
+    pub(crate) fn retain(&mut self, mut f: impl FnMut(PeerId) -> bool) {
+        self.inner.retain(move |id, _| f(id.peer_id));
     }
 
     pub(crate) fn update(&mut self, msg: ImageMessage) {
@@ -60,13 +64,7 @@ where
             return;
         }
 
-        if let Some(state) = self.inner.get_mut(id) {
-            state.users = state.users.saturating_sub(1);
-
-            if state.users == 0 {
-                self.inner.remove(id);
-            }
-        }
+        self.inner.remove(id);
     }
 
     /// Clear all loaded images.
@@ -76,11 +74,6 @@ where
 
     pub(crate) fn load(&mut self, ctx: &Context<M>, id: &RemoteId) {
         if id.is_zero() {
-            return;
-        }
-
-        if let Some(state) = self.inner.get_mut(id) {
-            state.users = state.users.saturating_add(1);
             return;
         }
 
@@ -144,7 +137,6 @@ where
             image: img,
             load: Some(load),
             error: Some(error),
-            users: 1,
         })
     }
 }

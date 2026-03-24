@@ -10,8 +10,6 @@ use api::{
     ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
-use musli::alloc::Global;
-use musli::de::DecodeOwned;
 use musli::mode::Binary;
 use musli::{Encode, descriptive};
 use relative_path::{RelativePath, RelativePathBuf};
@@ -103,7 +101,6 @@ struct Inner {
     insert_image: SendStatement,
     insert_object: SendStatement,
     insert_property: SendStatement,
-    select_config: SendStatement,
     select_configs: SendStatement,
     select_images: SendStatement,
     select_objects: SendStatement,
@@ -198,7 +195,6 @@ impl Database {
                 insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height, role) VALUES (?, ?, ?, ?, ?, ?)")?.into_send()?,
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 insert_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
-                select_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
                 select_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
                 select_images: c.prepare("SELECT id, content_type, data, width, height, role FROM images")?.into_send()?,
                 select_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
@@ -259,26 +255,6 @@ impl Database {
                 .insert_image
                 .execute((id, content_type, data, width, height, role))?;
             Ok(id)
-        });
-
-        task.await?
-    }
-
-    pub(crate) async fn config<T>(&self, key: Key) -> Result<Option<T>>
-    where
-        T: 'static + Send + DecodeOwned<Binary, Global>,
-    {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_config.bind((key,))?;
-
-            if let Some(row) = inner.select_config.next::<&[u8]>()? {
-                let value = descriptive::from_slice::<T>(row)?;
-                return Ok(Some(value));
-            }
-
-            Ok(None)
         });
 
         task.await?

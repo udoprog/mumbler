@@ -1,7 +1,7 @@
 use core::pin::{Pin, pin};
 use core::time::Duration;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use api::{Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
@@ -87,13 +87,13 @@ async fn handle_peer(
             }
             Event::PeerConnected => {
                 let body = body.decode::<PeerConnectedBody>()?;
-                tracing::debug!(?id, ?body.peer_id, objects = body.objects.len(), "PeerConnected");
+                tracing::debug!(?id, ?body.peer_id, "PeerConnected");
 
                 let mut state = b.client_state().await;
 
                 let peer = PeerInfo {
                     public_key: body.public_key,
-                    objects: body.objects.iter().map(|o| (o.id, o.clone())).collect(),
+                    objects: HashMap::new(),
                     images: HashSet::new(),
                     props: body.props.clone(),
                 };
@@ -102,9 +102,8 @@ async fn handle_peer(
 
                 b.broadcast(RemoteUpdateBody::PeerConnected {
                     peer: RemotePeer {
-                        peer_id: body.peer_id,
+                        id: body.peer_id,
                         public_key: body.public_key,
-                        objects: body.objects,
                         props: body.props.clone(),
                     },
                 });
@@ -119,18 +118,6 @@ async fn handle_peer(
                     continue;
                 };
 
-                peer.images.clear();
-
-                if !body.images.is_empty() {
-                    let mut images = b.write_images().await;
-
-                    for image in body.images {
-                        let id = RemoteId::new(body.peer_id, image.id);
-                        images.store(id, image.bytes);
-                        peer.images.insert(image.id);
-                    }
-                }
-
                 for o in body.objects {
                     peer.objects.insert(o.id, o);
                 }
@@ -138,7 +125,6 @@ async fn handle_peer(
                 b.broadcast(RemoteUpdateBody::PeerJoin {
                     peer_id: body.peer_id,
                     objects: peer.objects.values().cloned().collect(),
-                    images: peer.images.iter().cloned().collect(),
                 });
             }
             Event::PeerDisconnect => {
@@ -408,26 +394,24 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 /// after a 5-second back-off, unless the connection is disabled.
 pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
     let settings = async || -> Result<(Option<String>, bool, bool)> {
-        let connect = b
-            .db()
-            .config::<String>(Key::REMOTE_SERVER)
-            .await?
-            .as_deref()
+        let state = b.client_state().await;
+        let connect = state
+            .props
+            .get(Key::REMOTE_SERVER)
+            .as_str()
+            .filter(|s| !s.is_empty())
             .or(default_connect)
             .map(str::to_owned);
-
-        let enabled = b
-            .db()
-            .config::<bool>(Key::REMOTE_ENABLED)
-            .await?
-            .unwrap_or(true);
-
-        let tls = b
-            .db()
-            .config::<bool>(Key::REMOTE_TLS)
-            .await?
-            .unwrap_or(false);
-
+        let enabled = state
+            .props
+            .get(Key::REMOTE_ENABLED)
+            .as_bool()
+            .unwrap_or_default();
+        let tls = state
+            .props
+            .get(Key::REMOTE_TLS)
+            .as_bool()
+            .unwrap_or_default();
         Ok((connect, enabled, tls))
     };
 

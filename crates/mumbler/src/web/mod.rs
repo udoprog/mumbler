@@ -146,6 +146,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     let mut objects = Vec::new();
     let mut images = Vec::new();
     let mut peers = Vec::new();
+    let mut peer_objects = Vec::new();
 
     let state = b.client_state().await;
 
@@ -162,26 +163,19 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
     }
 
     for (peer_id, peer) in state.peers.iter() {
-        let mut new_peer = RemotePeer {
-            peer_id: *peer_id,
+        peers.push(RemotePeer {
+            id: *peer_id,
             public_key: peer.public_key,
             props: peer.props.clone(),
-            objects: Vec::new(),
-        };
+        });
 
         for object in peer.objects.values() {
-            new_peer.objects.push(RemoteObject {
-                ty: object.ty,
-                id: object.id,
-                props: object.props.clone(),
-            });
+            peer_objects.push((*peer_id, object.clone()));
         }
 
         for id in peer.images.iter() {
             images.push(RemoteId::new(*peer_id, *id));
         }
-
-        peers.push(new_peer);
     }
 
     let res = InitializeMapResponse {
@@ -190,6 +184,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
         objects,
         images,
         peers,
+        peer_objects,
     };
 
     Ok(res)
@@ -198,6 +193,7 @@ async fn initialize_map(b: &Backend) -> Result<InitializeMapResponse> {
 async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
     let mut local = Vec::new();
     let mut peers = Vec::new();
+    let mut peer_objects = Vec::new();
 
     let state = b.client_state().await;
 
@@ -214,26 +210,19 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
     }
 
     for (peer_id, peer) in state.peers.iter() {
-        let mut objects = Vec::new();
+        peers.push(RemotePeer {
+            id: *peer_id,
+            public_key: peer.public_key,
+            props: peer.props.clone(),
+        });
 
-        for (id, object) in peer.objects.iter() {
+        for object in peer.objects.values() {
             if object.ty != Type::ROOM {
                 continue;
             }
 
-            objects.push(RemoteObject {
-                ty: object.ty,
-                id: *id,
-                props: object.props.clone(),
-            });
+            peer_objects.push((*peer_id, object.clone()));
         }
-
-        peers.push(RemotePeer {
-            peer_id: *peer_id,
-            public_key: peer.public_key,
-            props: peer.props.clone(),
-            objects,
-        });
     }
 
     let res = InitializeRoomsResponse {
@@ -241,6 +230,7 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
         props: state.props.clone(),
         local,
         peers,
+        peer_objects,
     };
 
     Ok(res)
@@ -262,7 +252,7 @@ async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<
     Ok(id)
 }
 
-async fn delete_image(backend: &Backend, id: Id) -> Result<()> {
+async fn remove_image(backend: &Backend, id: Id) -> Result<()> {
     backend.remove_image(id).await?;
     Ok(())
 }

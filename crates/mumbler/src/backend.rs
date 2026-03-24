@@ -250,11 +250,6 @@ impl Backend {
 
         let keypair = crypto::derive_keypair(client_secret.as_bytes());
 
-        let mumble_object = database
-            .config(Key::MUMBLE_OBJECT)
-            .await?
-            .unwrap_or_default();
-
         let mut image_cache = ImageCache::default();
 
         for image in database.images_with_data().await? {
@@ -283,6 +278,8 @@ impl Backend {
 
             ids.insert(image.id);
         }
+
+        let mumble_object = props.get(Key::MUMBLE_OBJECT).as_id();
 
         tracing::debug!("loaded {} objects", objects.len());
 

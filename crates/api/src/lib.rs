@@ -643,10 +643,9 @@ impl Transform {
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct RemotePeer {
-    pub peer_id: PeerId,
+    pub id: PeerId,
     pub public_key: PublicKey,
     pub props: Properties,
-    pub objects: Vec<RemoteObject>,
 }
 
 // The definition of a remote object.
@@ -674,6 +673,7 @@ pub struct InitializeMapResponse {
     pub objects: Vec<RemoteObject>,
     pub images: Vec<RemoteId>,
     pub peers: Vec<RemotePeer>,
+    pub peer_objects: Vec<(PeerId, RemoteObject)>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -692,6 +692,8 @@ pub struct InitializeRoomsResponse {
     pub local: Vec<RemoteObject>,
     /// List of remote rooms associated with peers.
     pub peers: Vec<RemotePeer>,
+    /// List of objects associated with each peer.
+    pub peer_objects: Vec<(PeerId, RemoteObject)>,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -847,7 +849,6 @@ pub enum RemoteUpdateBody {
     PeerJoin {
         peer_id: PeerId,
         objects: Vec<RemoteObject>,
-        images: Vec<Id>,
     },
     /// A property update.
     PeerUpdate {

@@ -157,8 +157,6 @@ pub struct PeerConnectedBody {
     pub public_key: PublicKey,
     /// The peer that connected.
     pub peer_id: PeerId,
-    /// The global key-value pairs that were immediately set for the peer.
-    pub objects: Vec<RemoteObject>,
     /// Properties of the peer.
     pub props: Properties,
 }
@@ -170,8 +168,6 @@ pub struct PeerConnectedBodyRef<'a> {
     pub public_key: PublicKey,
     /// The peer that connected.
     pub peer_id: PeerId,
-    /// The objects that are associated with the peer.
-    pub objects: &'a [RemoteObject],
     /// Properties of the peer.
     pub props: &'a Properties,
 }
@@ -183,8 +179,6 @@ pub struct PeerJoinBody {
     pub peer_id: PeerId,
     /// The key-value pairs that were immediately set for the peer.
     pub objects: Vec<RemoteObject>,
-    /// Remote images associated with the peer.
-    pub images: Vec<RemoteImage>,
 }
 
 #[derive(Debug, Encode)]
@@ -194,8 +188,6 @@ pub struct PeerJoinBodyRef<'a> {
     pub peer_id: PeerId,
     /// The objects that are associated with the peer.
     pub objects: &'a [RemoteObject],
-    /// The images that are associated with the peer.
-    pub images: &'a [RemoteImage],
 }
 
 /// A request to update a peer.
@@ -338,6 +330,16 @@ pub struct ObjectCreatedBody {
     pub object: RemoteObject,
 }
 
+/// Broadcast by the server when a peer adds an object.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct ObjectCreatedBodyRef<'a> {
+    /// The peer that added the object.
+    pub peer_id: PeerId,
+    /// The object that was added.
+    pub object: &'a RemoteObject,
+}
+
 /// Broadcast by the server when a peer adds an image.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -346,6 +348,16 @@ pub struct ImageCreatedBody {
     pub peer_id: PeerId,
     /// The image that was added.
     pub image: RemoteImage,
+}
+
+/// Broadcast by the server when a peer adds an image.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct ImageCreatedBodyRef<'a> {
+    /// The peer that added the image.
+    pub peer_id: PeerId,
+    /// The image that was added.
+    pub image: &'a RemoteImage,
 }
 
 /// A request to remove an object.
@@ -481,6 +493,7 @@ api::define! {
 
     impl Broadcast for ObjectCreated {
         impl Event for ObjectCreatedBody;
+        impl Event for ObjectCreatedBodyRef<'_>;
     }
 
     pub type ImageCreate;
@@ -493,6 +506,7 @@ api::define! {
 
     impl Broadcast for ImageCreated {
         impl Event for ImageCreatedBody;
+        impl Event for ImageCreatedBodyRef<'_>;
     }
 
     pub type ObjectRemove;

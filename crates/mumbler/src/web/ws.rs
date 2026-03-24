@@ -187,7 +187,7 @@ impl ws::Handler for Handler<'_> {
 
                 tracing::debug!(?id, ?request);
 
-                super::delete_image(&self.backend, request.id).await?;
+                super::remove_image(&self.backend, request.id).await?;
 
                 outgoing.write(api::Empty);
 
