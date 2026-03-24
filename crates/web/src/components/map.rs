@@ -420,9 +420,9 @@ impl Drop for DropImage {
 struct ContextMenu {
     /// Object the menu was opened for.
     object_id: RemoteId,
-    /// CSS left position (pixels from the map-sizer left edge).
+    /// CSS left position.
     x: f64,
-    /// CSS top position (pixels from the map-sizer top edge).
+    /// CSS top position.
     y: f64,
 }
 
@@ -459,7 +459,7 @@ pub(crate) struct Map {
     _upload_image: ws::Request,
     animation_interval: Option<Interval>,
     canvas_ref: NodeRef,
-    canvas_sizer: NodeRef,
+    map_container: NodeRef,
     channel: ws::Channel,
     config: Config,
     drag_over: Option<DragOver>,
@@ -618,7 +618,7 @@ impl Component for Map {
             action: None,
             animation_interval: None,
             canvas_ref: NodeRef::default(),
-            canvas_sizer: NodeRef::default(),
+            map_container: NodeRef::default(),
             config: Config::default(),
             channel: ws::Channel::default(),
             drag_over: None,
@@ -730,7 +730,7 @@ impl Component for Map {
         let ws = &ctx.props().ws;
         let objects = self.objects.borrow();
 
-        let pos;
+        let footer;
 
         if let Some(o) = objects.get(self.s.selected)
             && let Some(transform) = o.as_transform()
@@ -743,9 +743,17 @@ impl Component for Map {
             let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
             let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
             let other = format!("ZOOM:{:.02}", zoom);
-            pos = Some(html!(<div class="pre">{position}{" / "}{front}{" / "}{other}</div>))
+            footer = html! {
+                <div class="row">
+                    <div class="col-12 footer">{position}{" / "}{front}{" / "}{other}</div>
+                </div>
+            };
         } else {
-            pos = None;
+            footer = html! {
+                <div class="row">
+                    <div class="col-12 footer">{"No object selected"}</div>
+                </div>
+            };
         }
 
         let object_list_header = {
@@ -995,11 +1003,11 @@ impl Component for Map {
 
         html! {
             <>
-                <div class="row">
-                    <div class="col-9 rows">
+                <div class="row fill">
+                    <div class="col-9 rows map-column">
                         {toolbar}
 
-                        <div class="map-sizer" ref={self.canvas_sizer.clone()}>
+                        <div id="map-container" ref={self.map_container.clone()} key="map-container">
                             <canvas id="map" ref={self.canvas_ref.clone()}
                                 onpointerdown={ctx.link().callback(Msg::PointerDown)}
                                 onpointermove={ctx.link().callback(Msg::PointerMove)}
@@ -1015,8 +1023,6 @@ impl Component for Map {
                                 {self.render_context_menu(ctx, menu)}
                             }
                         </div>
-
-                        {pos}
                     </div>
 
                     <div class="col-3 rows">
@@ -1044,6 +1050,8 @@ impl Component for Map {
                         {players}
                     </div>
                 </div>
+
+                {footer}
 
                 if let Some(modal) = &self.s.modal {
                     <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
@@ -1411,7 +1419,7 @@ impl Map {
             Msg::AnimationFrame => {
                 self.interpolate_movement();
                 self.s.redraw = true;
-                Ok(false)
+                Ok(true)
             }
             Msg::KeyDown(ev) => self.on_key_down(ctx, ev),
             Msg::KeyUp(ev) => self.on_key_up(ctx, ev),
@@ -2467,7 +2475,7 @@ impl Map {
     }
 
     fn resize_canvas(&self) {
-        let Some(sizer) = self.canvas_sizer.cast::<HtmlElement>() else {
+        let Some(sizer) = self.map_container.cast::<HtmlElement>() else {
             return;
         };
 
@@ -2475,17 +2483,19 @@ impl Map {
             return;
         };
 
-        // The sizer element is a block element, and has a width we want to
-        // adjust to.
-        let width = sizer.client_width() as u32;
+        tracing::debug!(
+            width = sizer.client_width(),
+            height = sizer.client_height(),
+            "Resizing canvas"
+        );
 
-        canvas.set_width(width);
-        canvas.set_height(width);
+        canvas.set_width(sizer.client_width() as u32);
+        canvas.set_height(sizer.client_height() as u32);
     }
 
     fn setup_resizer(&mut self, ctx: &Context<Self>) -> Result<(), Error> {
         let sizer = self
-            .canvas_sizer
+            .map_container
             .cast::<HtmlElement>()
             .ok_or("missing canvas sizer element")?;
 

@@ -1,5 +1,5 @@
 $grid-columns: 12 !default;
-$grid-breakpoint: 560px !default;
+$grid-breakpoint: 920px !default;
 $grid-gap: 1em !default;
 $text-gap: 0.25em;
 
@@ -7,6 +7,11 @@ $text-gap: 0.25em;
     display: flex;
     flex-direction: column;
     gap: $grid-gap;
+    min-width: 0;
+
+    &.fill {
+        flex: 1;
+    }
 }
 
 .row {
@@ -24,12 +29,20 @@ $text-gap: 0.25em;
 
 @media (max-width: $grid-breakpoint) {
     .row {
-        grid-template-columns: 1fr;
+        display: flex;
+        flex-direction: column;
+        gap: $grid-gap;
+
+        width: 100%;
     }
 
     @for $i from 1 through $grid-columns {
         .col-#{$i} {
-            grid-column: 1 / -1;
+            display: flex;
+            flex-direction: column;
+            gap: $grid-gap;
+
+            width: 100%;
         }
     }
 }
