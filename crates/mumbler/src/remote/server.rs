@@ -19,6 +19,7 @@ use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
 use crate::crypto;
+use crate::ids::Ids;
 use crate::remote::api::{
     ImageCreateBody, ImageRemoveBody, ObjectCreateBody, ObjectRemoveBody, ObjectUpdateBody,
     PeerUpdateBody, RemoteImage,
@@ -137,16 +138,22 @@ pub struct ConnectorConfig<'a> {
 }
 
 struct Peers {
+    /// Id allocator.
+    ids: Ids,
     /// Map of peer ID to peer state.
     peers: HashMap<PeerId, Pin<Box<ServerPeer>>>,
 }
 
 impl Peers {
-    #[inline]
-    fn new() -> Self {
+    fn new(seed: u32) -> Self {
         Self {
+            ids: Ids::new(seed),
             peers: HashMap::new(),
         }
+    }
+
+    fn next_peer_id(&mut self) -> Option<PeerId> {
+        Some(PeerId::new(self.ids.next()?.get()))
     }
 
     /// Iterate over all known peer ids.
@@ -167,12 +174,6 @@ impl Peers {
         self.peers.iter_mut().map(|(id, peer)| (*id, peer.as_mut()))
     }
 
-    /// Test if the given peer id is currently in use.
-    #[inline]
-    fn contains(&self, id: &PeerId) -> bool {
-        self.peers.contains_key(id)
-    }
-
     #[inline]
     fn insert(&mut self, id: PeerId, peer: Pin<Box<ServerPeer>>) {
         self.peers.insert(id, peer);
@@ -185,7 +186,9 @@ impl Peers {
 
     #[inline]
     fn remove(&mut self, id: &PeerId) -> Option<Pin<Box<ServerPeer>>> {
-        self.peers.remove(id)
+        let peer = self.peers.remove(id)?;
+        self.ids.free(id.raw());
+        Some(peer)
     }
 }
 
@@ -233,7 +236,7 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
     let mut state = State::new();
     let mut accepting = JoinSet::new();
 
-    'outer: loop {
+    loop {
         tokio::select! {
             result = Listen::new(&mut connectors) => {
                 let (i, stream, addr) = result.context("accepting connection")?;
@@ -273,22 +276,9 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                 let peer = Peer::new(client);
                 tracing::info!(tls = peer.is_tls(), ?addr, "connected");
 
-                let mut attempts = 0usize;
-
-                let peer_id = 'done: loop {
-                    let new_id = PeerId::new(rand::random());
-
-                    if !state.peers.contains(&new_id) {
-                        break 'done new_id;
-                    }
-
-                    if attempts > 5 {
-                        tracing::error!("failed to generate unique peer id after 5 attempts");
-                        drop(peer);
-                        continue 'outer;
-                    }
-
-                    attempts = attempts.wrapping_add(1);
+                let Some(peer_id) = state.peers.next_peer_id() else {
+                    tracing::error!("peer limit reached, rejecting connection from {addr}");
+                    continue;
                 };
 
                 let peer_state = ServerPeer::new(addr, peer, peer_id);
@@ -324,7 +314,6 @@ pub async fn run(configs: Vec<ConnectorConfig<'_>>) -> Result<()> {
                 if remove {
                     state.remove_peer(peer, &mut wakers);
                 } else {
-                    // peer_id may have changed during authentication (temp random → real key)
                     state.peers.insert(peer.state.peer_id, peer);
                 }
             }
@@ -429,7 +418,7 @@ impl State {
         Self {
             poll: BTreeSet::new(),
             rooms,
-            peers: Peers::new(),
+            peers: Peers::new(rand::random()),
         }
     }
 

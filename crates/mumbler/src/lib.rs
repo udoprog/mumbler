@@ -20,6 +20,10 @@ pub mod mumblelink;
 
 pub mod crypto;
 
+mod hash;
+
+mod ids;
+
 #[cfg(feature = "tls")]
 mod tls;
 #[cfg(not(feature = "tls"))]

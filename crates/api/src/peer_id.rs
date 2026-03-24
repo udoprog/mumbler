@@ -27,8 +27,16 @@ impl PeerId {
 
     /// Construct a `PeerId` from the raw 32-bit representation.
     #[inline]
+    #[doc(hidden)]
     pub const fn new(repr: u32) -> Self {
         Self { repr }
+    }
+
+    /// Get the raw representation.
+    #[inline]
+    #[doc(hidden)]
+    pub const fn raw(&self) -> u32 {
+        self.repr
     }
 
     /// Return the raw 32-bit representation.
