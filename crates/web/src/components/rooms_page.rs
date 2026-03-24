@@ -1,4 +1,4 @@
-use api::RemoteId;
+use api::{RemoteId, Type};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use web_sys::MouseEvent;
@@ -12,7 +12,7 @@ use super::{Icon, RoomSettings, Rooms};
 pub(crate) enum Msg {
     OpenSettings(RemoteId),
     CloseSettings,
-    RequestRemove(RemoteId, String),
+    RequestRemove(Type, RemoteId, String),
     CancelRemove,
     ConfirmRemove(RemoteId),
     RemoveResult(Result<Packet<api::RemoveObject>, ws::Error>),
@@ -26,7 +26,7 @@ pub(crate) struct Props {
 
 pub(crate) struct RoomsPage {
     open_settings: Option<RemoteId>,
-    confirm_delete: Option<(RemoteId, String)>,
+    confirm_delete: Option<(Type, RemoteId, String)>,
     log: log::Log,
     _log_handle: ContextHandle<log::Log>,
     _delete_request: ws::Request,
@@ -61,8 +61,8 @@ impl Component for RoomsPage {
                 self.open_settings = None;
                 true
             }
-            Msg::RequestRemove(id, name) => {
-                self.confirm_delete = Some((id, name));
+            Msg::RequestRemove(ty, id, name) => {
+                self.confirm_delete = Some((ty, id, name));
                 true
             }
             Msg::CancelRemove => {
@@ -103,21 +103,21 @@ impl Component for RoomsPage {
                 <Rooms
                     {ws}
                     onopensettings={ctx.link().callback(Msg::OpenSettings)}
-                    onrequestdelete={ctx.link().callback(|(id, name)| Msg::RequestRemove(id, name))}
+                    onrequestdelete={ctx.link().callback(|(id, name)| Msg::RequestRemove(Type::ROOM, id, name))}
                 />
 
-                if let Some((id, ref name)) = self.confirm_delete {
+                if let Some((ty, id, ref name)) = self.confirm_delete {
                     <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
-                                <h2>{"Confirm Deletion"}</h2>
+                                <h2>{"Confirm Removal"}</h2>
                                 <button class="btn sm square danger" title="Cancel"
                                     onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                     <Icon name="x-mark" />
                                 </button>
                             </div>
                             <div class="modal-body rows">
-                                <p>{format!("Remove \"{}\"?", name)}</p>
+                                <p>{format!("Remove {} \"{}\"?", ty.display(), name)}</p>
                                 <div class="btn-group">
                                     <button class="btn danger"
                                         onclick={ctx.link().callback(move |_| Msg::ConfirmRemove(id))}>

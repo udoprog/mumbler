@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Key, Pan, PeerId, RemoteId, RemoteUpdateBody, StableId, UpdateBody, Value, Vec3,
+    Color, Extent, Key, Pan, PeerId, RemoteId, RemoteUpdateBody, StableId, Type, UpdateBody, Value,
+    Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -48,7 +49,7 @@ struct Inner {
     transforms: HashSet<RemoteId>,
     selected: RemoteId,
     context_menu: Option<ContextMenu>,
-    delete: Option<(RemoteId, String)>,
+    delete: Option<(Type, RemoteId, String)>,
     _toggle_mumble_request: ws::Request,
     redraw: bool,
     update_cache: bool,
@@ -83,7 +84,7 @@ impl Inner {
         if self
             .delete
             .as_ref()
-            .is_some_and(|(delete_id, _)| *delete_id == id)
+            .is_some_and(|(_, delete_id, _)| *delete_id == id)
         {
             self.delete = None;
         }
@@ -97,6 +98,7 @@ impl Inner {
         }
 
         *config.mumble_object = id;
+
         self._toggle_mumble_request =
             channel.updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
     }
@@ -690,24 +692,24 @@ impl Component for Map {
                 "btn",
                 "square",
                 o.is_some().then_some("primary"),
-                o.is_none().then_some("disabled"),
+                (!o.is_some_and(|o| o.id.is_local())).then_some("disabled"),
             };
 
-            let settings_click = o.map(|o| {
+            let settings_click = o.filter(|o| o.id.is_local()).map(|o| {
                 let id = o.id;
                 ctx.link().callback(move |_| Msg::OpenSettings(id))
             });
 
-            let delete_click = o.map(|o| {
+            let remove_click = o.filter(|o| o.id.is_local()).map(|o| {
                 let id = o.id;
                 ctx.link().callback(move |_| Msg::ConfirmRemove(id))
             });
 
-            let delete_classes = classes! {
+            let remove_classes = classes! {
                 "btn",
                 "square",
                 o.is_some().then_some("danger"),
-                o.is_none().then_some("disabled"),
+                (!o.is_some_and(|o| o.id.is_local())).then_some("disabled"),
             };
 
             html! {
@@ -725,7 +727,7 @@ impl Component for Map {
                     <button class={settings_classes} title="Object settings" onclick={settings_click}>
                         <Icon name="cog" />
                     </button>
-                    <button class={delete_classes} title="Remove object" onclick={delete_click}>
+                    <button class={remove_classes} title="Remove object" onclick={remove_click}>
                         <Icon name="x-mark" />
                     </button>
                 </div>
@@ -980,18 +982,18 @@ impl Component for Map {
                     </div>
                 </div>
 
-                if let Some((id, ref name)) = self.s.delete {
+                if let Some((ty, id, ref name)) = self.s.delete {
                     <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
-                                <h2>{"Confirm Deletion"}</h2>
+                                <h2>{"Confirm Removal"}</h2>
                                 <button class="btn sm square danger" title="Cancel"
                                     onclick={ctx.link().callback(|_| Msg::CancelRemove)}>
                                     <Icon name="x-mark" />
                                 </button>
                             </div>
                             <div class="modal-body rows">
-                                <p>{format!("Remove \"{}\"?", name)}</p>
+                                <p>{format!("Remove {} \"{}\"?", ty.display(), name)}</p>
                                 <div class="btn-group">
                                     <button class="btn danger"
                                         onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
@@ -1482,6 +1484,11 @@ impl Map {
             }
             Msg::ConfirmRemove(id) => {
                 self.s.context_menu = None;
+
+                let Some(ty) = self.objects.borrow().get(id).map(|o| o.ty()) else {
+                    return Ok(false);
+                };
+
                 let name = self
                     .objects
                     .borrow()
@@ -1489,7 +1496,8 @@ impl Map {
                     .and_then(|o| o.name())
                     .unwrap_or("unnamed")
                     .to_string();
-                self.s.delete = Some((id, name));
+
+                self.s.delete = Some((ty, id, name));
                 Ok(true)
             }
             Msg::CancelRemove => {
@@ -1997,13 +2005,19 @@ impl Map {
                     .s
                     .delete
                     .as_ref()
-                    .is_some_and(|(id, _)| *id == self.s.selected)
+                    .is_some_and(|(_, id, _)| *id == self.s.selected)
                 {
                     return Ok(false);
                 }
 
+                let Some(ty) = self.objects.borrow().get(self.s.selected).map(|o| o.ty()) else {
+                    return Ok(false);
+                };
+
                 ev.prevent_default();
+
                 self.s.context_menu = None;
+
                 let name = self
                     .objects
                     .borrow()
@@ -2011,11 +2025,12 @@ impl Map {
                     .and_then(|o| o.name())
                     .unwrap_or("unnamed")
                     .to_string();
-                self.s.delete = Some((self.s.selected, name));
+
+                self.s.delete = Some((ty, self.s.selected, name));
                 Ok(true)
             }
             "Enter" => {
-                if let Some((id, _)) = self.s.delete.take() {
+                if let Some((_, id, _)) = self.s.delete.take() {
                     ev.prevent_default();
                     ctx.link().send_message(Msg::RemoveObject(id));
                 }
@@ -2047,11 +2062,26 @@ impl Map {
                     return Ok(false);
                 }
 
-                self.open_settings = None;
-                self.open_help = false;
-                self.open_rooms = false;
+                if self.open_settings.is_some() {
+                    self.open_settings = None;
+                    return Ok(true);
+                }
 
-                self.s.delete = None;
+                if self.open_help {
+                    self.open_help = false;
+                    return Ok(true);
+                }
+
+                if self.open_rooms {
+                    self.open_rooms = false;
+                    return Ok(true);
+                }
+
+                if self.s.delete.is_some() {
+                    self.s.delete = None;
+                    return Ok(true);
+                }
+
                 self.s.selected = RemoteId::ZERO;
                 self.s.context_menu = None;
                 Ok(true)

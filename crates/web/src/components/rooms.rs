@@ -255,12 +255,10 @@ impl Rooms {
             }
         });
 
-        let on_row_click = if is_active {
-            ctx.link().callback(move |_| Msg::Disconnect)
-        } else {
-            let room_id = room.id;
-            ctx.link().callback(move |_| Msg::Connect(room_id))
-        };
+        let room_id = room.id;
+
+        let on_row_click =
+            (!is_active).then(|| ctx.link().callback(move |_| Msg::Connect(room_id)));
 
         let row_class = classes! {
             "list-content",
@@ -488,7 +486,7 @@ impl Rooms {
                     .on_packet(ctx.link().callback(Msg::ConnectResult))
                     .send();
 
-                Ok(false)
+                Ok(true)
             }
             Msg::Connect(room) => {
                 let values = vec![(Key::ROOM, Value::from(room))];
@@ -501,7 +499,7 @@ impl Rooms {
                     .on_packet(ctx.link().callback(Msg::ConnectResult))
                     .send();
 
-                Ok(false)
+                Ok(true)
             }
             Msg::ConnectResult(body) => {
                 let body = body?;

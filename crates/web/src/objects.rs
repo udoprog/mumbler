@@ -499,6 +499,16 @@ impl ObjectData {
     }
 
     #[inline]
+    pub(crate) fn ty(&self) -> Type {
+        match self.kind {
+            ObjectKind::Token(_) => Type::TOKEN,
+            ObjectKind::Static(_) => Type::STATIC,
+            ObjectKind::Group(_) => Type::GROUP,
+            ObjectKind::Room(_) => Type::ROOM,
+        }
+    }
+
+    #[inline]
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::OBJECT_NAME => self.name.update(value.into_string()),

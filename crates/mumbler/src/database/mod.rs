@@ -95,19 +95,19 @@ struct Migrations;
 
 struct Inner {
     scratch: Vec<u8>,
-    insert_image: SendStatement,
-    select_images: SendStatement,
-    delete_image: SendStatement,
-    list_properties: SendStatement,
-    set_property: SendStatement,
-    delete_property: SendStatement,
-    get_config: SendStatement,
-    set_config: SendStatement,
     delete_config: SendStatement,
-    list_configs: SendStatement,
-    insert_object: SendStatement,
+    delete_image: SendStatement,
     delete_object: SendStatement,
-    list_objects: SendStatement,
+    delete_property: SendStatement,
+    insert_config: SendStatement,
+    insert_image: SendStatement,
+    insert_object: SendStatement,
+    insert_property: SendStatement,
+    select_config: SendStatement,
+    select_configs: SendStatement,
+    select_images: SendStatement,
+    select_objects: SendStatement,
+    select_properties: SendStatement,
 }
 
 /// A database connection.
@@ -190,19 +190,19 @@ impl Database {
         let inner = unsafe {
             Inner {
                 scratch: Vec::new(),
-                insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height, role) VALUES (?, ?, ?, ?, ?, ?)")?.into_send()?,
-                select_images: c.prepare("SELECT id, content_type, data, width, height, role FROM images")?.into_send()?,
-                delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
-                list_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
-                set_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
-                delete_property: c.prepare("DELETE FROM properties WHERE id = ? AND key = ?")?.into_send()?,
-                get_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
-                set_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
                 delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
-                list_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
-                insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
+                delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 delete_object: c.prepare("DELETE FROM objects WHERE id = ?")?.into_send()?,
-                list_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
+                delete_property: c.prepare("DELETE FROM properties WHERE id = ? AND key = ?")?.into_send()?,
+                insert_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height, role) VALUES (?, ?, ?, ?, ?, ?)")?.into_send()?,
+                insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
+                insert_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
+                select_config: c.prepare("SELECT value FROM config WHERE key = ?")?.into_send()?,
+                select_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
+                select_images: c.prepare("SELECT id, content_type, data, width, height, role FROM images")?.into_send()?,
+                select_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
+                select_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
             }
         };
 
@@ -271,9 +271,9 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.get_config.bind((key,))?;
+            inner.select_config.bind((key,))?;
 
-            if let Some(row) = inner.get_config.next::<&[u8]>()? {
+            if let Some(row) = inner.select_config.next::<&[u8]>()? {
                 let value = descriptive::from_slice::<T>(row)?;
                 return Ok(Some(value));
             }
@@ -302,7 +302,7 @@ impl Database {
             descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
-                set_config,
+                insert_config: set_config,
                 scratch,
                 ..
             } = &mut *inner;
@@ -328,7 +328,7 @@ impl Database {
 
     /// Set specific configuration by key, or delete it if the value is unset.
     pub(crate) async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
-        value_kind_switch!(self, value, (id, key), set_property, delete_property);
+        value_kind_switch!(self, value, (id, key), set_property, remove_property);
         Ok(())
     }
 
@@ -345,7 +345,7 @@ impl Database {
             descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
-                set_property,
+                insert_property: set_property,
                 scratch,
                 ..
             } = &mut *inner;
@@ -359,7 +359,7 @@ impl Database {
     }
 
     /// Remove the specified configuration.
-    pub(crate) async fn delete_property(&self, id: Id, key: Key) -> Result<()> {
+    pub(crate) async fn remove_property(&self, id: Id, key: Key) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -399,12 +399,12 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_objects.reset()?;
+            inner.select_objects.reset()?;
 
             let mut objects = Vec::new();
 
             while let Some((id, ty, group_id)) =
-                inner.list_objects.next::<(Id, Type, Option<Id>)>()?
+                inner.select_objects.next::<(Id, Type, Option<Id>)>()?
             {
                 tracing::debug!(?id, ?ty, "loading object");
                 objects.push((id, ty, group_id));
@@ -420,11 +420,11 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_properties.bind((id,))?;
+            inner.select_properties.bind((id,))?;
 
             let mut props = Vec::new();
 
-            while let Some((key, value)) = inner.list_properties.next::<(Key, &[u8])>()? {
+            while let Some((key, value)) = inner.select_properties.next::<(Key, &[u8])>()? {
                 let Some(ty) = key.ty() else {
                     continue;
                 };
@@ -445,11 +445,11 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.list_configs.reset()?;
+            inner.select_configs.reset()?;
 
             let mut props = Vec::new();
 
-            while let Some((key, value)) = inner.list_configs.next::<(Key, &[u8])>()? {
+            while let Some((key, value)) = inner.select_configs.next::<(Key, &[u8])>()? {
                 let Some(ty) = key.ty() else {
                     continue;
                 };

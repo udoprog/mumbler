@@ -104,13 +104,13 @@ pub(crate) struct ClientState {
     /// Identifiers of objects that have been added.
     pub(crate) objects_added: HashSet<Id>,
     /// Identifiers of objects that have been deleted.
-    pub(crate) objects_deleted: HashSet<Id>,
+    pub(crate) objects_removed: HashSet<Id>,
     /// Local images.
     pub(crate) images: HashMap<Id, LocalImage>,
     /// Identifiers of images that have been added.
     pub(crate) images_added: HashSet<Id>,
     /// Identifiers of images that have been deleted.
-    pub(crate) images_deleted: HashSet<Id>,
+    pub(crate) images_removed: HashSet<Id>,
     /// Remote properties.
     pub(crate) props: Properties,
     /// Collection of properties that have changed.
@@ -297,10 +297,10 @@ impl Backend {
                     objects,
                     objects_changed: HashSet::new(),
                     objects_added: HashSet::new(),
-                    objects_deleted: HashSet::new(),
+                    objects_removed: HashSet::new(),
                     images,
                     images_added: HashSet::new(),
-                    images_deleted: HashSet::new(),
+                    images_removed: HashSet::new(),
                     props,
                     props_changed: HashSet::new(),
                 }),
@@ -571,7 +571,7 @@ impl Backend {
         state.objects.remove(&id);
         state.objects_changed.remove(&id);
         state.objects_added.remove(&id);
-        state.objects_deleted.insert(id);
+        state.objects_removed.insert(id);
         self.inner.client_notify.notify_one();
         Ok(())
     }
@@ -630,7 +630,7 @@ impl Backend {
 
         state.images.remove(&id);
         state.images_added.remove(&id);
-        state.images_deleted.insert(id);
+        state.images_removed.insert(id);
         self.inner.client_notify.notify_one();
 
         let mut any = false;
@@ -650,7 +650,7 @@ impl Backend {
                 object.changed.insert(key);
                 state.objects_changed.insert(object.id);
 
-                self.db().delete_property(object.id, key).await?;
+                self.db().remove_property(object.id, key).await?;
 
                 self.broadcast(RemoteUpdateBody::ObjectUpdated {
                     channel: ChannelId::NONE,

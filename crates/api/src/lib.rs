@@ -58,6 +58,19 @@ impl Type {
     pub fn is_global(&self) -> bool {
         self.raw & 0x80000000 != 0
     }
+
+    /// Get lowercase display for type suitable for use in a human readable
+    /// message.
+    #[inline]
+    pub fn display(&self) -> &'static str {
+        match *self {
+            Self::TOKEN => "token",
+            Self::STATIC => "static",
+            Self::GROUP => "group",
+            Self::ROOM => "room",
+            _ => "object",
+        }
+    }
 }
 
 crate::macros::keys! {

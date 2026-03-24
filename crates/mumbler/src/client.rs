@@ -361,7 +361,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                     peer.object_create(RemoteObject { ty: object.ty, id, props: object.props.clone() })?;
                 }
 
-                for id in state.objects_deleted.drain() {
+                for id in state.objects_removed.drain() {
                     peer.object_remove(id)?;
                 }
 
@@ -379,7 +379,7 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                     })?;
                 }
 
-                for id in state.images_deleted.drain() {
+                for id in state.images_removed.drain() {
                     peer.image_remove(id)?;
                 }
 
