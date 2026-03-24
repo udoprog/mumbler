@@ -7,7 +7,7 @@ use yew::prelude::*;
 
 use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
-use crate::images::{ImageMessage, Images};
+use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
@@ -16,7 +16,6 @@ use super::{ImageUpload, into_target, render};
 pub(crate) enum Msg {
     Channel(Result<ws::Channel, ws::Error>),
     ColorChanged(Event),
-    ImageLoaded(ImageMessage),
     ImageSelected(Id),
     ImagesRefresh,
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
@@ -53,19 +52,12 @@ pub(crate) struct TokenSettings {
     log: log::Log,
     name: State<Option<String>>,
     preview_canvas: NodeRef,
-    preview_images: Images<Self>,
+    preview_images: Images,
     speed: State<f32>,
     state: ws::State,
     token_radius: State<f32>,
     _channel: ws::Request,
     channel: ws::Channel,
-}
-
-impl From<ImageMessage> for Msg {
-    #[inline]
-    fn from(message: ImageMessage) -> Self {
-        Msg::ImageLoaded(message)
-    }
 }
 
 impl Component for TokenSettings {
@@ -259,7 +251,7 @@ impl TokenSettings {
                 let body = body.decode()?;
 
                 for (key, value) in body.object.props {
-                    self.update_property(ctx, key, value);
+                    self.update_property(key, value);
                 }
 
                 self.images = body.images;
@@ -272,7 +264,7 @@ impl TokenSettings {
             }
             Msg::ImageSelected(id) => {
                 *self.image = id;
-                self.load_preview_image(ctx);
+                self.load_preview_image();
                 self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
@@ -336,10 +328,6 @@ impl TokenSettings {
 
                 Ok(value)
             }
-            Msg::ImageLoaded(msg) => {
-                self.preview_images.update(msg);
-                Ok(true)
-            }
             Msg::SetLog(log) => {
                 self.log = log;
                 Ok(false)
@@ -359,7 +347,7 @@ impl TokenSettings {
                             return Ok(false);
                         }
 
-                        self.update_property(ctx, key, value)
+                        self.update_property(key, value)
                     }
                     _ => return Ok(false),
                 };
@@ -369,11 +357,11 @@ impl TokenSettings {
         }
     }
 
-    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
+    fn update_property(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
                 if self.image.update(value.as_id()) {
-                    self.load_preview_image(ctx);
+                    self.load_preview_image();
                     true
                 } else {
                     false
@@ -387,10 +375,10 @@ impl TokenSettings {
         }
     }
 
-    fn load_preview_image(&mut self, ctx: &Context<Self>) {
+    fn load_preview_image(&mut self) {
         self.preview_images.clear();
         let id = RemoteId::local(*self.image);
-        self.preview_images.load(ctx, &id);
+        self.preview_images.load_id(&id);
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
@@ -426,10 +414,7 @@ impl TokenSettings {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        render::draw_token(&cx, &view, &base, &render, |id| {
-            self.preview_images.get(id).cloned()
-        })?;
-
+        render::draw_token(&cx, &view, &base, &render, &self.preview_images)?;
         Ok(())
     }
 }

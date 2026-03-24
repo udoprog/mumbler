@@ -1,10 +1,11 @@
-use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
 use api::{Color, Extent, RemoteId, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
 use crate::error::Error;
+use crate::images::{Icon, Images};
 use crate::objects::{ObjectData, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
@@ -299,34 +300,19 @@ fn draw_hidden_badge(
     x: f64,
     y: f64,
     token_radius: f64,
+    images: &Images,
 ) -> Result<(), Error> {
-    let badge_r = token_radius * 0.38;
-    let bx = x + token_radius * FRAC_1_SQRT_2;
-    let by = y - token_radius * FRAC_1_SQRT_2;
+    let Some(img) = images.get_icon(Icon::EyeSlashDanger) else {
+        return Ok(());
+    };
+
+    let width = token_radius * 0.4;
+    let x = x + token_radius * 0.8;
+    let y = y - token_radius * 0.8;
 
     cx.save();
-
-    let ew = badge_r * 0.75;
-    let eh = badge_r * 0.45;
-
-    cx.set_stroke_style_str("#e05252");
-    cx.set_line_width(badge_r * 0.22);
-    cx.begin_path();
-    cx.ellipse(bx, by, ew, eh, 0.0, 0.0, TAU)?;
-    cx.stroke();
-
-    cx.set_fill_style_str("#e05252");
-    cx.begin_path();
-    cx.arc(bx, by, badge_r * 0.18, 0.0, TAU)?;
-    cx.fill();
-
-    cx.set_stroke_style_str("#e05252");
-    cx.set_line_width(badge_r * 0.22);
-    cx.begin_path();
-    cx.move_to(bx - ew * 0.85, by + eh * 1.1);
-    cx.line_to(bx + ew * 0.85, by - eh * 1.1);
-    cx.stroke();
-
+    cx.translate(x, y)?;
+    draw_image_at_center(cx, &img, width, width)?;
     cx.restore();
     Ok(())
 }
@@ -357,7 +343,7 @@ pub(crate) fn draw_token(
     view: &ViewTransform,
     base: &RenderBase<'_>,
     render: &RenderToken<'_>,
-    get_image: impl Fn(&RemoteId) -> Option<HtmlImageElement>,
+    images: &Images,
 ) -> Result<(), Error> {
     let pos = view.to_canvas(render.transform.position);
 
@@ -374,7 +360,7 @@ pub(crate) fn draw_token(
     }
 
     let image_drawn = 'draw: {
-        let Some(img) = get_image(&render.image) else {
+        let Some(img) = images.get_id(&render.image) else {
             break 'draw false;
         };
 
@@ -447,7 +433,7 @@ pub(crate) fn draw_token(
     }
 
     if base.visibility.is_local() {
-        draw_hidden_badge(cx, pos.x, pos.y, token_radius)?;
+        draw_hidden_badge(cx, pos.x, pos.y, token_radius, images)?;
     }
 
     Ok(())
@@ -457,7 +443,7 @@ pub(crate) fn draw_static(
     view: &ViewTransform,
     base: &RenderBase<'_>,
     render: &RenderStatic<'_>,
-    get_image: impl Fn(&RemoteId) -> Option<HtmlImageElement>,
+    images: &Images,
 ) -> Result<(), Error> {
     let pos = view.to_canvas(render.transform.position);
 
@@ -474,26 +460,11 @@ pub(crate) fn draw_static(
     cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
-        let Some(img) = get_image(&render.image) else {
+        let Some(img) = images.get_id(&render.image) else {
             break 'draw false;
         };
 
-        let iw = img.natural_width() as f64;
-        let ih = img.natural_height() as f64;
-
-        let sx = (hw * 2.0) / iw;
-        let sy = (hh * 2.0) / ih;
-        let scale = sx.max(sy);
-        let dw = iw * scale;
-        let dh = ih * scale;
-
-        cx.save();
-        cx.rect(-hw, -hh, hw * 2.0, hh * 2.0);
-        cx.clip();
-
-        cx.draw_image_with_html_image_element_and_dw_and_dh(&img, -dw / 2.0, -dh / 2.0, dw, dh)?;
-
-        cx.restore();
+        draw_image_at_center(cx, &img, hw, hh)?;
         true
     };
 
@@ -511,9 +482,33 @@ pub(crate) fn draw_static(
     cx.restore();
 
     if base.visibility.is_local() {
-        let badge_size = hw.hypot(hh) * 0.38;
-        draw_hidden_badge(cx, pos.x, pos.y, badge_size)?;
+        let badge_size = hw.hypot(hh) * 0.5;
+        draw_hidden_badge(cx, pos.x, pos.y, badge_size, images)?;
     }
 
+    Ok(())
+}
+
+fn draw_image_at_center(
+    cx: &CanvasRenderingContext2d,
+    img: &HtmlImageElement,
+    hw: f64,
+    hh: f64,
+) -> Result<(), Error> {
+    let iw = img.natural_width() as f64;
+    let ih = img.natural_height() as f64;
+
+    let sx = (hw * 2.0) / iw;
+    let sy = (hh * 2.0) / ih;
+    let scale = sx.max(sy);
+    let dw = iw * scale;
+    let dh = ih * scale;
+
+    cx.save();
+    cx.rect(-hw, -hh, hw * 2.0, hh * 2.0);
+    cx.clip();
+
+    cx.draw_image_with_html_image_element_and_dw_and_dh(img, -dw / 2.0, -dh / 2.0, dw, dh)?;
+    cx.restore();
     Ok(())
 }

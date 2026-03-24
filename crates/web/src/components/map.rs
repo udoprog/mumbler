@@ -21,7 +21,7 @@ use crate::components::render::{Canvas2, RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
-use crate::images::{ImageMessage, Images};
+use crate::images::Images;
 use crate::log;
 use crate::objects::{LocalObject, ObjectKind, Objects, ObjectsRef};
 use crate::peers::Peers;
@@ -464,7 +464,7 @@ pub(crate) struct Map {
     config: Config,
     drag_over: Option<DragOver>,
     drop_image: Option<DropImage>,
-    images: Images<Self>,
+    images: Images,
     log: log::Log,
     look_at_requests: HashMap<RemoteId, ws::Request>,
     mouse: Option<Vec3>,
@@ -510,7 +510,6 @@ pub(crate) enum Msg {
     DropImageLoaded(u32, u32),
     DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
     DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    ImageMessage(ImageMessage),
     Channel(Result<ws::Channel, ws::Error>),
     Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
@@ -536,13 +535,6 @@ pub(crate) enum Msg {
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     OpenRooms,
     Wheel(WheelEvent),
-}
-
-impl From<ImageMessage> for Msg {
-    #[inline]
-    fn from(message: ImageMessage) -> Self {
-        Msg::ImageMessage(message)
-    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -1303,7 +1295,7 @@ impl Map {
                 self.images.clear();
 
                 for id in body.images {
-                    self.images.load(ctx, &id);
+                    self.images.load_id(&id);
                 }
 
                 self.s.update_cache = true;
@@ -1334,11 +1326,6 @@ impl Map {
             }
             Msg::Resized => {
                 self.resize_canvas();
-                self.s.redraw = true;
-                Ok(false)
-            }
-            Msg::ImageMessage(msg) => {
-                self.images.update(msg);
                 self.s.redraw = true;
                 Ok(false)
             }
@@ -1690,7 +1677,7 @@ impl Map {
                 Ok(o.update(key, value) || update)
             }
             RemoteUpdateBody::ImageAdded { id } => {
-                self.images.load(ctx, &id);
+                self.images.load_id(&id);
                 Ok(true)
             }
             RemoteUpdateBody::ImageRemoved { id } => {
@@ -2712,8 +2699,8 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        if let Some(img) = self.images.get(&self.cache.background) {
-            render::draw_background(&cx, &view, &self.cache.extent, img)?;
+        if let Some(img) = self.images.get_id(&self.cache.background) {
+            render::draw_background(&cx, &view, &self.cache.extent, &img)?;
         }
 
         if self.cache.show_grid {
@@ -2754,14 +2741,10 @@ impl Map {
 
             match &render.kind {
                 RenderObjectKind::Static(this) => {
-                    render::draw_static(&cx, &view, &render.base, this, |id| {
-                        self.images.get(id).cloned()
-                    })?;
+                    render::draw_static(&cx, &view, &render.base, this, &self.images)?;
                 }
                 RenderObjectKind::Token(this) => {
-                    render::draw_token(&cx, &view, &render.base, this, |id| {
-                        self.images.get(id).cloned()
-                    })?;
+                    render::draw_token(&cx, &view, &render.base, this, &self.images)?;
 
                     if let Some(look_at) = this.look_at {
                         self.look_ats.push((*look_at, this.color));
