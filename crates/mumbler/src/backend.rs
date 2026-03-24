@@ -387,7 +387,11 @@ impl Backend {
 
     /// Broadcast an event to all peers.
     pub(crate) fn broadcast(&self, ev: impl Into<Broadcast>) {
-        let _ = self.inner.broadcast.send(ev.into());
+        let result = self.inner.broadcast.send(ev.into());
+
+        if let Err(error) = result {
+            tracing::error!(%error, "failed to broadcast event");
+        }
     }
 
     /// Broadcast an info notification to all connected web clients.
@@ -414,43 +418,6 @@ impl Backend {
     /// Receive the next transform update.
     pub(crate) async fn mumblelink_wait(&self) {
         self.inner.mumblelink_notify.notified().await;
-    }
-
-    /// Update a property, this will filter properties that should not be
-    /// propagated to other peers.
-    pub(crate) async fn update(&self, key: Key, value: Value) -> Result<()> {
-        self.db().set_config_value(key, value.clone()).await?;
-
-        let mut restart_client = false;
-        let mut state = self.inner.client_state.lock().await;
-
-        match key {
-            Key::PEER_SECRET => {
-                let peer_secret = value.as_str().unwrap_or_default();
-                let keypair = crypto::derive_keypair(peer_secret.as_bytes());
-                state.keypair = keypair;
-                restart_client = true;
-
-                let peer_id = state.keypair.public_key();
-                self.broadcast(UpdateBody::PublicKey {
-                    public_key: peer_id,
-                });
-            }
-            _ => {}
-        }
-
-        if restart_client {
-            self.restart_client();
-        }
-
-        state.props.insert(key, value);
-
-        if key.is_remote() {
-            state.props_changed.insert(key);
-            self.inner.client_notify.notify_one();
-        }
-
-        Ok(())
     }
 
     /// Update position and front.
@@ -498,6 +465,86 @@ impl Backend {
     /// Wait for a client restart signal.
     pub(crate) async fn client_restart_wait(&self) {
         self.inner.client_restart_notify.notified().await;
+    }
+
+    pub(crate) async fn updates(&self, channel: ChannelId, values: &[(Key, Value)]) -> Result<()> {
+        let mut restart_mumblelink = false;
+        let mut restart_client = false;
+        let mut public_key = None;
+
+        let mut state = self.client_state().await;
+
+        for (key, value) in values {
+            match *key {
+                Key::MUMBLE_ENABLED => {
+                    restart_mumblelink = true;
+                }
+                Key::REMOTE_ENABLED | Key::REMOTE_SERVER | Key::REMOTE_TLS => {
+                    restart_client = true;
+                }
+                Key::MUMBLE_OBJECT => {
+                    let mumble_object = value.as_id();
+                    self.store_mumble_object(mumble_object);
+
+                    let transform = 'transform: {
+                        if mumble_object.is_zero() {
+                            break 'transform None;
+                        };
+
+                        let Some(object) = state.objects.get(&mumble_object) else {
+                            break 'transform None;
+                        };
+
+                        if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
+                            None
+                        } else {
+                            object.props.get(Key::TRANSFORM).as_transform()
+                        }
+                    };
+
+                    self.set_mumblelink_transform(transform).await;
+                }
+                Key::PEER_SECRET => {
+                    let peer_secret = value.as_str().unwrap_or_default();
+                    let keypair = crypto::derive_keypair(peer_secret.as_bytes());
+                    state.keypair = keypair;
+                    restart_client = true;
+                    public_key = Some(state.keypair.public_key());
+                }
+                _ => {}
+            }
+
+            state.props.insert(*key, value.clone());
+
+            if key.is_remote() {
+                state.props_changed.insert(*key);
+                self.inner.client_notify.notify_one();
+            }
+        }
+
+        drop(state);
+
+        for (key, value) in values {
+            self.broadcast(UpdateBody::Config {
+                channel,
+                key: *key,
+                value: value.clone(),
+            });
+        }
+
+        if let Some(public_key) = public_key {
+            self.broadcast(UpdateBody::PublicKey { public_key });
+        }
+
+        if restart_mumblelink {
+            self.restart_mumblelink();
+        }
+
+        if restart_client {
+            self.restart_client();
+        }
+
+        Ok(())
     }
 
     /// Create a new local object, persisting it to the database and inserting

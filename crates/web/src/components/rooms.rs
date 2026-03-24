@@ -30,7 +30,7 @@ pub(crate) enum Msg {
 pub(crate) struct Props {
     pub(crate) ws: ws::Handle,
     pub(crate) onopensettings: Callback<RemoteId>,
-    pub(crate) onrequestdelete: Callback<(RemoteId, String)>,
+    pub(crate) onrequestdelete: Callback<RemoteId>,
 }
 
 struct Room {
@@ -196,13 +196,10 @@ impl Rooms {
 
         let delete_button = is_local.then(|| {
             let id = self.peers.to_remote_id(&room.id);
-            let name = room.name.clone();
 
-            let onrequestdelete = ctx.props().onrequestdelete.clone();
-
-            let onclick = Callback::from(move |ev: MouseEvent| {
+            let onclick = ctx.props().onrequestdelete.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
-                onrequestdelete.emit((id, name.clone()));
+                id
             });
 
             html! {
@@ -378,15 +375,7 @@ impl Rooms {
                         Ok(true)
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => Ok(self.remove_peer(peer_id)),
-                    RemoteUpdateBody::ObjectCreated {
-                        channel,
-                        id,
-                        object,
-                    } => {
-                        if self.channel.id() == channel {
-                            return Ok(false);
-                        }
-
+                    RemoteUpdateBody::ObjectCreated { id, object, .. } => {
                         let id = self.peers.to_stable_id(&id);
 
                         if let Some(room) = Room::from_remote(id, &object) {

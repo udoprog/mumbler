@@ -269,7 +269,9 @@ async fn handle_peer(
                 }
 
                 if remove_room {
-                    crate::web::updates(ChannelId::NONE, b, [(Key::ROOM, Value::empty())]).await?;
+                    b.updates(ChannelId::NONE, &[(Key::ROOM, Value::empty())])
+                        .await?;
+                    b.db().set_config_value(Key::ROOM, Value::empty()).await?;
                 }
             }
             Event::ImageRemoved => {

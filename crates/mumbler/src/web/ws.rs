@@ -23,6 +23,7 @@ use crate::backend::{Backend, Broadcast};
 struct Handler<'a> {
     backend: Backend,
     database_updates: HashMap<(Id, Key), Value>,
+    database_config: HashMap<Key, Value>,
     database_updates_notify: &'a Notify,
 }
 
@@ -31,6 +32,7 @@ impl<'a> Handler<'a> {
         Self {
             backend,
             database_updates: HashMap::new(),
+            database_config: HashMap::new(),
             database_updates_notify,
         }
     }
@@ -48,16 +50,20 @@ impl ws::Handler for Handler<'_> {
     ) -> Self::Response {
         match id {
             api::Request::InitializeMap => {
-                _ = incoming
+                let request = incoming
                     .read::<api::InitializeMapRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 outgoing.write(super::initialize_map(&self.backend).await?);
             }
             api::Request::InitializeRooms => {
-                _ = incoming
+                let request = incoming
                     .read::<api::InitializeRoomsRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 outgoing.write(super::initialize_rooms(&self.backend).await?);
             }
@@ -66,34 +72,52 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UpdatesRequest>()
                     .context("missing request")?;
 
-                super::updates(incoming.channel(), &self.backend, request.values).await?;
+                tracing::debug!(?id, ?request);
+
+                if !request.values.is_empty() {
+                    self.backend
+                        .updates(incoming.channel(), &request.values)
+                        .await?;
+
+                    for (key, value) in request.values {
+                        self.database_config.insert(key, value);
+                    }
+
+                    self.database_updates_notify.notify_one();
+                }
+
                 outgoing.write(api::Empty);
             }
             api::Request::ObjectUpdate => {
-                let body = incoming
+                let request = incoming
                     .read::<api::ObjectUpdateBody>()
                     .context("missing request")?;
 
-                super::object_update(&self.backend, body.id, body.key, &body.value).await?;
+                tracing::debug!(?id, ?request);
+
+                super::object_update(&self.backend, request.id, request.key, &request.value)
+                    .await?;
 
                 self.database_updates
-                    .insert((body.id, body.key), body.value.clone());
+                    .insert((request.id, request.key), request.value.clone());
 
                 self.database_updates_notify.notify_one();
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
                     channel: incoming.channel(),
-                    id: RemoteId::local(body.id),
-                    key: body.key,
-                    value: body.value,
+                    id: RemoteId::local(request.id),
+                    key: request.key,
+                    value: request.value,
                 });
 
                 outgoing.write(api::Empty);
             }
             api::Request::GetConfig => {
-                _ = incoming
+                let request = incoming
                     .read::<api::GetConfigRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 outgoing.write(super::get_config(&self.backend).await?);
             }
@@ -102,15 +126,22 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::GetObjectSettingsRequest>()
                     .context("missing request")?;
 
+                tracing::debug!(?id, ?request);
+
                 let response = super::get_object_settings(&self.backend, request).await?;
                 outgoing.write(response);
             }
             api::Request::CreateObject => {
-                let body = incoming
+                let request = incoming
                     .read::<api::CreateObjectRequest>()
                     .context("missing request")?;
 
-                let object = self.backend.create_object(body.ty, body.props).await?;
+                tracing::debug!(?id, ?request);
+
+                let object = self
+                    .backend
+                    .create_object(request.ty, request.props)
+                    .await?;
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectCreated {
                     channel: incoming.channel(),
@@ -124,6 +155,8 @@ impl ws::Handler for Handler<'_> {
                 let request = incoming
                     .read::<api::RemoveObjectRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 self.backend.remove_object(request.id).await?;
 
@@ -139,6 +172,8 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UploadImageRequest>()
                     .context("missing request")?;
 
+                tracing::debug!(?id, ?request);
+
                 let id = super::upload_image(&self.backend, request).await?;
                 outgoing.write(api::UploadImageResponse { id });
                 self.backend.broadcast(RemoteUpdateBody::ImageAdded {
@@ -150,6 +185,8 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::RemoveImageRequest>()
                     .context("missing request")?;
 
+                tracing::debug!(?id, ?request);
+
                 super::delete_image(&self.backend, request.id).await?;
 
                 outgoing.write(api::Empty);
@@ -159,17 +196,21 @@ impl ws::Handler for Handler<'_> {
                 });
             }
             api::Request::MumbleRestart => {
-                _ = incoming
+                let request = incoming
                     .read::<api::MumbleRestartRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 self.backend.restart_mumblelink();
                 outgoing.write(api::Empty);
             }
             api::Request::RemoteRestart => {
-                _ = incoming
+                let request = incoming
                     .read::<api::RemoteRestartRequest>()
                     .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
 
                 self.backend.restart_client();
                 outgoing.write(api::Empty);
@@ -202,6 +243,7 @@ pub(super) async fn entry(
             );
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
+            let mut local_configs = HashMap::new();
 
             loop {
                 let (result, done) = tokio::select! {
@@ -209,16 +251,20 @@ pub(super) async fn entry(
                         (result.context("Error in server"), true)
                     }
                     () = database_updates_notify.notified() => {
-                        let updates = &mut server.handler_mut().database_updates;
+                        let handler = &mut server.handler_mut();
 
-                        if updates.is_empty() {
-                            continue;
+                        let was_empty = local_updates.is_empty() && local_configs.is_empty();
+
+                        if !handler.database_updates.is_empty() {
+                            for (key, value) in handler.database_updates.drain() {
+                                local_updates.insert(key, value);
+                            }
                         }
 
-                        let was_empty = local_updates.is_empty();
-
-                        for (key, value) in updates.drain() {
-                            local_updates.insert(key, value);
+                        if !handler.database_config.is_empty() {
+                            for (key, value) in handler.database_config.drain() {
+                                local_configs.insert(key, value);
+                            }
                         }
 
                         if was_empty {
@@ -234,6 +280,10 @@ pub(super) async fn entry(
                         let result = async {
                             for ((id, key), value) in local_updates.drain() {
                                 backend.db().set_property_value(id, key, value).await?;
+                            }
+
+                            for (key, value) in local_configs.drain() {
+                                backend.db().set_config_value(key, value).await?;
                             }
 
                             Ok(())

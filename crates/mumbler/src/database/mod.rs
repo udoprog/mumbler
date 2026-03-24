@@ -297,17 +297,15 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            tracing::debug!(?key, "Setting config value");
-
             descriptive::encode(&mut inner.scratch, &value)?;
 
             let Inner {
-                insert_config: set_config,
+                insert_config,
                 scratch,
                 ..
             } = &mut *inner;
 
-            set_config.execute((key, &scratch[..]))?;
+            insert_config.execute((key, &scratch[..]))?;
             scratch.clear();
             Ok(())
         });

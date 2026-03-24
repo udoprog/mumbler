@@ -59,6 +59,18 @@ impl Type {
         self.raw & 0x80000000 != 0
     }
 
+    /// Get the title of the type suitable for use in a UI.
+    #[inline]
+    pub fn title(&self) -> &'static str {
+        match *self {
+            Self::TOKEN => "Token",
+            Self::STATIC => "Static",
+            Self::GROUP => "Group",
+            Self::ROOM => "Room",
+            _ => "Object",
+        }
+    }
+
     /// Get lowercase display for type suitable for use in a human readable
     /// message.
     #[inline]
@@ -649,7 +661,7 @@ pub struct RemoteObject {
     pub props: Properties,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeMapRequest;
 
@@ -664,7 +676,7 @@ pub struct InitializeMapResponse {
     pub peers: Vec<RemotePeer>,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct InitializeRoomsRequest;
 

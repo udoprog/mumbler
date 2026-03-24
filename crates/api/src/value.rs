@@ -222,7 +222,22 @@ impl Default for Value {
 impl fmt::Debug for Value {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
+        match &self.kind {
+            ValueKind::Boolean(value) => value.fmt(f),
+            ValueKind::Bytes(value) => value.fmt(f),
+            ValueKind::Color(value) => value.fmt(f),
+            ValueKind::Empty => f.write_str("Empty"),
+            ValueKind::Extent(value) => value.fmt(f),
+            ValueKind::Float(value) => value.fmt(f),
+            ValueKind::Id(value) => value.fmt(f),
+            ValueKind::Integer(value) => value.fmt(f),
+            ValueKind::Pan(value) => value.fmt(f),
+            ValueKind::PeerId(value) => value.fmt(f),
+            ValueKind::StableId(value) => value.fmt(f),
+            ValueKind::String(value) => value.fmt(f),
+            ValueKind::Transform(value) => value.fmt(f),
+            ValueKind::Vec3(value) => value.fmt(f),
+        }
     }
 }
 

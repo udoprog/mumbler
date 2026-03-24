@@ -21,9 +21,6 @@ pub(crate) use self::settings::Settings;
 mod rooms;
 pub(crate) use self::rooms::Rooms;
 
-mod rooms_page;
-pub(crate) use self::rooms_page::RoomsPage;
-
 mod room_settings;
 pub(crate) use self::room_settings::RoomSettings;
 

@@ -11,14 +11,13 @@ use anyhow::{Context as _, Result};
 use api::{
     GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeMapResponse,
     InitializeRoomsResponse, Key, PeerId, Properties, RemoteId, RemoteObject, RemotePeer, Type,
-    UpdateBody, UploadImageRequest, Value,
+    UploadImageRequest, Value,
 };
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
-use musli_web::api::ChannelId;
 use tokio::net::TcpListener;
 use tokio::task;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
@@ -360,67 +359,5 @@ async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value
     }
 
     backend.object_update(object_id, key, value.clone()).await;
-    Ok(())
-}
-
-pub(crate) async fn updates(
-    channel: ChannelId,
-    backend: &Backend,
-    values: impl IntoIterator<Item = (Key, Value)>,
-) -> Result<()> {
-    let mut restart_mumblelink = false;
-    let mut restart_client = false;
-
-    for (key, value) in values {
-        match key {
-            Key::MUMBLE_ENABLED => {
-                restart_mumblelink = true;
-            }
-            Key::REMOTE_ENABLED | Key::REMOTE_SERVER | Key::REMOTE_TLS => {
-                restart_client = true;
-            }
-            Key::MUMBLE_OBJECT => {
-                let mumble_object = value.as_id();
-                backend.store_mumble_object(mumble_object);
-
-                let transform = 'transform: {
-                    if mumble_object.is_zero() {
-                        break 'transform None;
-                    };
-
-                    let state = backend.client_state().await;
-
-                    let Some(object) = state.objects.get(&mumble_object) else {
-                        break 'transform None;
-                    };
-
-                    if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
-                        None
-                    } else {
-                        object.props.get(Key::TRANSFORM).as_transform()
-                    }
-                };
-
-                backend.set_mumblelink_transform(transform).await;
-            }
-            _ => {}
-        }
-
-        backend.update(key, value.clone()).await?;
-        backend.broadcast(UpdateBody::Config {
-            channel,
-            key,
-            value,
-        });
-    }
-
-    if restart_mumblelink {
-        backend.restart_mumblelink();
-    }
-
-    if restart_client {
-        backend.restart_client();
-    }
-
     Ok(())
 }
