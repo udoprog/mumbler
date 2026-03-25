@@ -92,7 +92,7 @@ crate::macros::keys! {
         COLOR: Color = 1;
         TRANSFORM: Transform = 2;
         LOOK_AT: Vec3 = 3;
-        OBJECT_NAME: String = 4;
+        NAME: String = 4;
         MUMBLE_ENABLED: Boolean = 5;
         REMOTE_SERVER: String = 6;
         REMOTE_ENABLED: Boolean = 7;

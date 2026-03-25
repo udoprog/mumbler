@@ -302,7 +302,7 @@ impl TokenSettings {
                 let name = input.value();
 
                 *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
                 Ok(false)
             }
             Msg::RadiusChanged(e) => {
@@ -388,7 +388,7 @@ impl TokenSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
+            Key::NAME => self.name.update(value.as_str().to_owned()),
             Key::TOKEN_RADIUS => self.token_radius.update(value.as_f32().unwrap_or(0.25)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(5.0)),
             _ => false,

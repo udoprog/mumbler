@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use api::{Color, Extent, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
+use yew::{Html, html};
 
 use crate::components::render::Visibility;
 use crate::state::State;
@@ -288,7 +289,7 @@ impl StaticObject {
             locked: State::new(o.props.get(Key::LOCKED).as_bool()),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().to_owned()),
+            name: State::new(o.props.get(Key::NAME).as_str().to_owned()),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
             width: State::new(
                 o.props
@@ -314,7 +315,7 @@ impl StaticObject {
             Key::LOCKED => self.locked.update(v.as_bool()),
             Key::IMAGE_ID => self.image.update(v.as_id()),
             Key::COLOR => self.color.update(v.as_color()),
-            Key::OBJECT_NAME => self.name.update(v.into_string()),
+            Key::NAME => self.name.update(v.into_string()),
             Key::HIDDEN => self.hidden.update(v.as_bool()),
             Key::STATIC_WIDTH => self
                 .width
@@ -427,26 +428,24 @@ impl LocalObject {
         Some(Self {
             id: RemoteId::new(peer_id, o.id),
             group: State::new(RemoteId::new(peer_id, o.props.get(Key::GROUP).as_id())),
-            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().to_owned()),
+            name: State::new(o.props.get(Key::NAME).as_str().to_owned()),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool()),
             kind,
         })
     }
 
-    pub(crate) fn display(&self) -> &str {
-        if self.name.is_empty() {
-            match &self.kind {
-                ObjectKind::Token(_) => "Unnamed Token",
-                ObjectKind::Static(_) => "Unnamed Static",
-                ObjectKind::Group(_) => "Unnamed Group",
-                ObjectKind::Room(_) => "Unnamed Room",
-            }
-        } else {
-            &self.name
+    /// Get a view for this object.
+    #[inline]
+    pub(crate) fn as_ref(&self) -> ObjectRef {
+        ObjectRef {
+            ty: self.ty(),
+            name: (*self.name).clone(),
+            id: self.id,
         }
     }
 
+    /// Get the type of this object.
     #[inline]
     pub(crate) fn ty(&self) -> Type {
         match self.kind {
@@ -460,7 +459,7 @@ impl LocalObject {
     #[inline]
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::OBJECT_NAME => self.name.update(value.into_string()),
+            Key::NAME => self.name.update(value.into_string()),
             Key::HIDDEN => self.hidden.update(value.as_bool()),
             Key::LOCAL_HIDDEN => self.local_hidden.update(value.as_bool()),
             Key::GROUP => self
@@ -673,6 +672,48 @@ impl LocalObject {
             ObjectKind::Static(this) => *this.locked,
             ObjectKind::Group(this) => *this.locked,
             ObjectKind::Room(_) => false,
+        }
+    }
+}
+
+pub(crate) struct ObjectRef {
+    pub(crate) ty: Type,
+    pub(crate) name: String,
+    pub(crate) id: RemoteId,
+}
+
+impl ObjectRef {
+    /// Get a view for this object.
+    #[inline]
+    pub(crate) fn name(&self) -> Html {
+        if !self.name.is_empty() {
+            return html! {
+                <span>{self.name.as_str()}</span>
+            };
+        }
+
+        html! {
+            <span class="object">
+                <span class="object-type">{self.ty.display()}</span>
+                <span class="object-id">{self.id.to_string()}</span>
+            </span>
+        }
+    }
+
+    /// Get a title view for this object.
+    #[inline]
+    pub(crate) fn title(&self) -> Html {
+        if !self.name.is_empty() {
+            return html! {
+                <span>{self.name.as_str()}</span>
+            };
+        }
+
+        html! {
+            <span class="object">
+                <span class="object-type">{self.ty.title()}</span>
+                <span class="object-id">{self.id.to_string()}</span>
+            </span>
         }
     }
 }

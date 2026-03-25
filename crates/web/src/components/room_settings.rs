@@ -304,7 +304,7 @@ impl RoomSettings {
                 let name = input.value();
 
                 *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
                 Ok(false)
             }
             Msg::RemoteUpdate(body) => {
@@ -338,7 +338,7 @@ impl RoomSettings {
 
     fn update_property(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
+            Key::NAME => self.name.update(value.as_str().to_owned()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
             Key::ROOM_EXTENT => self
                 .extent

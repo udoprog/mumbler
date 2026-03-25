@@ -98,7 +98,7 @@ impl Component for ObjectList {
             let target = o.id;
             let selected = ctx.props().selected == Some(target);
 
-            let label = o.name();
+            let label = o.as_ref().name();
 
             let onclick = ctx.props().onselect.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();

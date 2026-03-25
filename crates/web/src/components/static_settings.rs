@@ -354,7 +354,7 @@ impl StaticSettings {
                 let name = input.value();
 
                 *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
                 Ok(false)
             }
             Msg::WidthChanged(e) => {
@@ -483,7 +483,7 @@ impl StaticSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
+            Key::NAME => self.name.update(value.as_str().to_owned()),
             Key::STATIC_WIDTH => self.width.update(value.as_f32().unwrap_or(1.0)),
             Key::STATIC_HEIGHT => self.height.update(value.as_f32().unwrap_or(1.0)),
             Key::RATIO => self.ratio.update(value.as_f32()),

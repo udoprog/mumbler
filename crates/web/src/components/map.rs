@@ -23,7 +23,7 @@ use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::Images;
 use crate::log;
-use crate::objects::{LocalObject, ObjectKind, Objects, ObjectsRef};
+use crate::objects::{LocalObject, ObjectKind, ObjectRef, Objects, ObjectsRef};
 use crate::peers::Peers;
 use crate::state::State;
 
@@ -43,24 +43,32 @@ const ANIMATION_FPS: u32 = 60;
 enum Modal {
     Help,
     Rooms,
-    Remove {
-        ty: Type,
-        id: RemoteId,
-        name: String,
-    },
-    Settings {
-        ty: Type,
-        id: RemoteId,
-    },
+    Remove { object: ObjectRef },
+    Settings { object: ObjectRef },
 }
 
 impl Modal {
-    fn title(&self) -> String {
+    fn title(&self) -> Html {
         match self {
-            Modal::Help => String::from("Shortcuts"),
-            Modal::Rooms => String::from("Rooms"),
-            Modal::Remove { .. } => String::from("Confirm Removal"),
-            Modal::Settings { ty, .. } => format!("{} Settings", ty.title()),
+            Modal::Help => html! {
+                {"Shortcuts"}
+            },
+            Modal::Rooms => html! {
+                {"Rooms"}
+            },
+            Modal::Remove { object, .. } => html! {
+                <>
+                    {"Remove "}
+                    {object.name()}
+                    {"?"}
+                </>
+            },
+            Modal::Settings { object, .. } => html! {
+                <>
+                    {"Settings for "}
+                    {object.title()}
+                </>
+            },
         }
     }
 
@@ -75,24 +83,32 @@ impl Modal {
                     onrequestdelete={ctx.link().callback(Msg::ConfirmRemove)}
                     />
             },
-            Modal::Remove { ty, id, ref name } => html! {
+            Modal::Remove {
+                object: ref object @ ObjectRef { id, .. },
+                ..
+            } => html! {
                 <>
-                    <p>{format!("Remove {} \"{name}\"?", ty.display())}</p>
+                    <p>
+                        {"Are you sure you want to remove "}
+                        <span class="object-bullet">{object.name()}</span>
+                        {"?"}
+                    </p>
 
                     <div class="btn-group">
                         <button class="btn danger"
                             onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
                             {"Remove"}
                         </button>
-                        <button class="btn"
-                            onclick={ctx.link().callback(|_| Msg::CloseModal)}>
+                        <button class="btn" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
                             {"Cancel"}
                         </button>
                     </div>
                 </>
             },
-            Modal::Settings { ty, id } => html! {
-                 {match ty {
+            Modal::Settings {
+                object: ref object @ ObjectRef { id, .. },
+            } => html! {
+                 {match object.ty {
                     Type::STATIC => {
                         html! { <StaticSettings {ws} {id} /> }
                     }
@@ -160,7 +176,7 @@ impl Inner {
         if self
             .modal
             .as_ref()
-            .is_some_and(|m| matches!(m, Modal::Remove { id: remove_id, .. } if *remove_id == id))
+            .is_some_and(|m| matches!(m, Modal::Remove { object } if object.id == id))
         {
             self.modal = None;
         }
@@ -659,10 +675,8 @@ impl Component for Map {
     }
 
     fn rendered(&mut self, _: &Context<Self>, first_render: bool) {
-        if first_render {
-            if let Err(error) = self.redraw() {
-                self.log.error("map::redraw", error);
-            }
+        if first_render && let Err(error) = self.redraw() {
+            self.log.error("map::redraw", error);
         }
     }
 
@@ -1078,8 +1092,7 @@ impl Component for Map {
                         <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                             <div class="modal-header">
                                 <h2>{modal.title()}</h2>
-                                <button class="btn sm square danger" title="Cancel"
-                                    onclick={ctx.link().callback(|_| Msg::CloseModal)}>
+                                <button class="btn square danger" title="Cancel" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
                                     <Icon name="x-mark" />
                                 </button>
                             </div>
@@ -1245,11 +1258,14 @@ impl Map {
             Msg::OpenSettings(id) => {
                 self.s.context_menu = None;
 
-                let Some(ty) = self.objects.borrow().get(id).map(|o| o.ty()) else {
+                let objects = self.objects.borrow();
+
+                let Some(o) = objects.get(id) else {
                     return Ok(false);
                 };
 
-                self.s.modal = Some(Modal::Settings { ty, id });
+                let display = o.as_ref();
+                self.s.modal = Some(Modal::Settings { object: display });
                 Ok(true)
             }
             Msg::OpenRooms => {
@@ -1401,7 +1417,6 @@ impl Map {
                     ctx,
                     Type::STATIC,
                     [
-                        (Key::OBJECT_NAME, Value::from("Image")),
                         (Key::HIDDEN, Value::from(true)),
                         (Key::IMAGE_ID, Value::from(body.id)),
                         (Key::TRANSFORM, Value::from(transform)),
@@ -1451,14 +1466,8 @@ impl Map {
                 Ok(true)
             }
             Msg::CreateToken => {
-                self._create_object = self.create_remote_object(
-                    ctx,
-                    Type::TOKEN,
-                    [
-                        (Key::OBJECT_NAME, Value::from("Owlbear")),
-                        (Key::HIDDEN, Value::from(true)),
-                    ],
-                );
+                self._create_object =
+                    self.create_remote_object(ctx, Type::TOKEN, [(Key::HIDDEN, Value::from(true))]);
 
                 Ok(false)
             }
@@ -1467,7 +1476,6 @@ impl Map {
                     ctx,
                     Type::STATIC,
                     [
-                        (Key::OBJECT_NAME, Value::from("Object")),
                         (Key::HIDDEN, Value::from(true)),
                         (Key::STATIC_WIDTH, Value::from(1.0_f32)),
                         (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
@@ -1481,7 +1489,6 @@ impl Map {
                     ctx,
                     Type::GROUP,
                     [
-                        (Key::OBJECT_NAME, Value::from("Group")),
                         (Key::HIDDEN, Value::from(false)),
                         (Key::EXPANDED, Value::from(true)),
                     ],
@@ -1503,11 +1510,8 @@ impl Map {
                     return Ok(false);
                 };
 
-                self.s.modal = Some(Modal::Remove {
-                    ty: o.ty(),
-                    id,
-                    name: o.display().to_owned(),
-                });
+                self.s.modal = Some(Modal::Remove { object: o.as_ref() });
+
                 Ok(true)
             }
             Msg::CloseModal => {
@@ -2028,7 +2032,7 @@ impl Map {
         match key.as_str() {
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
-                    |m| matches!(m, Modal::Remove { id, .. } if *id == self.s.selected),
+                    |m| matches!(m, Modal::Remove { object } if object.id == self.s.selected),
                 ) {
                     return Ok(false);
                 }
@@ -2041,17 +2045,15 @@ impl Map {
 
                 self.s.context_menu = None;
 
-                self.s.modal = Some(Modal::Remove {
-                    ty: o.ty(),
-                    id: self.s.selected,
-                    name: o.display().to_owned(),
-                });
+                let object = o.as_ref();
+
+                self.s.modal = Some(Modal::Remove { object });
 
                 Ok(true)
             }
             "Enter" => {
-                if let Some(Modal::Remove { id, .. }) = self.s.modal.take() {
-                    ctx.link().send_message(Msg::RemoveObject(id));
+                if let Some(Modal::Remove { object }) = self.s.modal.take() {
+                    ctx.link().send_message(Msg::RemoveObject(object.id));
                 }
 
                 Ok(false)

@@ -199,7 +199,7 @@ impl GroupSettings {
                 let name = input.value();
 
                 *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
+                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
                 Ok(false)
             }
             Msg::SetLog(log) => {
@@ -234,7 +234,7 @@ impl GroupSettings {
     fn update_property(&mut self, _: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
+            Key::NAME => self.name.update(value.as_str().to_owned()),
             _ => false,
         }
     }

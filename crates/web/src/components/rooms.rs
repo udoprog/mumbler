@@ -51,14 +51,14 @@ impl Room {
             return None;
         }
 
-        let name = object.props.get(Key::OBJECT_NAME).as_str().to_owned();
+        let name = object.props.get(Key::NAME).as_str().to_owned();
 
         Some(Self { id, name })
     }
 
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::OBJECT_NAME => {
+            Key::NAME => {
                 self.name = value.as_str().to_owned();
                 true
             }
@@ -485,7 +485,7 @@ impl Rooms {
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: Type::ROOM,
-                        props: api::Properties::from([(Key::OBJECT_NAME, Value::from("New Room"))]),
+                        props: api::Properties::from([(Key::NAME, Value::from("New Room"))]),
                     })
                     .on_packet(ctx.link().callback(Msg::CreateRoomResult))
                     .send();

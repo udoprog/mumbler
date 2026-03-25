@@ -427,8 +427,7 @@ impl Component for CropModal {
                                 }
                             }}
                             <section class="fill" />
-                            <button class="btn danger right"
-                                onclick={ctx.link().callback(|_| Msg::Cancel)}>
+                            <button class="btn danger right" onclick={ctx.link().callback(|_| Msg::Cancel)}>
                                 {"Cancel"}
                             </button>
                         </div>

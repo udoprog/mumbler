@@ -780,3 +780,29 @@ body {
         display: block;
     }
 }
+
+.object {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: $text-gap;
+
+    &-type {
+        font-weight: bold;
+    }
+
+    &-id {
+        font-size: 0.8em;
+        font-family: "Courier New", Courier, monospace;
+        color: var(--text-color-muted);
+        user-select: all;
+    }
+
+    &-bullet {
+        display: inline-flex;
+        padding: 0.25em;
+        border-radius: $border-radius;
+        background-color: var(--info-background-color);
+        color: var(--link-color);
+    }
+}

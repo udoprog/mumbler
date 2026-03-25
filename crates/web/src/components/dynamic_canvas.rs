@@ -161,8 +161,8 @@ impl DynamicCanvas {
             && let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>()
             && let Some((width, height)) = self.dimensions
         {
-            canvas.set_width(width as u32);
-            canvas.set_height(height as u32);
+            canvas.set_width(width);
+            canvas.set_height(height);
         }
     }
 }
