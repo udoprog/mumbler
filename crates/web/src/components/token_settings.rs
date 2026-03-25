@@ -11,7 +11,7 @@ use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
-use super::{ImageUpload, into_target, render};
+use super::{DynamicCanvas, ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
     Channel(Result<ws::Channel, ws::Error>),
@@ -27,6 +27,9 @@ pub(crate) enum Msg {
     SpeedChanged(Event),
     StateChanged(ws::State),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
+    ImageLoaded(Result<(), Error>),
+    CanvasLoaded(HtmlCanvasElement),
+    CanvasResized((i32, i32)),
 }
 
 #[derive(Properties, PartialEq)]
@@ -50,7 +53,7 @@ pub(crate) struct TokenSettings {
     public_key: PublicKey,
     log: log::Log,
     name: State<String>,
-    preview_canvas: NodeRef,
+    canvas: Option<HtmlCanvasElement>,
     preview_images: Images,
     speed: State<f32>,
     state: ws::State,
@@ -94,8 +97,8 @@ impl Component for TokenSettings {
             public_key: PublicKey::ZERO,
             log,
             name: State::default(),
-            preview_canvas: NodeRef::default(),
-            preview_images: Images::new(),
+            canvas: None,
+            preview_images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             speed: State::new(5.0),
             state,
             _channel: ws::Request::new(),
@@ -129,7 +132,7 @@ impl Component for TokenSettings {
         html! {
             <>
             <div id="content" class="row">
-                <div class="col-8 rows">
+                <div class="col-6 rows">
                     <section class="input-group">
                         <label for="name">{"Name:"}</label>
 
@@ -199,9 +202,12 @@ impl Component for TokenSettings {
                     />
                 </div>
 
-                <div class="col-4 rows">
+                <div class="col-6 rows">
                     <section class="preview">
-                        <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
+                        <DynamicCanvas
+                            onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onresize={ctx.link().callback(Msg::CanvasResized)}
+                            />
                     </section>
                 </div>
             </div>
@@ -250,7 +256,7 @@ impl TokenSettings {
                 let body = body.decode()?;
 
                 for (key, value) in body.object.props {
-                    self.update_property(key, value);
+                    self.update_property(ctx, key, value);
                 }
 
                 self.images = body.images;
@@ -263,7 +269,7 @@ impl TokenSettings {
             }
             Msg::ImageSelected(id) => {
                 *self.image = id;
-                self.load_preview_image();
+                self.load_preview_image(ctx);
                 self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
@@ -341,21 +347,35 @@ impl TokenSettings {
                             return Ok(false);
                         }
 
-                        self.update_property(key, value)
+                        self.update_property(ctx, key, value)
                     }
                     _ => return Ok(false),
                 };
 
                 Ok(changed)
             }
+            Msg::ImageLoaded(result) => {
+                result?;
+                self.redraw_preview()?;
+                Ok(false)
+            }
+            Msg::CanvasLoaded(canvas) => {
+                self.canvas = Some(canvas);
+                self.redraw_preview()?;
+                Ok(false)
+            }
+            Msg::CanvasResized((_, _)) => {
+                self.redraw_preview()?;
+                Ok(false)
+            }
         }
     }
 
-    fn update_property(&mut self, key: Key, value: Value) -> bool {
+    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
                 if self.image.update(value.as_id()) {
-                    self.load_preview_image();
+                    self.load_preview_image(ctx);
                     true
                 } else {
                     false
@@ -369,14 +389,15 @@ impl TokenSettings {
         }
     }
 
-    fn load_preview_image(&mut self) {
+    fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
         let id = RemoteId::local(*self.image);
-        self.preview_images.load_id(&id);
+        self.preview_images
+            .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
-        let Some(canvas) = self.preview_canvas.cast::<HtmlCanvasElement>() else {
+        let Some(canvas) = self.canvas.as_ref() else {
             return Ok(());
         };
 
@@ -403,7 +424,7 @@ impl TokenSettings {
             arrow_target: None,
         };
 
-        let view = ViewTransform::preview(&canvas);
+        let view = ViewTransform::simple(canvas.width(), canvas.height(), 50.0);
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 

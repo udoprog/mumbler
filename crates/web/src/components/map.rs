@@ -124,6 +124,8 @@ struct Inner {
     _toggle_mumble_request: ws::Request,
     redraw: bool,
     update_cache: bool,
+    update_config: bool,
+    update_view: bool,
     move_target: HashMap<RemoteId, Vec3>,
     arrow_target: HashMap<RemoteId, Vec3>,
 }
@@ -461,7 +463,7 @@ pub(crate) struct Map {
     _upload_image: ws::Request,
     animation_interval: Option<Interval>,
     canvas_ref: NodeRef,
-    map_container: NodeRef,
+    canvas_container: NodeRef,
     channel: ws::Channel,
     config: Config,
     drag_over: Option<DragOver>,
@@ -487,9 +489,9 @@ pub(crate) struct Map {
     action: Option<Action>,
     state: ws::State,
     transform_requests: HashMap<RemoteId, ws::Request>,
-    update_world: bool,
     look_ats: Vec<(Vec3, Color)>,
     s: Inner,
+    view: ViewTransform,
 }
 
 pub(crate) enum Msg {
@@ -537,6 +539,7 @@ pub(crate) enum Msg {
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     OpenRooms,
     Wheel(WheelEvent),
+    ImageLoaded(Result<(), Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -612,12 +615,12 @@ impl Component for Map {
             action: None,
             animation_interval: None,
             canvas_ref: NodeRef::default(),
-            map_container: NodeRef::default(),
+            canvas_container: NodeRef::default(),
             config: Config::default(),
             channel: ws::Channel::default(),
             drag_over: None,
             drop_image: None,
-            images: Images::new(),
+            images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             log,
             look_at_requests: HashMap::new(),
             look_ats: Vec::new(),
@@ -639,7 +642,7 @@ impl Component for Map {
             s: Inner::default(),
             state,
             transform_requests: HashMap::new(),
-            update_world: false,
+            view: ViewTransform::simple(0, 0, 1.0),
         };
 
         this.refresh(ctx);
@@ -683,9 +686,9 @@ impl Component for Map {
             self.send_look_at_updates(ctx);
         }
 
-        if self.update_world {
+        if self.s.update_config {
             self._update_world = self.channel.updates(ctx, self.config.world_values());
-            self.update_world = false;
+            self.s.update_config = false;
             changed = true;
         }
 
@@ -693,7 +696,25 @@ impl Component for Map {
             let room_id = self.peers.to_remote_id(&self.config.room);
             let objects = self.objects.borrow();
             self.cache.update(room_id, &objects);
+
+            // If the cache is updated, the view needs to change as well since
+            // extent might be modified.
+            self.s.update_view = true;
             self.s.update_cache = false;
+            changed = true;
+        }
+
+        if self.s.update_view {
+            self.view = ViewTransform::new(
+                self.view.width,
+                self.view.height,
+                *self.config.zoom,
+                &self.config.pan,
+                &self.cache.extent,
+            );
+
+            self.s.update_view = false;
+            self.s.redraw = true;
             changed = true;
         }
 
@@ -996,8 +1017,10 @@ impl Component for Map {
                     <div class="col-9 rows map-column">
                         {toolbar}
 
-                        <div id="map-container" ref={self.map_container.clone()} key="map-container">
-                            <canvas id="map" ref={self.canvas_ref.clone()}
+                        <div class="canvas-container" ref={self.canvas_container.clone()} key="canvas-container">
+                            <canvas
+                                id="map"
+                                ref={self.canvas_ref.clone()}
                                 onpointerdown={ctx.link().callback(Msg::PointerDown)}
                                 onpointermove={ctx.link().callback(Msg::PointerMove)}
                                 onpointerup={ctx.link().callback(Msg::PointerUp)}
@@ -1086,13 +1109,7 @@ impl Map {
             return Ok(false);
         }
 
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return Ok(false);
-        };
-
-        let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-        let world_pos = ev.offset();
-        let world_pos = t.to_world(world_pos);
+        let world_pos = self.view.to_world(ev.offset());
 
         let Some(dt) = ev.data_transfer() else {
             return Ok(false);
@@ -1292,7 +1309,8 @@ impl Map {
                 self.images.clear();
 
                 for id in body.images {
-                    self.images.load_id(&id);
+                    self.images
+                        .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
                 }
 
                 self.s.update_cache = true;
@@ -1512,6 +1530,11 @@ impl Map {
                 self.s.context_menu = None;
                 Ok(true)
             }
+            Msg::ImageLoaded(result) => {
+                result?;
+                self.s.redraw = true;
+                Ok(false)
+            }
         }
     }
 
@@ -1531,11 +1554,15 @@ impl Map {
                 let changed = self.config.update(key, value);
 
                 if changed {
-                    for peer in self.peers.iter_mut() {
-                        peer.update_config(&self.config.room);
+                    if matches!(key, Key::ROOM) {
+                        for peer in self.peers.iter_mut() {
+                            peer.update_config(&self.config.room);
+                        }
+
+                        self.s.update_cache = true;
                     }
 
-                    self.s.update_cache = true;
+                    self.s.update_view |= matches!(key, Key::ZOOM | Key::PAN);
                 }
 
                 self.s.redraw = changed;
@@ -1672,7 +1699,8 @@ impl Map {
                 Ok(o.update(key, value) || update)
             }
             RemoteUpdateBody::ImageAdded { id } => {
-                self.images.load_id(&id);
+                self.images
+                    .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
                 Ok(true)
             }
             RemoteUpdateBody::ImageRemoved { id } => {
@@ -1930,36 +1958,40 @@ impl Map {
             return false;
         };
 
-        match &o.kind {
+        match &mut o.kind {
             ObjectKind::Static(s) => {
-                let width = *s.width * scale.scale;
-                let height = *s.height * scale.scale;
-
-                if (width - *s.width).abs() > f32::EPSILON {
+                if s.width.update_epsilon(*s.width * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
-                    requests._scale_width =
-                        self.channel
-                            .object_update(ctx, scale.object_id, Key::STATIC_WIDTH, width);
+
+                    requests._scale_width = self.channel.object_update(
+                        ctx,
+                        scale.object_id,
+                        Key::STATIC_WIDTH,
+                        *s.width,
+                    );
                 }
 
-                if (height - *s.height).abs() > f32::EPSILON {
+                if s.height.update_epsilon(*s.height * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
+
                     requests._scale_height = self.channel.object_update(
                         ctx,
                         scale.object_id,
                         Key::STATIC_HEIGHT,
-                        height,
+                        *s.height,
                     );
                 }
             }
             ObjectKind::Token(t) => {
-                let radius = *t.token_radius * scale.scale;
-
-                if (radius - *t.token_radius).abs() > f32::EPSILON {
+                if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
-                    requests._scale_radius =
-                        self.channel
-                            .object_update(ctx, scale.object_id, Key::TOKEN_RADIUS, radius);
+
+                    requests._scale_radius = self.channel.object_update(
+                        ctx,
+                        scale.object_id,
+                        Key::TOKEN_RADIUS,
+                        *t.token_radius,
+                    );
                 }
             }
             _ => {}
@@ -1985,8 +2017,6 @@ impl Map {
                     return Ok(false);
                 };
 
-                ev.prevent_default();
-
                 self.s.context_menu = None;
 
                 self.s.modal = Some(Modal::Remove {
@@ -1999,15 +2029,12 @@ impl Map {
             }
             "Enter" => {
                 if let Some(Modal::Remove { id, .. }) = self.s.modal.take() {
-                    ev.prevent_default();
                     ctx.link().send_message(Msg::RemoveObject(id));
                 }
 
                 Ok(false)
             }
             "F1" | "?" => {
-                ev.prevent_default();
-
                 self.s.modal = match self.s.modal {
                     Some(Modal::Help) => None,
                     _ => Some(Modal::Help),
@@ -2015,22 +2042,14 @@ impl Map {
 
                 Ok(true)
             }
-            "s" | "S" => {
-                ev.prevent_default();
-                Ok(self.start_scale())
-            }
-            "t" | "T" => {
-                ev.prevent_default();
-                self.toggle_locked(ctx, self.s.selected)
-            }
+            "s" | "S" => Ok(self.start_scale()),
+            "t" | "T" => self.toggle_locked(ctx, self.s.selected),
             "r" | "R" => self.start_rotation(),
             "g" | "G" => {
                 self.start_translate(self.s.selected);
                 Ok(true)
             }
             "Escape" => {
-                ev.prevent_default();
-
                 if self.cancel_action() {
                     return Ok(false);
                 }
@@ -2044,14 +2063,7 @@ impl Map {
                 self.s.context_menu = None;
                 Ok(true)
             }
-            "Shift" => {
-                if self.start_rotation()? {
-                    ev.prevent_default();
-                    return Ok(true);
-                }
-
-                Ok(false)
-            }
+            "Shift" => self.start_rotation(),
             _ => Ok(false),
         }
     }
@@ -2208,14 +2220,7 @@ impl Map {
     }
 
     fn on_context_menu(&mut self, _ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return Ok(());
-        };
-
-        let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-
-        let w = ev.offset();
-        let w = t.to_world(w);
+        let w = self.view.to_world(ev.offset());
 
         let objects = self.objects.borrow();
 
@@ -2257,9 +2262,8 @@ impl Map {
         let o = objects.get(object_id)?;
 
         let is_hidden = o.is_hidden();
-        let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
+        let hidden_icon = if is_hidden { "eye" } else { "eye-slash" };
         let hidden_label = if is_hidden { "Show" } else { "Hide" };
-        let local_hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
         let local_hidden_label = if is_hidden {
             "Show locally"
         } else {
@@ -2287,7 +2291,7 @@ impl Map {
                     </button>
                     <button class="context-menu-item"
                         onclick={ctx.link().callback(move |_| Msg::ToggleLocalHidden(object_id))}>
-                        <Icon name={local_hidden_icon} invert={true} />
+                        <Icon name="no-symbol" invert={true} />
                         {local_hidden_label}
                     </button>
                     <button class="context-menu-item"
@@ -2313,13 +2317,7 @@ impl Map {
 
         match ev.button() {
             LEFT_MOUSE_BUTTON if ev.shift_key() => {
-                let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-                    return Ok(());
-                };
-
-                let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-                let e = ev.offset();
-                let e = view.to_world(e);
+                let e = self.view.to_world(ev.offset());
 
                 self.mouse = Some(e);
 
@@ -2334,13 +2332,7 @@ impl Map {
                     return Ok(());
                 }
 
-                let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-                    return Ok(());
-                };
-
-                let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-                let e = ev.offset();
-                let e = view.to_world(e);
+                let e = self.view.to_world(ev.offset());
 
                 self.mouse = Some(e);
                 self.start_translate_on_hit(ctx);
@@ -2358,22 +2350,18 @@ impl Map {
     fn on_pointer_move(&mut self, ev: PointerEvent) -> Result<(), Error> {
         ev.prevent_default();
 
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return Ok(());
-        };
-
-        let v = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-
         if let Some(a) = self.pan_anchor {
             let d = ev.client() - a;
             *self.config.pan = *self.config.pan + d;
             self.pan_anchor = Some(ev.client());
-            self.update_world = true;
+
+            self.s.update_view = true;
+            self.s.update_config = true;
             self.s.redraw = true;
         }
 
         let m = ev.offset();
-        let m = v.to_world(m);
+        let m = self.view.to_world(m);
 
         self.mouse = Some(m);
 
@@ -2415,10 +2403,6 @@ impl Map {
     }
 
     fn on_wheel(&mut self, ev: WheelEvent) -> Result<(), Error> {
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return Ok(());
-        };
-
         ev.prevent_default();
 
         let delta = if ev.delta_y() < 0.0 {
@@ -2427,23 +2411,31 @@ impl Map {
             1.0 / ZOOM_FACTOR
         };
 
-        let view_before = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-        *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
-        let view_after = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
+        let zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
+
+        let after = ViewTransform::new(
+            self.view.width,
+            self.view.height,
+            zoom,
+            &self.config.pan,
+            &self.cache.extent,
+        );
 
         let c1 = ev.offset();
-        let c2 = view_after.to_canvas(view_before.to_world(c1));
+        let c2 = after.to_canvas(self.view.to_world(c1));
 
+        *self.config.zoom = zoom;
         self.config.pan.x += c1.x - c2.x;
         self.config.pan.y += c1.y - c2.y;
 
-        self.update_world = true;
+        self.s.update_view = true;
+        self.s.update_config = true;
         self.s.redraw = true;
         Ok(())
     }
 
-    fn resize_canvas(&self) {
-        let Some(sizer) = self.map_container.cast::<HtmlElement>() else {
+    fn resize_canvas(&mut self) {
+        let Some(sizer) = self.canvas_container.cast::<HtmlElement>() else {
             return;
         };
 
@@ -2459,11 +2451,19 @@ impl Map {
 
         canvas.set_width(sizer.client_width() as u32);
         canvas.set_height(sizer.client_height() as u32);
+
+        self.view = ViewTransform::new(
+            canvas.width(),
+            canvas.height(),
+            *self.config.zoom,
+            &self.config.pan,
+            &self.cache.extent,
+        );
     }
 
     fn setup_resizer(&mut self, ctx: &Context<Self>) -> Result<(), Error> {
         let sizer = self
-            .map_container
+            .canvas_container
             .cast::<HtmlElement>()
             .ok_or("missing canvas sizer element")?;
 
@@ -2676,16 +2676,14 @@ impl Map {
         let order = self.order.borrow();
         let objects = self.objects.borrow();
 
-        let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
         if let Some(image) = self.images.get_id(&self.cache.background) {
-            render::draw_background(&cx, &view, &self.cache.extent, &image)?;
+            render::draw_background(&cx, &self.view, &self.cache.extent, &image)?;
         }
 
         if self.cache.show_grid {
-            render::draw_grid(&cx, &view, &self.cache.extent, *self.config.zoom);
+            render::draw_grid(&cx, &self.view, &self.cache.extent, *self.config.zoom);
         }
 
         let selected = self.s.selected;
@@ -2720,10 +2718,10 @@ impl Map {
 
             match &render.kind {
                 RenderObjectKind::Static(this) => {
-                    render::draw_static(&cx, &view, &render.base, this, &self.images)?;
+                    render::draw_static(&cx, &self.view, &render.base, this, &self.images)?;
                 }
                 RenderObjectKind::Token(this) => {
-                    render::draw_token(&cx, &view, &render.base, this, &self.images)?;
+                    render::draw_token(&cx, &self.view, &render.base, this, &self.images)?;
 
                     if let Some(look_at) = this.look_at {
                         self.look_ats.push((*look_at, this.color));
@@ -2733,7 +2731,7 @@ impl Map {
         }
 
         for (look_at, color) in self.look_ats.drain(..) {
-            render::draw_look_at(&cx, &view, look_at, color)?;
+            render::draw_look_at(&cx, &self.view, look_at, color)?;
         }
 
         Ok(())

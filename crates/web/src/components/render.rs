@@ -1,9 +1,8 @@
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
 use api::{Canvas2, Color, Extent, RemoteId, Vec3};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
+use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
-use crate::components::map::Config;
 use crate::error::Error;
 use crate::images::{Icon, Images};
 use crate::objects::{LocalObject, ObjectKind};
@@ -117,35 +116,38 @@ pub(crate) struct RenderStatic<'a> {
 
 #[derive(Debug)]
 pub(crate) struct ViewTransform {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     pub(crate) scale: f64,
     center_x: f64,
     center_y: f64,
 }
 
 impl ViewTransform {
-    pub(crate) fn preview(canvas: &HtmlCanvasElement) -> Self {
+    pub(crate) fn simple(width: u32, height: u32, scale: f64) -> Self {
         Self {
-            scale: 50.0,
-            center_x: canvas.width() as f64 / 2.0,
-            center_y: canvas.height() as f64 / 2.0,
+            width,
+            height,
+            scale,
+            center_x: width as f64 / 2.0,
+            center_y: height as f64 / 2.0,
         }
     }
 
-    pub(crate) fn new(canvas: &HtmlCanvasElement, w: &Config, extent: &Extent) -> Self {
-        let width = canvas.width();
-        let height = canvas.height();
-
+    pub(crate) fn new(width: u32, height: u32, zoom: f32, pan: &Canvas2, extent: &Extent) -> Self {
         let canvas_min = width.min(height) as f64;
         let world_w = (extent.x.end - extent.x.start) as f64;
         let world_h = (extent.y.end - extent.y.start) as f64;
-        let scale = (canvas_min / world_w.max(world_h)) * *w.zoom as f64;
+        let scale = (canvas_min / world_w.max(world_h)) * zoom as f64;
 
         let world_mid_x = ((extent.x.start + extent.x.end) / 2.0) as f64;
         let world_mid_y = ((extent.y.start + extent.y.end) / 2.0) as f64;
-        let center_x = width as f64 / 2.0 + w.pan.x - world_mid_x * scale;
-        let center_y = height as f64 / 2.0 + w.pan.y - world_mid_y * scale;
+        let center_x = width as f64 / 2.0 + pan.x - world_mid_x * scale;
+        let center_y = height as f64 / 2.0 + pan.y - world_mid_y * scale;
 
         Self {
+            width,
+            height,
             scale,
             center_x,
             center_y,
@@ -439,13 +441,13 @@ pub(crate) fn draw_static(
 
     cx.save();
     cx.translate(pos.x, pos.y)?;
+    cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
         let Some(img) = images.get_id(&render.image) else {
             break 'draw false;
         };
 
-        cx.rotate(rotation)?;
         draw_image(cx, &img, hw, hh)?;
         true
     };

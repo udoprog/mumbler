@@ -1,5 +1,6 @@
 use core::fmt;
 use core::mem;
+use core::ops::Sub;
 use core::ops::{Deref, DerefMut};
 
 /// A wrapper around a value that tracks whether it has changed.
@@ -44,6 +45,44 @@ where
         }
 
         Some(mem::replace(&mut self.0, new))
+    }
+}
+
+pub(crate) trait FloatState: Copy + Sub<Output = Self> + PartialEq + PartialOrd {
+    const EPSILON: Self;
+
+    fn abs(self) -> Self;
+}
+
+impl FloatState for f32 {
+    const EPSILON: Self = f32::EPSILON;
+
+    fn abs(self) -> Self {
+        f32::abs(self)
+    }
+}
+
+impl FloatState for f64 {
+    const EPSILON: Self = f64::EPSILON;
+
+    fn abs(self) -> Self {
+        f64::abs(self)
+    }
+}
+
+impl<T> State<T>
+where
+    T: FloatState,
+{
+    /// Assign a new value if it differs from the current value by more than
+    /// `epsilon`.
+    pub(crate) fn update_epsilon(&mut self, new: T) -> bool {
+        if (self.0 - new).abs() <= T::EPSILON {
+            return false;
+        }
+
+        self.0 = new;
+        true
     }
 }
 

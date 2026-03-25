@@ -50,6 +50,10 @@ impl PublicKey {
 impl fmt::Display for PublicKey {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            return f.write_str("0");
+        }
+
         let this = Base64Display::new(&self.repr, &ENGINE);
         fmt::Display::fmt(&this, f)
     }
@@ -58,8 +62,7 @@ impl fmt::Display for PublicKey {
 impl fmt::Debug for PublicKey {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = Base64Display::new(&self.repr, &ENGINE);
-        fmt::Display::fmt(&this, f)
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -75,7 +78,7 @@ impl<'de> Deserialize<'de> for PublicKey {
 
             #[inline]
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "a peer identifier")
+                write!(f, "a public key")
             }
 
             #[inline]
@@ -91,7 +94,7 @@ impl<'de> Deserialize<'de> for PublicKey {
     }
 }
 
-/// An error raised by parsing an Id as a string.
+/// An error raised by parsing a public key as a string.
 pub struct ParsePublicKeyError {
     kind: ParsePublicKeyErrorKind,
 }
@@ -154,6 +157,10 @@ impl FromStr for PublicKey {
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "0" {
+            return Ok(Self::ZERO);
+        }
+
         let mut dest = [0u8; 32];
 
         let len = ENGINE.decode_slice(s, &mut dest[..])?;

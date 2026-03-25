@@ -11,7 +11,7 @@ use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
-use super::{ImageUpload, into_target, render};
+use super::{DynamicCanvas, ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
     ColorChanged(Event),
@@ -30,6 +30,9 @@ pub(crate) enum Msg {
     Update(Result<Packet<api::Update>, ws::Error>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     WidthChanged(Event),
+    ImageLoaded(Result<(), Error>),
+    CanvasLoaded(HtmlCanvasElement),
+    CanvasResized((i32, i32)),
 }
 
 #[derive(Properties, PartialEq)]
@@ -56,7 +59,7 @@ pub(crate) struct StaticSettings {
     public_key: PublicKey,
     log: log::Log,
     name: State<String>,
-    preview_canvas: NodeRef,
+    canvas: Option<HtmlCanvasElement>,
     preview_images: Images,
     ratio: State<Option<f32>>,
     state: ws::State,
@@ -108,8 +111,8 @@ impl Component for StaticSettings {
             public_key: PublicKey::ZERO,
             log,
             name: State::default(),
-            preview_canvas: NodeRef::default(),
-            preview_images: Images::new(),
+            canvas: None,
+            preview_images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             ratio: State::default(),
             state,
             _channel: ws::Request::new(),
@@ -236,8 +239,11 @@ impl Component for StaticSettings {
                 </div>
 
                 <div class="col-4 rows">
-                    <section class="token-preview">
-                        <canvas ref={self.preview_canvas.clone()} width="200" height="200" />
+                    <section class="preview">
+                        <DynamicCanvas
+                            onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onresize={ctx.link().callback(Msg::CanvasResized)}
+                            />
                     </section>
                 </div>
             </div>
@@ -267,7 +273,7 @@ impl StaticSettings {
                 let body = body.decode()?;
 
                 for (key, value) in body.object.props {
-                    self.update_property(key, value);
+                    self.update_property(ctx, key, value);
                 }
 
                 self.images = body.images;
@@ -299,7 +305,7 @@ impl StaticSettings {
             }
             Msg::ImageSelected(id) => {
                 *self.image = id;
-                self.load_preview_image();
+                self.load_preview_image(ctx);
                 self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
                 Ok(true)
             }
@@ -424,7 +430,7 @@ impl StaticSettings {
                             return Ok(false);
                         }
 
-                        self.update_property(key, value)
+                        self.update_property(ctx, key, value)
                     }
                     _ => return Ok(false),
                 };
@@ -443,14 +449,28 @@ impl StaticSettings {
                     _ => Ok(false),
                 }
             }
+            Msg::ImageLoaded(result) => {
+                result?;
+                self.redraw_preview()?;
+                Ok(false)
+            }
+            Msg::CanvasLoaded(canvas) => {
+                self.canvas = Some(canvas);
+                self.redraw_preview()?;
+                Ok(false)
+            }
+            Msg::CanvasResized((_, _)) => {
+                self.redraw_preview()?;
+                Ok(false)
+            }
         }
     }
 
-    fn update_property(&mut self, key: Key, value: Value) -> bool {
+    fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
                 if self.image.update(value.as_id()) {
-                    self.load_preview_image();
+                    self.load_preview_image(ctx);
                     true
                 } else {
                     false
@@ -465,17 +485,18 @@ impl StaticSettings {
         }
     }
 
-    fn load_preview_image(&mut self) {
+    fn load_preview_image(&mut self, ctx: &Context<Self>) {
         self.preview_images.clear();
 
         if !self.image.is_zero() {
             let id = RemoteId::local(*self.image);
-            self.preview_images.load_id(&id);
+            self.preview_images
+                .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
         }
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
-        let Some(canvas) = self.preview_canvas.cast::<HtmlCanvasElement>() else {
+        let Some(canvas) = self.canvas.as_ref() else {
             return Ok(());
         };
 
@@ -493,17 +514,23 @@ impl StaticSettings {
             selected: false,
         };
 
+        let width = canvas.width();
+        let height = canvas.height();
+
         let render = render::RenderStatic {
             transform: &api::Transform::origin(),
             image: RemoteId::local(*self.image),
             color: self.color.unwrap_or_else(Color::neutral),
-            width: (*self.width).min(*self.height * 3.0),
-            height: (*self.height).min(*self.width * 3.0),
+            width: *self.width,
+            height: *self.height,
         };
 
-        let view = ViewTransform::preview(&canvas);
+        let min = width.min(height) as f32;
 
-        cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
+        let scale = (min - min * 0.2) / self.width.max(*self.height);
+        let view = ViewTransform::simple(width, height, scale as f64);
+
+        cx.clear_rect(0.0, 0.0, width as f64, height as f64);
 
         render::draw_static(&cx, &view, &base, &render, &self.preview_images)?;
         Ok(())

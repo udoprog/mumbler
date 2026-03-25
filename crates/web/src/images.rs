@@ -8,6 +8,7 @@ use api::{PeerId, RemoteId};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::HtmlImageElement;
+use yew::Callback;
 
 use crate::error::Error;
 
@@ -32,12 +33,12 @@ pub(crate) struct Images {
 
 impl Images {
     /// Construct a new image.
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(initial: Callback<Result<(), Error>>) -> Self {
         let this = Self {
             inner: Rc::new(RefCell::new(Inner::default())),
         };
 
-        this.load_icon(Icon::EyeSlashDanger);
+        this.load_icon(Icon::EyeSlashDanger, initial.clone());
         this
     }
 
@@ -63,30 +64,32 @@ impl Images {
         inner.ids.clear();
     }
 
-    pub(crate) fn load_id(&self, id: &RemoteId) {
+    pub(crate) fn load_id(&self, id: &RemoteId, load: Callback<Result<(), Error>>) {
         if id.is_zero() {
             return;
         }
 
         match self.load_id_image(id) {
-            Ok(state) => {
+            Ok(mut state) => {
+                state.load = load;
                 let mut inner = self.inner.borrow_mut();
                 inner.ids.insert(*id, state);
             }
             Err(error) => {
-                tracing::error!(?id, %error, "creating image element");
+                load.emit(Err(error));
             }
         }
     }
 
-    pub(crate) fn load_icon(&self, icon: Icon) {
+    pub(crate) fn load_icon(&self, icon: Icon, load: Callback<Result<(), Error>>) {
         match self.load_icon_image(icon) {
-            Ok(state) => {
+            Ok(mut state) => {
+                state.load = load;
                 let mut inner = self.inner.borrow_mut();
                 inner.icons.insert(icon, state);
             }
             Err(error) => {
-                tracing::error!(?icon, %error, "creating image element");
+                load.emit(Err(error));
             }
         }
     }
@@ -96,15 +99,17 @@ impl Images {
         let inner = self.inner.borrow();
         let state = inner.ids.get(id)?;
 
-        if state.load.is_some() {
+        if state._load.is_some() {
             return None;
         }
 
-        if !state.image.complete() || state.image.natural_width() == 0 {
+        let image = state.image.as_ref()?;
+
+        if !image.complete() || image.natural_width() == 0 {
             return None;
         }
 
-        Some(state.image.clone())
+        Some(image.clone())
     }
 
     /// Get an icon by id.
@@ -112,15 +117,17 @@ impl Images {
         let inner = self.inner.borrow();
         let state = inner.icons.get(&icon)?;
 
-        if state.load.is_some() {
+        if state._load.is_some() {
             return None;
         }
 
-        if !state.image.complete() || state.image.natural_width() == 0 {
+        let image = state.image.as_ref()?;
+
+        if !image.complete() || image.natural_width() == 0 {
             return None;
         }
 
-        Some(state.image.clone())
+        Some(image.clone())
     }
 
     fn load_id_image(&self, id: &RemoteId) -> Result<ImageState, Error> {
@@ -155,9 +162,10 @@ impl Images {
         img.set_src(&format!("/api/image/{}/{}", id.peer_id, id.id));
 
         Ok(ImageState {
-            image: img,
-            load: Some(load),
-            error: Some(error),
+            image: Some(img),
+            _load: Some(load),
+            _error: Some(error),
+            load: Callback::noop(),
         })
     }
 
@@ -191,17 +199,19 @@ impl Images {
         img.set_src(&format!("/static/icons/{icon}.svg"));
 
         Ok(ImageState {
-            image: img,
-            load: Some(load),
-            error: Some(error),
+            image: Some(img),
+            _load: Some(load),
+            _error: Some(error),
+            load: Callback::noop(),
         })
     }
 }
 
 struct ImageState {
-    image: HtmlImageElement,
-    load: Option<Closure<dyn FnMut()>>,
-    error: Option<Closure<dyn FnMut()>>,
+    image: Option<HtmlImageElement>,
+    _load: Option<Closure<dyn FnMut()>>,
+    _error: Option<Closure<dyn FnMut()>>,
+    load: Callback<Result<(), Error>>,
 }
 
 #[derive(Default)]
@@ -214,10 +224,13 @@ impl Inner {
     fn loaded_id(&mut self, id: RemoteId) {
         tracing::debug!(?id, "loaded");
 
-        if let Some(s) = self.ids.get_mut(&id) {
-            s.load = None;
-            s.error = None;
-        }
+        let Some(s) = self.ids.get_mut(&id) else {
+            return;
+        };
+
+        s._load = None;
+        s._error = None;
+        s.load.emit(Ok(()));
     }
 
     fn errored_id(&mut self, id: RemoteId, error: Error) {
@@ -229,8 +242,8 @@ impl Inner {
         tracing::debug!(?icon, "loaded");
 
         if let Some(s) = self.icons.get_mut(&icon) {
-            s.load = None;
-            s.error = None;
+            s._load = None;
+            s._error = None;
         }
     }
 

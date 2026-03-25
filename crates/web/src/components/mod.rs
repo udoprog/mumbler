@@ -54,6 +54,9 @@ use self::object_list::ObjectList;
 mod help_modal;
 use self::help_modal::HelpModal;
 
+mod dynamic_canvas;
+use self::dynamic_canvas::DynamicCanvas;
+
 use yew::prelude::*;
 
 const UNKNOWN_ROOM: &str = "Unknown Room";

@@ -60,6 +60,10 @@ impl Id {
 impl fmt::Display for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            return f.write_str("0");
+        }
+
         let bytes = self.repr.to_le_bytes();
         let this = Base64Display::new(&bytes, &ENGINE);
         fmt::Display::fmt(&this, f)
@@ -69,9 +73,7 @@ impl fmt::Display for Id {
 impl fmt::Debug for Id {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.repr.to_le_bytes();
-        let this = Base64Display::new(&bytes, &ENGINE);
-        fmt::Display::fmt(&this, f)
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -136,6 +138,10 @@ impl FromStr for Id {
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "0" {
+            return Ok(Self::ZERO);
+        }
+
         let mut dest = [0u8; 4];
 
         let len = ENGINE.decode_slice(s, &mut dest[..])?;
