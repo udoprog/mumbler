@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Color, Extent, Key, Pan, PeerId, RemoteId, RemoteUpdateBody, StableId, Type, UpdateBody, Value,
-    Vec3,
+    Canvas2, Color, Extent, Key, PeerId, RemoteId, RemoteUpdateBody, StableId, Type, UpdateBody,
+    Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -17,7 +17,7 @@ use web_sys::{
 };
 use yew::prelude::*;
 
-use crate::components::render::{Canvas2, RenderObject, RenderObjectKind};
+use crate::components::render::{RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::hierarchy::Hierarchy;
@@ -318,7 +318,7 @@ impl Default for Cache {
 
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
-    pub(crate) pan: State<Pan>,
+    pub(crate) pan: State<Canvas2>,
     pub(crate) mumble_object: State<RemoteId>,
     pub(crate) mumble_follow: State<bool>,
     pub(crate) room: State<StableId>,
@@ -347,7 +347,9 @@ impl Config {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
-            Key::PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
+            Key::PAN => self
+                .pan
+                .update(value.as_canvas2().unwrap_or_else(Canvas2::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
             Key::ROOM => self.room.update(*value.as_stable_id()),
@@ -368,7 +370,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             zoom: State::new(2.0),
-            pan: State::new(Pan::zero()),
+            pan: State::new(Canvas2::zero()),
             mumble_object: State::new(RemoteId::ZERO),
             mumble_follow: State::new(false),
             room: State::new(StableId::ZERO),
@@ -422,12 +424,8 @@ impl Drop for DropImage {
 
 /// State for the right-click context menu.
 struct ContextMenu {
-    /// Object the menu was opened for.
     object_id: RemoteId,
-    /// CSS left position.
-    x: f64,
-    /// CSS top position.
-    y: f64,
+    position: Canvas2,
 }
 
 #[derive(Default)]
@@ -483,7 +481,7 @@ pub(crate) struct Map {
     object_requests: HashMap<RemoteId, ObjectRequests>,
     objects: Objects,
     order: Hierarchy,
-    pan_anchor: Option<(f64, f64)>,
+    pan_anchor: Option<Canvas2>,
     peers: Peers,
     cache: Cache,
     action: Option<Action>,
@@ -1093,7 +1091,7 @@ impl Map {
         };
 
         let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-        let world_pos = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let world_pos = ev.offset();
         let world_pos = t.to_world(world_pos);
 
         let Some(dt) = ev.data_transfer() else {
@@ -2216,7 +2214,7 @@ impl Map {
 
         let t = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
-        let w = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let w = ev.offset();
         let w = t.to_world(w);
 
         let objects = self.objects.borrow();
@@ -2236,8 +2234,7 @@ impl Map {
             self.s.selected = object_id;
             self.s.context_menu = Some(ContextMenu {
                 object_id,
-                x: ev.offset_x() as f64,
-                y: ev.offset_y() as f64,
+                position: ev.offset(),
             });
         } else {
             self.s.context_menu = None;
@@ -2253,7 +2250,7 @@ impl Map {
             return None;
         }
 
-        let style = format!("left: {}px; top: {}px;", menu.x, menu.y);
+        let style = format!("left: {}px; top: {}px;", menu.position.x, menu.position.y);
 
         let objects = self.objects.borrow();
 
@@ -2321,7 +2318,7 @@ impl Map {
                 };
 
                 let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-                let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+                let e = ev.offset();
                 let e = view.to_world(e);
 
                 self.mouse = Some(e);
@@ -2342,7 +2339,7 @@ impl Map {
                 };
 
                 let view = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
-                let e = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+                let e = ev.offset();
                 let e = view.to_world(e);
 
                 self.mouse = Some(e);
@@ -2350,7 +2347,7 @@ impl Map {
             }
             MIDDLE_MOUSE_BUTTON => {
                 ev.prevent_default();
-                self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
+                self.pan_anchor = Some(ev.client());
             }
             _ => {}
         }
@@ -2367,16 +2364,15 @@ impl Map {
 
         let v = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
-        if let Some((ax, ay)) = self.pan_anchor {
-            let dx = ev.client_x() as f64 - ax;
-            let dy = ev.client_y() as f64 - ay;
-            *self.config.pan = self.config.pan.add(dx, dy);
-            self.pan_anchor = Some((ev.client_x() as f64, ev.client_y() as f64));
+        if let Some(a) = self.pan_anchor {
+            let d = ev.client() - a;
+            *self.config.pan = *self.config.pan + d;
+            self.pan_anchor = Some(ev.client());
             self.update_world = true;
             self.s.redraw = true;
         }
 
-        let m = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let m = ev.offset();
         let m = v.to_world(m);
 
         self.mouse = Some(m);
@@ -2435,7 +2431,7 @@ impl Map {
         *self.config.zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
         let view_after = ViewTransform::new(&canvas, &self.config, &self.cache.extent);
 
-        let c1 = Canvas2::new(ev.offset_x() as f64, ev.offset_y() as f64);
+        let c1 = ev.offset();
         let c2 = view_after.to_canvas(view_before.to_world(c1));
 
         self.config.pan.x += c1.x - c2.x;
@@ -2721,7 +2717,6 @@ impl Map {
             }
 
             render.base.selected = selected;
-            render.base.player = o.id.is_local();
 
             match &render.kind {
                 RenderObjectKind::Static(this) => {
@@ -2742,6 +2737,30 @@ impl Map {
         }
 
         Ok(())
+    }
+}
+
+trait MouseEventExt {
+    /// The offset read-only property of the MouseEvent interface provides the
+    /// offset in the coordinate of the mouse pointer between that event and the
+    /// padding edge of the target node.
+    fn offset(&self) -> Canvas2;
+
+    /// The client read-only property of the MouseEvent interface provides the
+    /// coordinate within the application's viewport at which the event occurred
+    /// (as opposed to the coordinate within the page).
+    fn client(&self) -> Canvas2;
+}
+
+impl MouseEventExt for MouseEvent {
+    #[inline]
+    fn offset(&self) -> Canvas2 {
+        Canvas2::new(self.offset_x() as f64, self.offset_y() as f64)
+    }
+
+    #[inline]
+    fn client(&self) -> Canvas2 {
+        Canvas2::new(self.client_x() as f64, self.client_y() as f64)
     }
 }
 

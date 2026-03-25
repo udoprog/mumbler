@@ -392,7 +392,6 @@ impl TokenSettings {
             name: self.name.as_str(),
             visibility: Visibility::Remote,
             selected: false,
-            player: true,
         };
 
         let render = render::RenderToken {

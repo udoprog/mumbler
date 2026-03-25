@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    Color, ContentType, Extent, Id, Key, Pan, PeerId, Role, StableId, Transform, Type, Value,
+    Canvas2, Color, ContentType, Extent, Id, Key, PeerId, Role, StableId, Transform, Type, Value,
     ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
@@ -21,8 +21,8 @@ use tokio::task;
 macro_rules! value_kind_switch {
     ($self:expr, $value:expr, ($($args:expr),*), $add:ident, $delete:ident) => {
         match $value.into_kind() {
-            ValueKind::String(string) => {
-                $self.$add($($args),*, string).await?;
+            ValueKind::String(value) => {
+                $self.$add($($args),*, value).await?;
             }
             ValueKind::Float(value) => {
                 $self.$add($($args),*, value).await?;
@@ -62,11 +62,11 @@ macro_rules! value_kind_switch {
             ValueKind::Extent(extent) => {
                 $self.$add($($args),*, extent).await?;
             }
-            ValueKind::Pan(pan) => {
-                $self.$add($($args),*, pan).await?;
+            ValueKind::Canvas2(value) => {
+                $self.$add($($args),*, value).await?;
             }
-            ValueKind::PeerId(peer_id) => {
-                $self.$add($($args),*, peer_id).await?;
+            ValueKind::PeerId(value) => {
+                $self.$add($($args),*, value).await?;
             }
             ValueKind::Empty => {
                 $self.$delete($($args),*).await?;
@@ -449,7 +449,7 @@ fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
         ValueType::Float => Value::from(descriptive::from_slice::<f64>(blog)?),
         ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
         ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
-        ValueType::Pan => Value::from(descriptive::from_slice::<Pan>(blog)?),
+        ValueType::Canvas2 => Value::from(descriptive::from_slice::<Canvas2>(blog)?),
         ValueType::PeerId => Value::from(descriptive::from_slice::<PeerId>(blog)?),
         ValueType::StableId => Value::from(descriptive::from_slice::<StableId>(blog)?),
         ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),

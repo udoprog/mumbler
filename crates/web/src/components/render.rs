@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
-use api::{Color, Extent, RemoteId, Vec3};
+use api::{Canvas2, Color, Extent, RemoteId, Vec3};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 
 use crate::components::map::Config;
@@ -38,7 +38,6 @@ pub(crate) struct RenderBase<'a> {
     pub(crate) name: &'a str,
     pub(crate) visibility: Visibility,
     pub(crate) selected: bool,
-    pub(crate) player: bool,
 }
 
 pub(crate) struct RenderObject<'a> {
@@ -81,7 +80,6 @@ impl<'a> RenderObject<'a> {
                 name: data.name.as_str(),
                 visibility: data.visibility().max(visibility(*data.group)),
                 selected: false,
-                player: false,
             },
             kind,
         })
@@ -115,20 +113,6 @@ pub(crate) struct RenderStatic<'a> {
     pub(crate) color: Color,
     pub(crate) width: f32,
     pub(crate) height: f32,
-}
-
-/// Two point coordinates in canvas space.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Canvas2 {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-}
-
-impl Canvas2 {
-    #[inline]
-    pub(crate) fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
-    }
 }
 
 #[derive(Debug)]
@@ -312,7 +296,7 @@ fn draw_hidden_badge(
 
     cx.save();
     cx.translate(x, y)?;
-    draw_image_at_center(cx, &img, width, width)?;
+    draw_image(cx, &img, width, width)?;
     cx.restore();
     Ok(())
 }
@@ -395,9 +379,7 @@ pub(crate) fn draw_token(
         cx.fill();
     }
 
-    let front = if base.player
-        && let Some(m) = render.arrow_target
-    {
+    let front = if let Some(m) = render.arrow_target {
         render.transform.position.direction_to(*m)
     } else {
         render.transform.front
@@ -457,14 +439,14 @@ pub(crate) fn draw_static(
 
     cx.save();
     cx.translate(pos.x, pos.y)?;
-    cx.rotate(rotation)?;
 
     let image_drawn = 'draw: {
         let Some(img) = images.get_id(&render.image) else {
             break 'draw false;
         };
 
-        draw_image_at_center(cx, &img, hw, hh)?;
+        cx.rotate(rotation)?;
+        draw_image(cx, &img, hw, hh)?;
         true
     };
 
@@ -489,7 +471,7 @@ pub(crate) fn draw_static(
     Ok(())
 }
 
-fn draw_image_at_center(
+fn draw_image(
     cx: &CanvasRenderingContext2d,
     img: &HtmlImageElement,
     hw: f64,

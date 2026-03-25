@@ -20,6 +20,7 @@ pub use self::value::{Value, ValueKind, ValueType};
 
 use core::fmt;
 use core::ops::{Add, Sub};
+
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
 
@@ -98,7 +99,7 @@ crate::macros::keys! {
         SCALE: Float = 8;
         REMOTE_TLS: Boolean = 11;
         ZOOM: Float = 9;
-        PAN: Pan = 10;
+        PAN: Canvas2 = 10;
         ROOM_EXTENT: Extent = 12;
         /// The object which is used for mumble link.
         MUMBLE_OBJECT: Id = 14;
@@ -361,15 +362,15 @@ impl Extent {
     }
 }
 
-/// Represents a 2D pan offset in canvas pixels.
+/// Represents a 2 dimensional pixel position in canvas space.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Encode, Decode)]
 #[musli(crate = musli_core)]
-pub struct Pan {
+pub struct Canvas2 {
     pub x: f64,
     pub y: f64,
 }
 
-impl Pan {
+impl Canvas2 {
     #[inline]
     pub const fn new(x: f64, y: f64) -> Self {
         Self { x, y }
@@ -379,14 +380,23 @@ impl Pan {
     pub const fn zero() -> Self {
         Self::new(0.0, 0.0)
     }
+}
 
-    /// Add a delta to the pan offset.
+impl Add for Canvas2 {
+    type Output = Self;
+
     #[inline]
-    pub fn add(&self, dx: f64, dy: f64) -> Self {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-        }
+    fn add(self, rhs: Self) -> Self {
+        Self::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl Sub for Canvas2 {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(self.x - rhs.x, self.y - rhs.y)
     }
 }
 

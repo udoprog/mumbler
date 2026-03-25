@@ -2,7 +2,7 @@ use core::fmt;
 
 use musli_core::{Decode, Encode};
 
-use crate::{Color, Extent, Id, Pan, PeerId, StableId, Transform, Vec3};
+use crate::{Canvas2, Color, Extent, Id, PeerId, StableId, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
 #[musli(crate = musli_core)]
@@ -14,7 +14,7 @@ pub enum ValueType {
     Float,
     Id,
     Integer,
-    Pan,
+    Canvas2,
     PeerId,
     StableId,
     String,
@@ -120,9 +120,9 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_pan(&self) -> Option<Pan> {
+    pub fn as_canvas2(&self) -> Option<Canvas2> {
         match &self.kind {
-            ValueKind::Pan(pan) => Some(*pan),
+            ValueKind::Canvas2(pan) => Some(*pan),
             _ => None,
         }
     }
@@ -231,7 +231,7 @@ impl fmt::Debug for Value {
             ValueKind::Float(value) => value.fmt(f),
             ValueKind::Id(value) => value.fmt(f),
             ValueKind::Integer(value) => value.fmt(f),
-            ValueKind::Pan(value) => value.fmt(f),
+            ValueKind::Canvas2(value) => value.fmt(f),
             ValueKind::PeerId(value) => value.fmt(f),
             ValueKind::StableId(value) => value.fmt(f),
             ValueKind::String(value) => value.fmt(f),
@@ -252,7 +252,7 @@ pub enum ValueKind {
     Float(f64),
     Id(Id),
     Integer(i64),
-    Pan(Pan),
+    Canvas2(Canvas2),
     PeerId(PeerId),
     StableId(StableId),
     String(String),
@@ -361,11 +361,11 @@ impl From<Vec3> for Value {
     }
 }
 
-impl From<Pan> for Value {
+impl From<Canvas2> for Value {
     #[inline]
-    fn from(value: Pan) -> Self {
+    fn from(value: Canvas2) -> Self {
         Self {
-            kind: ValueKind::Pan(value),
+            kind: ValueKind::Canvas2(value),
         }
     }
 }

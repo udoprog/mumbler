@@ -491,7 +491,6 @@ impl StaticSettings {
             name: self.name.as_str(),
             visibility: Visibility::Remote,
             selected: false,
-            player: false,
         };
 
         let render = render::RenderStatic {
