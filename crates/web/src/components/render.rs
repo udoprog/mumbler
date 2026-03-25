@@ -6,7 +6,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 use crate::components::map::Config;
 use crate::error::Error;
 use crate::images::{Icon, Images};
-use crate::objects::{ObjectData, ObjectKind};
+use crate::objects::{LocalObject, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
@@ -35,7 +35,7 @@ impl Visibility {
 }
 
 pub(crate) struct RenderBase<'a> {
-    pub(crate) name: Option<&'a str>,
+    pub(crate) name: &'a str,
     pub(crate) visibility: Visibility,
     pub(crate) selected: bool,
     pub(crate) player: bool,
@@ -53,7 +53,7 @@ pub(crate) enum RenderObjectKind<'a> {
 
 impl<'a> RenderObject<'a> {
     pub(crate) fn from_data(
-        data: &'a ObjectData,
+        data: &'a LocalObject,
         arrow_target: Option<&'a Vec3>,
         visibility: impl FnOnce(RemoteId) -> Visibility,
     ) -> Option<Self> {
@@ -78,7 +78,7 @@ impl<'a> RenderObject<'a> {
 
         Some(Self {
             base: RenderBase {
-                name: data.name.as_deref(),
+                name: data.name.as_str(),
                 visibility: data.visibility().max(visibility(*data.group)),
                 selected: false,
                 player: false,
@@ -411,7 +411,7 @@ pub(crate) fn draw_token(
         draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
     }
 
-    if let Some(name) = base.name {
+    if !base.name.is_empty() {
         let font_size = (token_radius * 0.6).max(10.0);
         cx.set_font(&format!("bold {font_size}px sans-serif"));
         cx.set_text_align("center");
@@ -428,7 +428,7 @@ pub(crate) fn draw_token(
         cx.set_shadow_color("rgba(0,0,0,0.8)");
         cx.set_shadow_blur(3.0);
         cx.set_fill_style_str("#ffffff");
-        cx.fill_text(name, pos.x, name_y)?;
+        cx.fill_text(base.name, pos.x, name_y)?;
         cx.set_shadow_blur(0.0);
     }
 

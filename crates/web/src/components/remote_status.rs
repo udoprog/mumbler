@@ -214,7 +214,7 @@ impl RemoteStatus {
 
     fn update_config(&mut self, key: Key, value: Value) -> Result<bool, Error> {
         match key {
-            Key::REMOTE_ENABLED => Ok(self.enabled.update(value.as_bool().unwrap_or_default())),
+            Key::REMOTE_ENABLED => Ok(self.enabled.update(value.as_bool())),
             _ => Ok(false),
         }
     }

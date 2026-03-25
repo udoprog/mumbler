@@ -98,7 +98,7 @@ impl Component for ObjectList {
             let target = o.id;
             let selected = ctx.props().selected == Some(target);
 
-            let label = o.name().unwrap_or("");
+            let label = o.name();
 
             let onclick = ctx.props().onselect.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
@@ -205,7 +205,7 @@ impl Component for ObjectList {
                         target
                     });
 
-                    let name = if is_hidden { "link-slash" } else { "link" };
+                    let name = if is_hidden { "eye-slash" } else { "eye" };
 
                     html! {
                         <button {class} {title} {onclick}>
@@ -237,11 +237,9 @@ impl Component for ObjectList {
                             target
                         });
 
-                    let name = if is_local_hidden { "eye-slash" } else { "eye" };
-
                     html! {
                         <button {class} {title} {onclick}>
-                            <Icon {name} />
+                            <Icon name="no-symbol" />
                         </button>
                     }
                 };

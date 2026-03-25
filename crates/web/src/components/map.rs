@@ -124,6 +124,8 @@ struct Inner {
     _toggle_mumble_request: ws::Request,
     redraw: bool,
     update_cache: bool,
+    move_target: HashMap<RemoteId, Vec3>,
+    arrow_target: HashMap<RemoteId, Vec3>,
 }
 
 impl Inner {
@@ -132,12 +134,13 @@ impl Inner {
             return;
         };
 
-        let Some(transform) = o.data.as_transform_mut() else {
+        let Some(transform) = o.as_transform_mut() else {
             return;
         };
 
-        o.arrow_target = Some(m);
         transform.front = p.direction_to(m);
+
+        self.arrow_target.insert(o.id, m);
         self.transforms.insert(o.id);
     }
 
@@ -196,7 +199,7 @@ impl Inner {
                         self.transforms.insert(o.id);
                     }
 
-                    o.arrow_target = Some(m);
+                    self.arrow_target.insert(r.object_id, m);
                 } else if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(Vec3::new(m.x, 0.0, m.z));
                     self.look_at.insert(o.id);
@@ -219,7 +222,7 @@ impl Inner {
                     self.transforms.insert(o.id);
                     self.redraw = true;
                 } else {
-                    o.move_target = Some(m);
+                    self.move_target.insert(t.object_id, m);
                     self.redraw = true;
                 }
             }
@@ -292,7 +295,10 @@ impl Cache {
             show_grid: *room.show_grid,
             background: RemoteId::new(room_id.peer_id, *room.background),
             room_icon,
-            room_name: o.name().unwrap_or(UNKNOWN_ROOM).to_owned(),
+            room_name: match o.name() {
+                "" => UNKNOWN_ROOM.to_string(),
+                name => name.to_string(),
+            },
         };
     }
 }
@@ -343,11 +349,9 @@ impl Config {
             Key::WORLD_SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
-            Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool().unwrap_or(false)),
+            Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
             Key::ROOM => self.room.update(*value.as_stable_id()),
-            Key::PEER_NAME => self
-                .name
-                .update(value.as_str().unwrap_or_default().to_owned()),
+            Key::PEER_NAME => self.name.update(value.as_str().to_owned()),
             _ => false,
         }
     }
@@ -703,9 +707,7 @@ impl Component for Map {
             self.s.redraw = false;
         }
 
-        let objects = self.objects.borrow();
-
-        if self.animation_interval.is_none() && objects.values().any(|o| o.move_target.is_some()) {
+        if self.animation_interval.is_none() && !self.s.move_target.is_empty() {
             let link = ctx.link().clone();
 
             let interval = Interval::new(1000 / ANIMATION_FPS, move || {
@@ -826,7 +828,7 @@ impl Component for Map {
             let hidden = {
                 let is_hidden = o.map(|o| o.is_hidden()).unwrap_or_default();
 
-                let hidden_icon = if is_hidden { "link-slash" } else { "link" };
+                let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
 
                 let class = classes! {
                     "btn", "square",
@@ -855,13 +857,7 @@ impl Component for Map {
             let local_hidden = {
                 let is_local_hidden = o.map(|o| o.is_local_hidden()).unwrap_or_default();
 
-                let name = if is_local_hidden { "eye-slash" } else { "eye" };
-
-                let title = if is_local_hidden {
-                    "Hidden from everyone"
-                } else {
-                    "Visible to everyone"
-                };
+                let title = if is_local_hidden { "Hidden" } else { "Visible" };
 
                 let class = classes! {
                     "btn", "square",
@@ -876,7 +872,7 @@ impl Component for Map {
 
                 html! {
                     <button {class} {title} {onclick}>
-                        <Icon {name} />
+                        <Icon name="no-symbol" />
                     </button>
                 }
             };
@@ -1474,19 +1470,17 @@ impl Map {
             Msg::ConfirmRemove(id) => {
                 self.s.context_menu = None;
 
-                let Some(ty) = self.objects.borrow().get(id).map(|o| o.ty()) else {
+                let objects = self.objects.borrow();
+
+                let Some(o) = objects.get(id) else {
                     return Ok(false);
                 };
 
-                let name = self
-                    .objects
-                    .borrow()
-                    .get(id)
-                    .and_then(|o| o.name())
-                    .unwrap_or("unnamed")
-                    .to_string();
-
-                self.s.modal = Some(Modal::Remove { ty, id, name });
+                self.s.modal = Some(Modal::Remove {
+                    ty: o.ty(),
+                    id,
+                    name: o.display().to_owned(),
+                });
                 Ok(true)
             }
             Msg::CloseModal => {
@@ -1661,7 +1655,7 @@ impl Map {
                             return Ok(false);
                         };
 
-                        let new = value.as_bytes().unwrap_or_default().to_vec();
+                        let new = value.as_bytes().to_vec();
 
                         let Some(old) = sort.replace(new) else {
                             return Ok(false);
@@ -1723,6 +1717,9 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 
+        self.s.arrow_target.remove(&id);
+        self.s.move_target.remove(&id);
+
         let Some(o) = objects.remove(id) else {
             return false;
         };
@@ -1760,7 +1757,7 @@ impl Map {
                     return Ok(false);
                 };
 
-                o.arrow_target = None;
+                self.s.arrow_target.remove(&r.object_id);
 
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = None;
@@ -1850,7 +1847,7 @@ impl Map {
             return;
         };
 
-        o.arrow_target = None;
+        self.s.arrow_target.remove(&id);
 
         let is_static = o.is_static();
 
@@ -1864,7 +1861,7 @@ impl Map {
             // position on move.
             transform.position - m
         } else {
-            o.move_target = Some(m);
+            self.s.move_target.insert(id, m);
             m
         };
 
@@ -1901,7 +1898,7 @@ impl Map {
 
         let initial_distance = position.dist(m).max(0.01);
 
-        o.move_target = None;
+        self.s.move_target.remove(&self.s.selected);
 
         let action = self.action.insert(Action::Scale(Scale {
             object_id: self.s.selected,
@@ -1981,7 +1978,9 @@ impl Map {
                     return Ok(false);
                 }
 
-                let Some(ty) = self.objects.borrow().get(self.s.selected).map(|o| o.ty()) else {
+                let objects = self.objects.borrow();
+
+                let Some(o) = objects.get(self.s.selected) else {
                     return Ok(false);
                 };
 
@@ -1989,19 +1988,12 @@ impl Map {
 
                 self.s.context_menu = None;
 
-                let name = self
-                    .objects
-                    .borrow()
-                    .get(self.s.selected)
-                    .and_then(|o| o.name())
-                    .unwrap_or("unnamed")
-                    .to_string();
-
                 self.s.modal = Some(Modal::Remove {
-                    ty,
+                    ty: o.ty(),
                     id: self.s.selected,
-                    name,
+                    name: o.display().to_owned(),
                 });
+
                 Ok(true)
             }
             "Enter" => {
@@ -2114,14 +2106,14 @@ impl Map {
         for o in objects.values_mut() {
             let id = o.id;
 
-            let Some((transform, look_at, speed)) = o.data.as_interpolate_mut() else {
+            let Some((transform, look_at, speed)) = o.as_interpolate_mut() else {
                 continue;
             };
 
             let p = transform.position;
 
             'move_done: {
-                let (Some(target), Some(speed)) = (&o.move_target, speed) else {
+                let (Some(target), Some(speed)) = (self.s.move_target.get(&id), speed) else {
                     break 'move_done;
                 };
 
@@ -2132,7 +2124,7 @@ impl Map {
 
                 if distance < 0.01 {
                     transform.position = *target;
-                    o.move_target = None;
+                    self.s.move_target.remove(&id);
                     self.s.transforms.insert(id);
                     break 'move_done;
                 }
@@ -2158,13 +2150,14 @@ impl Map {
                     break 'look_done;
                 };
 
-                o.arrow_target = Some(*t);
                 transform.front = p.direction_to(*t);
+
+                self.s.arrow_target.insert(id, *t);
                 self.s.transforms.insert(id);
             };
         }
 
-        if objects.values().all(|o| o.move_target.is_none()) {
+        if self.s.move_target.is_empty() {
             self.animation_interval = None;
         }
     }
@@ -2264,7 +2257,7 @@ impl Map {
         let o = objects.get(object_id)?;
 
         let is_hidden = o.is_hidden();
-        let hidden_icon = if is_hidden { "link-slash" } else { "link" };
+        let hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
         let hidden_label = if is_hidden { "Show" } else { "Hide" };
         let local_hidden_icon = if is_hidden { "eye-slash" } else { "eye" };
         let local_hidden_label = if is_hidden {
@@ -2400,15 +2393,8 @@ impl Map {
         match ev.button() {
             LEFT_MOUSE_BUTTON => {
                 ev.prevent_default();
-
                 update = self.finalize_action(ctx);
-
-                let mut objects = self.objects.borrow_mut();
-
-                if let Some(o) = objects.get_mut(self.s.selected) {
-                    o.arrow_target = None;
-                    self.s.redraw = true;
-                }
+                self.s.redraw |= self.s.arrow_target.remove(&self.s.selected).is_some();
             }
             MIDDLE_MOUSE_BUTTON => {
                 self.pan_anchor = None;
@@ -2425,11 +2411,7 @@ impl Map {
         self.s.redraw |= self.action.take().is_some();
         self.pan_anchor = None;
         self.mouse = None;
-
-        if let Some(o) = self.objects.borrow_mut().get_mut(self.s.selected) {
-            self.s.redraw |= o.arrow_target.take().is_some();
-        }
-
+        self.s.redraw |= self.s.arrow_target.remove(&self.s.selected).is_some();
         Ok(false)
     }
 
@@ -2699,8 +2681,8 @@ impl Map {
 
         cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-        if let Some(img) = self.images.get_id(&self.cache.background) {
-            render::draw_background(&cx, &view, &self.cache.extent, &img)?;
+        if let Some(image) = self.images.get_id(&self.cache.background) {
+            render::draw_background(&cx, &view, &self.cache.extent, &image)?;
         }
 
         if self.cache.show_grid {
@@ -2710,34 +2692,33 @@ impl Map {
         let selected = self.s.selected;
 
         for id in order.walk().rev() {
-            let Some(data) = objects.get(id) else {
+            let Some(o) = objects.get(id) else {
                 continue;
             };
 
-            let selected = selected == data.id;
-
-            let arrow_target = selected.then_some(data.arrow_target.as_ref()).flatten();
+            let selected = selected == o.id;
+            let arrow_target = selected.then(|| self.s.arrow_target.get(&id)).flatten();
 
             let Some(mut render) =
-                RenderObject::from_data(data, arrow_target, |id| objects.visibility(id))
+                RenderObject::from_data(o, arrow_target, |id| objects.visibility(id))
             else {
                 continue;
             };
 
             if render.base.visibility.is_none()
-                || !data.id.is_local() && !render.base.visibility.is_remote()
+                || !o.id.is_local() && !render.base.visibility.is_remote()
             {
                 continue;
             }
 
             if let Some(Action::Scale(s)) = &self.action
-                && s.object_id == data.id
+                && s.object_id == o.id
             {
                 render.apply_scale(s.scale);
             }
 
             render.base.selected = selected;
-            render.base.player = data.id.is_local();
+            render.base.player = o.id.is_local();
 
             match &render.kind {
                 RenderObjectKind::Static(this) => {

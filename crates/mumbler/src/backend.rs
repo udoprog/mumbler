@@ -202,7 +202,7 @@ impl Backend {
             for (key, value) in database.properties(id).await? {
                 match key {
                     Key::HIDDEN => {
-                        if value.as_bool().unwrap_or_default() {
+                        if value.as_bool() {
                             hidden.insert(id);
                         }
                     }
@@ -237,8 +237,7 @@ impl Backend {
         }
 
         let client_secret = match props.get(Key::PEER_SECRET).as_str() {
-            Some(secret) => secret.to_owned(),
-            None => {
+            "" => {
                 let secret = crypto::random_string();
                 database
                     .set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
@@ -246,6 +245,7 @@ impl Backend {
                 props.insert(Key::PEER_SECRET, Value::from(secret.clone()));
                 secret
             }
+            secret => secret.to_owned(),
         };
 
         let keypair = crypto::derive_keypair(client_secret.as_bytes());
@@ -492,7 +492,7 @@ impl Backend {
                             break 'transform None;
                         };
 
-                        if object.props.get(Key::HIDDEN).as_bool().unwrap_or_default() {
+                        if object.props.get(Key::HIDDEN).as_bool() {
                             None
                         } else {
                             object.props.get(Key::TRANSFORM).as_transform()
@@ -502,7 +502,12 @@ impl Backend {
                     self.set_mumblelink_transform(transform).await;
                 }
                 Key::PEER_SECRET => {
-                    let peer_secret = value.as_str().unwrap_or_default();
+                    let peer_secret = value.as_str();
+
+                    if peer_secret.is_empty() {
+                        continue;
+                    }
+
                     let keypair = crypto::derive_keypair(peer_secret.as_bytes());
                     state.keypair = keypair;
                     restart_client = true;
@@ -565,7 +570,7 @@ impl Backend {
                 let last = state
                     .objects
                     .values()
-                    .map(|o| o.props.get(Key::SORT).as_bytes().unwrap_or_default())
+                    .map(|o| o.props.get(Key::SORT).as_bytes())
                     .max();
 
                 let sort = match last {

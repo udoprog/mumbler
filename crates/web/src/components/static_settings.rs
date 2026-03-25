@@ -28,7 +28,6 @@ pub(crate) enum Msg {
     StateChanged(ws::State),
     Channel(Result<ws::Channel, ws::Error>),
     Update(Result<Packet<api::Update>, ws::Error>),
-    UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     WidthChanged(Event),
 }
@@ -56,7 +55,7 @@ pub(crate) struct StaticSettings {
     images: Vec<api::Image>,
     public_key: PublicKey,
     log: log::Log,
-    name: State<Option<String>>,
+    name: State<String>,
     preview_canvas: NodeRef,
     preview_images: Images,
     ratio: State<Option<f32>>,
@@ -102,16 +101,16 @@ impl Component for StaticSettings {
             _update_dimensions: ws::Request::new(),
             _update_fixed_ratio: ws::Request::new(),
             _update_name: ws::Request::new(),
-            color: State::new(None),
+            color: State::default(),
             height: State::new(1.0),
             image: State::new(Id::ZERO),
             images: Vec::new(),
             public_key: PublicKey::ZERO,
             log,
-            name: State::new(None),
+            name: State::default(),
             preview_canvas: NodeRef::default(),
             preview_images: Images::new(),
-            ratio: State::new(None),
+            ratio: State::default(),
             state,
             _channel: ws::Request::new(),
             channel: ws::Channel::default(),
@@ -158,7 +157,7 @@ impl Component for StaticSettings {
                             id="name"
                             type="text"
                             placeholder="Enter name"
-                            value={(*self.name).clone().unwrap_or_default()}
+                            value={self.name.to_string()}
                             onchange={ctx.link().callback(Msg::NameChanged)}
                             />
                     </section>
@@ -336,15 +335,11 @@ impl StaticSettings {
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
 
-                let value = input.value();
-                let name = if value.is_empty() { None } else { Some(value) };
-                ctx.link().send_message(Msg::UpdateName(name));
-                Ok(false)
-            }
-            Msg::UpdateName(name) => {
+                let name = input.value();
+
                 *self.name = name.clone();
                 self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
-                Ok(true)
+                Ok(false)
             }
             Msg::WidthChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -462,7 +457,7 @@ impl StaticSettings {
                 }
             }
             Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
+            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
             Key::STATIC_WIDTH => self.width.update(value.as_f32().unwrap_or(1.0)),
             Key::STATIC_HEIGHT => self.height.update(value.as_f32().unwrap_or(1.0)),
             Key::RATIO => self.ratio.update(value.as_f32()),
@@ -493,7 +488,7 @@ impl StaticSettings {
         };
 
         let base = render::RenderBase {
-            name: self.name.as_deref(),
+            name: self.name.as_str(),
             visibility: Visibility::Remote,
             selected: false,
             player: false,

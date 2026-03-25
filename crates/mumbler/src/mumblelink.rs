@@ -31,12 +31,8 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
             break 'transform None;
         };
 
-        let hidden = object.props.get(Key::HIDDEN).as_bool().unwrap_or_default();
-        let local_hidden = object
-            .props
-            .get(Key::LOCAL_HIDDEN)
-            .as_bool()
-            .unwrap_or_default();
+        let hidden = object.props.get(Key::HIDDEN).as_bool();
+        let local_hidden = object.props.get(Key::LOCAL_HIDDEN).as_bool();
 
         if hidden || local_hidden {
             None
@@ -96,11 +92,7 @@ pub(crate) async fn run(b: Backend) -> Result<()> {
 pub async fn managed(b: Backend) -> Result<()> {
     let settings = async || -> Result<bool> {
         let state = b.client_state().await;
-        let enabled = state
-            .props
-            .get(Key::MUMBLE_ENABLED)
-            .as_bool()
-            .unwrap_or_default();
+        let enabled = state.props.get(Key::MUMBLE_ENABLED).as_bool();
         Ok(enabled)
     };
 

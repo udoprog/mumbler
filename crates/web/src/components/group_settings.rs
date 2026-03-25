@@ -20,7 +20,6 @@ pub(crate) enum Msg {
     NameChanged(Event),
     SelectColor(api::Color),
     SetLog(log::Log),
-    UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
 
@@ -39,7 +38,7 @@ pub(crate) struct GroupSettings {
     _update_name: ws::Request,
     color: State<Option<api::Color>>,
     log: log::Log,
-    name: State<Option<String>>,
+    name: State<String>,
     state: ws::State,
     _channel: ws::Request,
     channel: ws::Channel,
@@ -67,8 +66,8 @@ impl Component for GroupSettings {
 
         let mut this = Self {
             state,
-            color: State::new(None),
-            name: State::new(None),
+            color: State::default(),
+            name: State::default(),
             log,
             _log_handle,
             _state_change,
@@ -108,7 +107,7 @@ impl Component for GroupSettings {
                             id="group-name"
                             type="text"
                             placeholder="Enter name"
-                            value={(*self.name).clone().unwrap_or_default()}
+                            value={self.name.to_string()}
                             onchange={ctx.link().callback(Msg::NameChanged)}
                             />
                     </section>
@@ -197,16 +196,11 @@ impl GroupSettings {
             }
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
+                let name = input.value();
 
-                let value = input.value();
-                let name = if value.is_empty() { None } else { Some(value) };
-                ctx.link().send_message(Msg::UpdateName(name));
-                Ok(false)
-            }
-            Msg::UpdateName(name) => {
                 *self.name = name.clone();
                 self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
-                Ok(true)
+                Ok(false)
             }
             Msg::SetLog(log) => {
                 self.log = log;
@@ -240,7 +234,7 @@ impl GroupSettings {
     fn update_property(&mut self, _: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
+            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
             _ => false,
         }
     }

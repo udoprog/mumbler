@@ -31,6 +31,7 @@ where
         if self.0 == new {
             return false;
         }
+
         self.0 = new;
         true
     }
@@ -43,6 +44,16 @@ where
         }
 
         Some(mem::replace(&mut self.0, new))
+    }
+}
+
+impl<T> Default for State<T>
+where
+    T: Default,
+{
+    #[inline]
+    fn default() -> Self {
+        Self(T::default())
     }
 }
 
@@ -59,16 +70,6 @@ impl<T> DerefMut for State<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
-    }
-}
-
-impl<T> Default for State<T>
-where
-    T: Default,
-{
-    #[inline]
-    fn default() -> Self {
-        Self(T::default())
     }
 }
 

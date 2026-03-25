@@ -25,7 +25,6 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SetLog(log::Log),
     ShowGridChanged(Event),
-    UpdateName(Option<String>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
 
@@ -48,7 +47,7 @@ pub(crate) struct RoomSettings {
     extent: State<Extent>,
     images: Vec<Image>,
     log: log::Log,
-    name: State<Option<String>>,
+    name: State<String>,
     show_grid: State<bool>,
     state: ws::State,
     _channel: ws::Request,
@@ -88,7 +87,7 @@ impl Component for RoomSettings {
             extent: State::new(Extent::arena()),
             images: Vec::new(),
             log,
-            name: State::new(None),
+            name: State::default(),
             show_grid: State::new(true),
             state,
             _channel: ws::Request::new(),
@@ -125,7 +124,7 @@ impl Component for RoomSettings {
                         id="name"
                         type="text"
                         placeholder="Enter name"
-                        value={(*self.name).clone().unwrap_or_default()}
+                        value={self.name.to_string()}
                         onchange={ctx.link().callback(Msg::NameChanged)}
                     />
                 </section>
@@ -302,15 +301,11 @@ impl RoomSettings {
             }
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
-                let value = input.value();
-                let name = if value.is_empty() { None } else { Some(value) };
-                ctx.link().send_message(Msg::UpdateName(name));
-                Ok(false)
-            }
-            Msg::UpdateName(name) => {
+                let name = input.value();
+
                 *self.name = name.clone();
                 self._update_name = object_update(&self.channel, ctx, Key::OBJECT_NAME, name);
-                Ok(true)
+                Ok(false)
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;
@@ -343,12 +338,12 @@ impl RoomSettings {
 
     fn update_property(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::OBJECT_NAME => self.name.update(value.as_str().map(str::to_owned)),
+            Key::OBJECT_NAME => self.name.update(value.as_str().to_owned()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
             Key::ROOM_EXTENT => self
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
-            Key::SHOW_GRID => self.show_grid.update(value.as_bool().unwrap_or(true)),
+            Key::SHOW_GRID => self.show_grid.update(value.as_bool()),
             _ => false,
         }
     }

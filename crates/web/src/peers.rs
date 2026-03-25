@@ -31,9 +31,11 @@ impl Peer {
 
     /// The name of the peer.
     pub(crate) fn display(&self) -> String {
-        let Some(name) = self.props.get(Key::PEER_NAME).as_str() else {
+        let name = self.props.get(Key::PEER_NAME).as_str();
+
+        if name.is_empty() {
             return self.id.to_string();
-        };
+        }
 
         name.to_string()
     }

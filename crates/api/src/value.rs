@@ -72,18 +72,18 @@ impl Value {
     }
 
     #[inline]
-    pub fn as_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> bool {
         match &self.kind {
-            ValueKind::Boolean(b) => Some(*b),
-            _ => None,
+            ValueKind::Boolean(b) => *b,
+            _ => false,
         }
     }
 
     #[inline]
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> &str {
         match &self.kind {
-            ValueKind::String(s) => Some(s),
-            _ => None,
+            ValueKind::String(s) => s,
+            _ => "",
         }
     }
 
@@ -136,26 +136,26 @@ impl Value {
     }
 
     #[inline]
-    pub fn into_string(self) -> Option<String> {
+    pub fn into_string(self) -> String {
         match self.kind {
-            ValueKind::String(s) => Some(s),
-            _ => None,
+            ValueKind::String(s) => s,
+            _ => String::new(),
         }
     }
 
     #[inline]
-    pub fn as_bytes(&self) -> Option<&[u8]> {
+    pub fn as_bytes(&self) -> &[u8] {
         match &self.kind {
-            ValueKind::Bytes(b) => Some(b),
-            _ => None,
+            ValueKind::Bytes(b) => b,
+            _ => &[],
         }
     }
 
     #[inline]
-    pub fn into_bytes(self) -> Option<Vec<u8>> {
+    pub fn into_bytes(self) -> Vec<u8> {
         match self.kind {
-            ValueKind::Bytes(b) => Some(b),
-            _ => None,
+            ValueKind::Bytes(b) => b,
+            _ => Vec::new(),
         }
     }
 

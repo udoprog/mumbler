@@ -1,5 +1,4 @@
 use core::cell::{Cell, Ref, RefCell, RefMut};
-use core::ops::{Deref, DerefMut};
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -43,39 +42,6 @@ impl Geometry<'_> {
                 local.x.abs() < width / 2.0 && local.z.abs() < height / 2.0
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct LocalObject {
-    pub(crate) move_target: Option<Vec3>,
-    pub(crate) arrow_target: Option<Vec3>,
-    pub(crate) data: ObjectData,
-}
-
-impl LocalObject {
-    pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
-        Some(Self {
-            data: ObjectData::new(peer_id, o)?,
-            move_target: None,
-            arrow_target: None,
-        })
-    }
-}
-
-impl Deref for LocalObject {
-    type Target = ObjectData;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl DerefMut for LocalObject {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
     }
 }
 
@@ -145,7 +111,7 @@ impl ObjectsRef {
             return false;
         };
 
-        object.data.is_interactive()
+        object.is_interactive()
     }
 
     #[inline]
@@ -190,8 +156,8 @@ impl ObjectsRef {
                 break;
             };
 
-            hidden = hidden.max(object.data.visibility());
-            current = *object.data.group;
+            hidden = hidden.max(object.visibility());
+            current = *object.group;
         }
 
         hidden
@@ -207,11 +173,11 @@ impl ObjectsRef {
                 break;
             };
 
-            if object.data.is_locked() {
+            if object.is_locked() {
                 return true;
             }
 
-            current = *object.data.group;
+            current = *object.group;
         }
 
         false
@@ -225,7 +191,7 @@ impl FromIterator<LocalObject> for Objects {
         I: IntoIterator<Item = LocalObject>,
     {
         let mutable = ObjectsRef {
-            values: iter.into_iter().map(|o| (o.data.id, o)).collect(),
+            values: iter.into_iter().map(|o| (o.id, o)).collect(),
         };
 
         let inner = Inner {
@@ -261,7 +227,7 @@ impl TokenObject {
                     .as_transform()
                     .unwrap_or_else(Transform::origin),
             ),
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+            locked: State::new(o.props.get(Key::LOCKED).as_bool()),
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
@@ -272,13 +238,7 @@ impl TokenObject {
                     .unwrap_or(DEFAULT_TOKEN_RADIUS),
             ),
             speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
+            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
         }
     }
 
@@ -287,7 +247,7 @@ impl TokenObject {
             Key::TRANSFORM => self
                 .transform
                 .update(value.as_transform().unwrap_or_else(Transform::origin)),
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
+            Key::LOCKED => self.locked.update(value.as_bool()),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
@@ -295,9 +255,7 @@ impl TokenObject {
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
+            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             _ => false,
         }
     }
@@ -309,7 +267,7 @@ pub(crate) struct StaticObject {
     pub(crate) locked: State<bool>,
     pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
-    pub(crate) name: State<Option<String>>,
+    pub(crate) name: State<String>,
     pub(crate) hidden: State<bool>,
     pub(crate) width: State<f32>,
     pub(crate) height: State<f32>,
@@ -325,11 +283,11 @@ impl StaticObject {
                     .as_transform()
                     .unwrap_or_else(Transform::origin),
             ),
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
+            locked: State::new(o.props.get(Key::LOCKED).as_bool()),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
-            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
+            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().to_owned()),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
             width: State::new(
                 o.props
                     .get(Key::STATIC_WIDTH)
@@ -342,35 +300,27 @@ impl StaticObject {
                     .as_f32()
                     .unwrap_or(DEFAULT_STATIC_HEIGHT),
             ),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
+            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, v: Value) -> bool {
         match key {
             Key::TRANSFORM => self
                 .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::IMAGE_ID => self.image.update(value.as_id()),
-            Key::COLOR => self.color.update(value.as_color()),
-            Key::OBJECT_NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
+                .update(v.as_transform().unwrap_or_else(Transform::origin)),
+            Key::LOCKED => self.locked.update(v.as_bool()),
+            Key::IMAGE_ID => self.image.update(v.as_id()),
+            Key::COLOR => self.color.update(v.as_color()),
+            Key::OBJECT_NAME => self.name.update(v.into_string()),
+            Key::HIDDEN => self.hidden.update(v.as_bool()),
             Key::STATIC_WIDTH => self
                 .width
-                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
+                .update(v.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
             Key::STATIC_HEIGHT => self
                 .height
-                .update(value.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
+                .update(v.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
+            Key::SORT => self.sort.update(v.as_bytes().to_vec()),
             _ => false,
         }
     }
@@ -386,25 +336,17 @@ pub(crate) struct GroupObject {
 impl GroupObject {
     pub(crate) fn from_remote(o: &RemoteObject) -> Self {
         Self {
-            locked: State::new(o.props.get(Key::LOCKED).as_bool().unwrap_or(false)),
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
-            expanded: State::new(o.props.get(Key::EXPANDED).as_bool().unwrap_or_default()),
+            locked: State::new(o.props.get(Key::LOCKED).as_bool()),
+            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
+            expanded: State::new(o.props.get(Key::EXPANDED).as_bool()),
         }
     }
 
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::LOCKED => self.locked.update(value.as_bool().unwrap_or(false)),
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
-            Key::EXPANDED => self.expanded.update(value.as_bool().unwrap_or_default()),
+            Key::LOCKED => self.locked.update(value.as_bool()),
+            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
+            Key::EXPANDED => self.expanded.update(value.as_bool()),
             _ => false,
         }
     }
@@ -426,13 +368,7 @@ pub(crate) struct RoomObject {
 impl RoomObject {
     pub(crate) fn from_remote(o: &RemoteObject) -> Self {
         Self {
-            sort: State::new(
-                o.props
-                    .get(Key::SORT)
-                    .as_bytes()
-                    .unwrap_or_default()
-                    .to_vec(),
-            ),
+            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             background: State::new(o.props.get(Key::ROOM_BACKGROUND).as_id()),
             extent: State::new(
                 o.props
@@ -440,20 +376,18 @@ impl RoomObject {
                     .as_extent()
                     .unwrap_or_else(Extent::arena),
             ),
-            show_grid: State::new(o.props.get(Key::SHOW_GRID).as_bool().unwrap_or(true)),
+            show_grid: State::new(o.props.get(Key::SHOW_GRID).as_bool()),
         }
     }
 
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::SORT => self
-                .sort
-                .update(value.as_bytes().unwrap_or_default().to_vec()),
+            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
             Key::ROOM_EXTENT => self
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
-            Key::SHOW_GRID => self.show_grid.update(value.as_bool().unwrap_or(true)),
+            Key::SHOW_GRID => self.show_grid.update(value.as_bool()),
             _ => false,
         }
     }
@@ -468,16 +402,16 @@ pub(crate) enum ObjectKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct ObjectData {
+pub(crate) struct LocalObject {
     pub(crate) id: RemoteId,
-    pub(crate) kind: ObjectKind,
     pub(crate) group: State<RemoteId>,
-    pub(crate) name: State<Option<String>>,
+    pub(crate) name: State<String>,
     pub(crate) hidden: State<bool>,
     pub(crate) local_hidden: State<bool>,
+    pub(crate) kind: ObjectKind,
 }
 
-impl ObjectData {
+impl LocalObject {
     #[inline]
     pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
         let kind = match o.ty {
@@ -490,12 +424,25 @@ impl ObjectData {
 
         Some(Self {
             id: RemoteId::new(peer_id, o.id),
-            kind,
             group: State::new(RemoteId::new(peer_id, o.props.get(Key::GROUP).as_id())),
-            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().map(str::to_owned)),
-            hidden: State::new(o.props.get(Key::HIDDEN).as_bool().unwrap_or(false)),
-            local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool().unwrap_or(false)),
+            name: State::new(o.props.get(Key::OBJECT_NAME).as_str().to_owned()),
+            hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
+            local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool()),
+            kind,
         })
+    }
+
+    pub(crate) fn display(&self) -> &str {
+        if self.name.is_empty() {
+            match &self.kind {
+                ObjectKind::Token(_) => "Unnamed Token",
+                ObjectKind::Static(_) => "Unnamed Static",
+                ObjectKind::Group(_) => "Unnamed Group",
+                ObjectKind::Room(_) => "Unnamed Room",
+            }
+        } else {
+            &self.name
+        }
     }
 
     #[inline]
@@ -512,8 +459,8 @@ impl ObjectData {
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::OBJECT_NAME => self.name.update(value.into_string()),
-            Key::HIDDEN => self.hidden.update(value.as_bool().unwrap_or(false)),
-            Key::LOCAL_HIDDEN => self.local_hidden.update(value.as_bool().unwrap_or(false)),
+            Key::HIDDEN => self.hidden.update(value.as_bool()),
+            Key::LOCAL_HIDDEN => self.local_hidden.update(value.as_bool()),
             Key::GROUP => self
                 .group
                 .update(RemoteId::new(self.id.peer_id, value.as_id())),
@@ -696,8 +643,8 @@ impl ObjectData {
     }
 
     #[inline]
-    pub(crate) fn name(&self) -> Option<&str> {
-        self.name.as_deref()
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 
     #[inline]

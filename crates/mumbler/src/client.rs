@@ -395,23 +395,16 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
 pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
     let settings = async || -> Result<(Option<String>, bool, bool)> {
         let state = b.client_state().await;
-        let connect = state
-            .props
-            .get(Key::REMOTE_SERVER)
-            .as_str()
-            .filter(|s| !s.is_empty())
+
+        let connect = state.props.get(Key::REMOTE_SERVER).as_str();
+
+        let connect = (!connect.is_empty())
+            .then_some(connect)
             .or(default_connect)
             .map(str::to_owned);
-        let enabled = state
-            .props
-            .get(Key::REMOTE_ENABLED)
-            .as_bool()
-            .unwrap_or_default();
-        let tls = state
-            .props
-            .get(Key::REMOTE_TLS)
-            .as_bool()
-            .unwrap_or_default();
+
+        let enabled = state.props.get(Key::REMOTE_ENABLED).as_bool();
+        let tls = state.props.get(Key::REMOTE_TLS).as_bool();
         Ok((connect, enabled, tls))
     };
 

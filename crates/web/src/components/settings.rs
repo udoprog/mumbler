@@ -314,18 +314,10 @@ impl Settings {
 
     fn update_config(&mut self, key: Key, value: Value) -> Result<bool, Error> {
         match key {
-            Key::PEER_NAME => Ok(self
-                .name
-                .update(value.as_str().unwrap_or_default().to_string())),
-            Key::PEER_SECRET => Ok(self
-                .peer_secret
-                .update(value.as_str().unwrap_or_default().to_string())),
-            Key::REMOTE_SERVER => Ok(self
-                .remote_server
-                .update(value.as_str().unwrap_or_default().to_string())),
-            Key::REMOTE_TLS => Ok(self
-                .remote_server_tls
-                .update(value.as_bool().unwrap_or_default())),
+            Key::PEER_NAME => Ok(self.name.update(value.as_str().to_owned())),
+            Key::PEER_SECRET => Ok(self.peer_secret.update(value.as_str().to_owned())),
+            Key::REMOTE_SERVER => Ok(self.remote_server.update(value.as_str().to_owned())),
+            Key::REMOTE_TLS => Ok(self.remote_server_tls.update(value.as_bool())),
             _ => Ok(false),
         }
     }

@@ -51,12 +51,7 @@ impl Room {
             return None;
         }
 
-        let name = object
-            .props
-            .get(Key::OBJECT_NAME)
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
+        let name = object.props.get(Key::OBJECT_NAME).as_str().to_owned();
 
         Some(Self { id, name })
     }
@@ -64,7 +59,7 @@ impl Room {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::OBJECT_NAME => {
-                self.name = value.as_str().unwrap_or_default().to_owned();
+                self.name = value.as_str().to_owned();
                 true
             }
             _ => false,

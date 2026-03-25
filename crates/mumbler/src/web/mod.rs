@@ -322,7 +322,8 @@ async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value
             backend.set_mumblelink_transform(transform).await;
         }
         Key::HIDDEN => {
-            let hidden = value.as_bool().unwrap_or_default();
+            let hidden = value.as_bool();
+
             backend.set_hidden(object_id, hidden);
 
             'out: {
