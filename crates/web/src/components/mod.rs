@@ -57,6 +57,9 @@ use self::help_modal::HelpModal;
 mod dynamic_canvas;
 use self::dynamic_canvas::DynamicCanvas;
 
+mod context_menu_dropdown;
+use self::context_menu_dropdown::ContextMenuDropdown;
+
 use yew::prelude::*;
 
 const UNKNOWN_ROOM: &str = "Unknown Room";

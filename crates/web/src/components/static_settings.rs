@@ -14,6 +14,8 @@ use crate::state::State;
 use super::{DynamicCanvas, ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
+    SetLog(log::Log),
+    Error(Error),
     ColorChanged(Event),
     FixedRatioChanged(Event),
     HeightChanged(Event),
@@ -24,7 +26,6 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    SetLog(log::Log),
     StateChanged(ws::State),
     Channel(Result<ws::Channel, ws::Error>),
     Update(Result<Packet<api::Update>, ws::Error>),
@@ -242,6 +243,7 @@ impl Component for StaticSettings {
                     <section class="preview">
                         <DynamicCanvas
                             onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onerror={ctx.link().callback(Msg::Error)}
                             onresize={ctx.link().callback(Msg::CanvasResized)}
                             />
                     </section>
@@ -268,6 +270,14 @@ impl StaticSettings {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::SetLog(log) => {
+                self.log = log;
+                Ok(false)
+            }
+            Msg::Error(error) => {
+                self.log.error("static_settings", error);
+                Ok(false)
+            }
             Msg::Initialize(result) => {
                 let body = result?;
                 let body = body.decode()?;
@@ -410,10 +420,6 @@ impl StaticSettings {
                 self._update_fixed_ratio =
                     object_update(&self.channel, ctx, Key::RATIO, *self.ratio);
                 Ok(true)
-            }
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
             }
             Msg::UpdateResult(result) => {
                 let result = result?;

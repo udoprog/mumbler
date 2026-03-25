@@ -29,8 +29,8 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    COMMON_ROOM, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList, RoomSettings, Rooms,
-    StaticSettings, TokenSettings, UNKNOWN_ROOM,
+    COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList,
+    RoomSettings, Rooms, StaticSettings, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -131,7 +131,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn look_at(&mut self, objects: &mut ObjectsRef, p: Vec3, m: Vec3) {
+    fn look_at(&mut self, objects: &mut ObjectsRef, from: Vec3, to: Vec3) {
         let Some(o) = objects.get_mut(self.selected) else {
             return;
         };
@@ -140,9 +140,9 @@ impl Inner {
             return;
         };
 
-        transform.front = p.direction_to(m);
+        transform.front = from.direction_to(to);
 
-        self.arrow_target.insert(o.id, m);
+        self.arrow_target.insert(o.id, to);
         self.transforms.insert(o.id);
     }
 
@@ -179,14 +179,14 @@ impl Inner {
             channel.updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
     }
 
-    fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, m: Vec3) {
+    fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, mouse: Vec3) {
         match action {
             Action::Rotate(r) => {
                 let Some(o) = objects.get_mut(r.object_id) else {
                     return;
                 };
 
-                let dist = r.center.dist(m);
+                let dist = r.center.dist(mouse);
 
                 if dist < ARROW_THRESHOLD {
                     return;
@@ -195,17 +195,17 @@ impl Inner {
                 if r.is_static {
                     // Use the original cursor offset to rotate relative to the initial grab.
                     if let Some(transform) = o.as_transform_mut() {
-                        let cursor = m - r.center;
+                        let cursor = mouse - r.center;
                         let angle = cursor.angle_xz() + r.rotation_offset;
                         transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
                         self.transforms.insert(o.id);
                     }
 
-                    self.arrow_target.insert(r.object_id, m);
+                    self.arrow_target.insert(r.object_id, mouse);
                 } else if let Some(look_at) = o.as_look_at_mut() {
-                    **look_at = Some(Vec3::new(m.x, 0.0, m.z));
+                    **look_at = Some(Vec3::new(mouse.x, 0.0, mouse.z));
                     self.look_at.insert(o.id);
-                    self.look_at(objects, r.center, m);
+                    self.look_at(objects, r.center, mouse);
                 }
 
                 self.redraw = true;
@@ -220,17 +220,21 @@ impl Inner {
                         return;
                     };
 
-                    transform.position = m + t.offset;
+                    transform.position = mouse + t.offset;
                     self.transforms.insert(o.id);
                     self.redraw = true;
                 } else {
-                    self.move_target.insert(t.object_id, m);
+                    self.move_target.insert(t.object_id, mouse);
                     self.redraw = true;
                 }
             }
             Action::Scale(scale) => {
-                let distance = scale.position.dist(m).max(0.01);
-                scale.scale = distance / scale.initial_distance;
+                let distance = scale.position.dist(mouse);
+
+                if distance > f32::EPSILON {
+                    scale.scale = distance / scale.initial_distance;
+                    self.redraw = true;
+                }
             }
         }
     }
@@ -428,6 +432,12 @@ impl Drop for DropImage {
 struct ContextMenu {
     object_id: RemoteId,
     position: Canvas2,
+    onclose: Callback<()>,
+    onsettings: Callback<()>,
+    onhidden: Callback<()>,
+    onlocalhidden: Callback<()>,
+    onmumbleobject: Callback<()>,
+    onremove: Callback<()>,
 }
 
 #[derive(Default)]
@@ -492,7 +502,10 @@ pub(crate) struct Map {
     view: ViewTransform,
 }
 
+#[derive(Debug)]
 pub(crate) enum Msg {
+    SetLog(log::Log),
+    Error(Error),
     AnimationFrame,
     CloseModal,
     CloseContextMenu,
@@ -525,7 +538,6 @@ pub(crate) enum Msg {
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectObject(RemoteId),
-    SetLog(log::Log),
     StateChanged(ws::State),
     ToggleFollowMumbleSelection,
     ToggleHidden(RemoteId),
@@ -1005,6 +1017,7 @@ impl Component for Map {
                         <DynamicCanvas
                             id="map"
                             onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onerror={ctx.link().callback(Msg::Error)}
                             onresize={ctx.link().callback(Msg::CanvasResized)}
                             onpointerdown={ctx.link().callback(Msg::PointerDown)}
                             onpointermove={ctx.link().callback(Msg::PointerMove)}
@@ -1012,11 +1025,22 @@ impl Component for Map {
                             onpointerleave={ctx.link().callback(Msg::PointerLeave)}
                             onwheel={ctx.link().callback(Msg::Wheel)}
                             oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
-                            ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
-                            ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
+                            ondragover={ctx.link().callback(Msg::CanvasDragOver)}
+                            ondrop={ctx.link().callback(Msg::DropImage)}
                         >
                             if let Some(menu) = &self.s.context_menu {
-                                {self.render_context_menu(ctx, menu)}
+                                <ContextMenuDropdown
+                                    position={menu.position}
+                                    object_id={menu.object_id}
+                                    is_hidden={objects.get(menu.object_id).map(|o| o.is_hidden()).unwrap_or_default()}
+                                    mumble_object={*self.config.mumble_object}
+                                    onclose={menu.onclose.clone()}
+                                    onsettings={menu.onsettings.clone()}
+                                    onhidden={menu.onhidden.clone()}
+                                    onlocalhidden={menu.onlocalhidden.clone()}
+                                    onmumbleobject={menu.onmumbleobject.clone()}
+                                    onremove={menu.onremove.clone()}
+                                    />
                             }
                         </DynamicCanvas>
                     </div>
@@ -1086,8 +1110,6 @@ impl Map {
     }
 
     fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
-        ev.prevent_default();
-
         // Already processing a drop.
         if self.drop_image.is_some() {
             return Ok(false);
@@ -1207,6 +1229,14 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::SetLog(log) => {
+                self.log = log;
+                Ok(false)
+            }
+            Msg::Error(error) => {
+                self.log.error("map", error);
+                Ok(false)
+            }
             Msg::DragOver(drag_over) => {
                 self.drag_over = Some(drag_over);
                 Ok(true)
@@ -1239,10 +1269,6 @@ impl Map {
             Msg::ToggleHidden(id) => self.toggle_hidden(ctx, id),
             Msg::ToggleLocalHidden(id) => self.toggle_local_hidden(ctx, id),
             Msg::ToggleExpanded(id) => self.toggle_expanded(ctx, id),
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
 
@@ -1327,7 +1353,10 @@ impl Map {
                 ev.prevent_default();
                 Ok(false)
             }
-            Msg::DropImage(ev) => self.on_drop_image(ctx, ev),
+            Msg::DropImage(ev) => {
+                ev.prevent_default();
+                self.on_drop_image(ctx, ev)
+            }
             Msg::DropImageLoaded(width, height) => {
                 let Some(drop_image) = &mut self.drop_image else {
                     return Ok(false);
@@ -1517,7 +1546,7 @@ impl Map {
             Msg::CanvasLoaded(canvas) => {
                 self.canvas = Some(canvas);
                 self.s.redraw = true;
-                Ok(true)
+                Ok(false)
             }
             Msg::CanvasResized((width, height)) => {
                 self.view = ViewTransform::new(
@@ -1806,7 +1835,7 @@ impl Map {
     }
 
     fn start_translate_on_hit(&mut self, ctx: &Context<Self>) {
-        let Some(m) = self.mouse else {
+        let Some(mouse) = self.mouse else {
             return;
         };
 
@@ -1814,13 +1843,10 @@ impl Map {
             let order = self.order.borrow();
             let objects = self.objects.borrow();
 
-            let hit = order.walk().flat_map(|id| objects.get(id)).find(|o| {
-                let Some(geometry) = o.as_click_geometry() else {
-                    return false;
-                };
-
-                geometry.intersects(m)
-            });
+            let hit = order
+                .walk()
+                .flat_map(|id| objects.get(id))
+                .find(|o| o.as_click_geometry().intersects(mouse));
 
             self.s.redraw = hit.is_some();
 
@@ -1858,7 +1884,7 @@ impl Map {
             return;
         }
 
-        let Some(m) = self.mouse else {
+        let Some(mouse) = self.mouse else {
             return;
         };
 
@@ -1884,10 +1910,10 @@ impl Map {
             // Keep the cursor's offset relative to the object's origin while
             // dragging. The stored vector is applied to the world cursor
             // position on move.
-            transform.position - m
+            transform.position - mouse
         } else {
-            self.s.move_target.insert(id, m);
-            m
+            self.s.move_target.insert(id, mouse);
+            mouse
         };
 
         let action = self.action.insert(Action::Translate(Translate {
@@ -1895,11 +1921,11 @@ impl Map {
             offset,
         }));
 
-        self.s.apply(&mut objects, action, m);
+        self.s.apply(&mut objects, action, mouse);
     }
 
     fn start_scale(&mut self) -> bool {
-        let Some(m) = self.mouse else {
+        let Some(mouse) = self.mouse else {
             return false;
         };
 
@@ -1921,7 +1947,7 @@ impl Map {
             return false;
         };
 
-        let initial_distance = position.dist(m).max(0.01);
+        let initial_distance = position.dist(mouse).max(0.01);
 
         self.s.move_target.remove(&self.s.selected);
 
@@ -1932,7 +1958,7 @@ impl Map {
             initial_distance,
         }));
 
-        self.s.apply(&mut objects, action, m);
+        self.s.apply(&mut objects, action, mouse);
         true
     }
 
@@ -2069,7 +2095,7 @@ impl Map {
             return Ok(false);
         }
 
-        let Some(m) = self.mouse else {
+        let Some(mouse) = self.mouse else {
             return Ok(false);
         };
 
@@ -2092,7 +2118,7 @@ impl Map {
         let center = transform.position;
 
         let rotation_offset = if o.is_static() {
-            let cursor = m - center;
+            let cursor = mouse - center;
             transform.front.angle_xz() - cursor.angle_xz()
         } else {
             0.0
@@ -2105,7 +2131,7 @@ impl Map {
             is_static: o.is_static(),
         }));
 
-        self.s.apply(&mut objects, action, m);
+        self.s.apply(&mut objects, action, mouse);
         Ok(true)
     }
 
@@ -2215,20 +2241,14 @@ impl Map {
         }
     }
 
-    fn on_context_menu(&mut self, _ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
-        let w = self.view.to_world(ev.offset());
+    fn on_context_menu(&mut self, ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
+        let mouse = self.view.to_world(ev.offset());
 
         let objects = self.objects.borrow();
 
         let hit = objects
             .values()
-            .find(|o| {
-                let Some(geometry) = o.as_click_geometry() else {
-                    return false;
-                };
-
-                geometry.intersects(w)
-            })
+            .find(|o| o.as_click_geometry().intersects(mouse))
             .map(|o| o.id);
 
         if let Some(object_id) = hit {
@@ -2236,74 +2256,22 @@ impl Map {
             self.s.context_menu = Some(ContextMenu {
                 object_id,
                 position: ev.offset(),
+                onclose: ctx.link().callback(|_| Msg::CloseContextMenu),
+                onsettings: ctx.link().callback(move |_| Msg::OpenSettings(object_id)),
+                onhidden: ctx.link().callback(move |_| Msg::ToggleHidden(object_id)),
+                onlocalhidden: ctx
+                    .link()
+                    .callback(move |_| Msg::ToggleLocalHidden(object_id)),
+                onmumbleobject: ctx
+                    .link()
+                    .callback(move |_| Msg::ToggleMumbleObject(object_id)),
+                onremove: ctx.link().callback(move |_| Msg::RemoveObject(object_id)),
             });
         } else {
             self.s.context_menu = None;
         }
 
         Ok(())
-    }
-
-    fn render_context_menu(&self, ctx: &Context<Self>, menu: &ContextMenu) -> Option<Html> {
-        let object_id = menu.object_id;
-
-        if !object_id.is_local() {
-            return None;
-        }
-
-        let style = format!("left: {}px; top: {}px;", menu.position.x, menu.position.y);
-
-        let objects = self.objects.borrow();
-
-        let o = objects.get(object_id)?;
-
-        let is_hidden = o.is_hidden();
-        let hidden_icon = if is_hidden { "eye" } else { "eye-slash" };
-        let hidden_label = if is_hidden { "Show" } else { "Hide" };
-        let local_hidden_label = if is_hidden {
-            "Show locally"
-        } else {
-            "Hide locally"
-        };
-        let is_mumble = *self.config.mumble_object == object_id;
-        let mumble_label = if is_mumble {
-            "Unset MumbleLink"
-        } else {
-            "Set as MumbleLink"
-        };
-
-        Some(html! {
-            <div class="context-menu-backdrop" onclick={ctx.link().callback(|_| Msg::CloseContextMenu)}>
-                <div class="context-menu" {style} onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                    <button class="context-menu-item"
-                        onclick={ctx.link().callback(move |_| Msg::OpenSettings(object_id))}>
-                        <Icon name="cog" invert={true} />
-                        {"Settings"}
-                    </button>
-                    <button class="context-menu-item"
-                        onclick={ctx.link().callback(move |_| Msg::ToggleHidden(object_id))}>
-                        <Icon name={hidden_icon} invert={true} />
-                        {hidden_label}
-                    </button>
-                    <button class="context-menu-item"
-                        onclick={ctx.link().callback(move |_| Msg::ToggleLocalHidden(object_id))}>
-                        <Icon name="no-symbol" invert={true} />
-                        {local_hidden_label}
-                    </button>
-                    <button class="context-menu-item"
-                        onclick={ctx.link().callback(move |_| Msg::ToggleMumbleObject(object_id))}>
-                        <Icon name="mumble" invert={true} />
-                        {mumble_label}
-                    </button>
-                    <div class="context-menu-separator" />
-                    <button class="context-menu-item danger"
-                        onclick={ctx.link().callback(move |_| Msg::ConfirmRemove(object_id))}>
-                        <Icon name="x-mark" invert={true} />
-                        {"Remove"}
-                    </button>
-                </div>
-            </div>
-        })
     }
 
     fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
@@ -2356,15 +2324,14 @@ impl Map {
             self.s.redraw = true;
         }
 
-        let m = ev.offset();
-        let m = self.view.to_world(m);
+        let mouse = self.view.to_world(ev.offset());
 
-        self.mouse = Some(m);
+        self.mouse = Some(mouse);
 
         let mut objects = self.objects.borrow_mut();
 
         if let Some(action) = &mut self.action {
-            self.s.apply(&mut objects, action, m);
+            self.s.apply(&mut objects, action, mouse);
         }
 
         Ok(())

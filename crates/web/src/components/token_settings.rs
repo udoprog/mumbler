@@ -14,6 +14,8 @@ use crate::state::State;
 use super::{DynamicCanvas, ImageUpload, into_target, render};
 
 pub(crate) enum Msg {
+    SetLog(log::Log),
+    Error(Error),
     Channel(Result<ws::Channel, ws::Error>),
     ColorChanged(Event),
     ImageSelected(Id),
@@ -23,7 +25,6 @@ pub(crate) enum Msg {
     RadiusChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectColor(api::Color),
-    SetLog(log::Log),
     SpeedChanged(Event),
     StateChanged(ws::State),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
@@ -206,6 +207,7 @@ impl Component for TokenSettings {
                     <section class="preview">
                         <DynamicCanvas
                             onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onerror={ctx.link().callback(Msg::Error)}
                             onresize={ctx.link().callback(Msg::CanvasResized)}
                             />
                     </section>
@@ -232,6 +234,14 @@ impl TokenSettings {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::SetLog(log) => {
+                self.log = log;
+                Ok(false)
+            }
+            Msg::Error(error) => {
+                self.log.error("token_settings", error);
+                Ok(false)
+            }
             Msg::StateChanged(state) => {
                 self.state = state;
                 self.refresh(ctx);
@@ -327,10 +337,6 @@ impl TokenSettings {
                 };
 
                 Ok(value)
-            }
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
             }
             Msg::UpdateResult(result) => {
                 let result = result?;

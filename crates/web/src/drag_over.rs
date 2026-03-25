@@ -10,7 +10,7 @@ enum Drag {
     Below,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DragOver {
     drag: Drag,
     pub(crate) group: RemoteId,

@@ -13,7 +13,6 @@ pub(crate) struct Props {
     #[prop_or_default]
     pub(crate) id: AttrValue,
     pub(crate) onload: Callback<HtmlCanvasElement>,
-    #[prop_or_default]
     pub(crate) onerror: Callback<Error>,
     #[prop_or_default]
     pub(crate) onresize: Callback<(u32, u32)>,
@@ -60,38 +59,10 @@ impl Component for DynamicCanvas {
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Resized => {
-                let mut changed = false;
-
-                if let Some(container) = self.canvas_container.cast::<HtmlElement>() {
-                    let width = u32::try_from(container.client_width()).unwrap_or_default();
-                    let height = u32::try_from(container.client_height()).unwrap_or_default();
-
-                    changed = match self.dimensions {
-                        Some((w, h)) => w != width || h != height,
-                        None => true,
-                    };
-
-                    self.dimensions = Some((width, height));
-
-                    if changed {
-                        ctx.props().onresize.emit((width, height));
-                    }
-                }
-
-                if changed
-                    && let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>()
-                    && let Some((width, height)) = self.dimensions
-                {
-                    canvas.set_width(width as u32);
-                    canvas.set_height(height as u32);
-                }
+                self.refresh(ctx);
             }
         }
 
-        false
-    }
-
-    fn changed(&mut self, _: &Context<Self>, _: &Self::Properties) -> bool {
         false
     }
 
@@ -104,10 +75,14 @@ impl Component for DynamicCanvas {
             if let Err(error) = self.setup_resize_observer(ctx) {
                 ctx.props().onerror.emit(error);
             }
+
+            self.refresh(ctx);
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        tracing::warn!("dynamic render");
+
         let Props {
             id,
             onpointerdown,
@@ -136,7 +111,8 @@ impl Component for DynamicCanvas {
                 {ondragover}
                 {ondrop}
             >
-                <canvas ref={self.canvas_ref.clone()} width="200" height="200" />
+                <canvas key="canvas" ref={self.canvas_ref.clone()} width="200" height="200" />
+
                 {children}
             </div>
         }
@@ -165,5 +141,33 @@ impl DynamicCanvas {
         }
 
         Ok(())
+    }
+
+    fn refresh(&mut self, ctx: &Context<DynamicCanvas>) {
+        let mut changed = false;
+
+        if let Some(container) = self.canvas_container.cast::<HtmlElement>() {
+            let width = u32::try_from(container.client_width()).unwrap_or_default();
+            let height = u32::try_from(container.client_height()).unwrap_or_default();
+
+            changed = match self.dimensions {
+                Some((w, h)) => w != width || h != height,
+                None => true,
+            };
+
+            self.dimensions = Some((width, height));
+
+            if changed {
+                ctx.props().onresize.emit((width, height));
+            }
+        }
+
+        if changed
+            && let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>()
+            && let Some((width, height)) = self.dimensions
+        {
+            canvas.set_width(width as u32);
+            canvas.set_height(height as u32);
+        }
     }
 }

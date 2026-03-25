@@ -17,7 +17,14 @@ impl Error {
 impl fmt::Display for Error {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.error)
+        self.error.fmt(f)
+    }
+}
+
+impl fmt::Debug for Error {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
     }
 }
 

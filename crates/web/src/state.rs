@@ -122,6 +122,16 @@ where
     }
 }
 
+impl<T> PartialEq for State<T>
+where
+    T: PartialEq,
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl<T> fmt::Debug for State<T>
 where
     T: fmt::Debug,

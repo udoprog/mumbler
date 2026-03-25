@@ -14,6 +14,7 @@ const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 
 enum Shape {
+    Empty,
     Circle { radius: f32 },
     Rectangle { width: f32, height: f32 },
 }
@@ -26,6 +27,7 @@ pub(crate) struct Geometry<'a> {
 impl Geometry<'_> {
     pub(crate) fn intersects(&self, point: Vec3) -> bool {
         match self.shape {
+            Shape::Empty => false,
             Shape::Circle { radius } => self.transform.position.dist(point) <= radius,
             Shape::Rectangle { width, height } => {
                 // Do a fast path and check if point is within bounding circle first.
@@ -206,7 +208,7 @@ impl FromIterator<LocalObject> for Objects {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct TokenObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
@@ -261,7 +263,7 @@ impl TokenObject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct StaticObject {
     pub(crate) transform: State<Transform>,
     pub(crate) locked: State<bool>,
@@ -326,7 +328,7 @@ impl StaticObject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct GroupObject {
     pub(crate) locked: State<bool>,
     pub(crate) sort: State<Vec<u8>>,
@@ -357,7 +359,7 @@ impl GroupObject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct RoomObject {
     pub(crate) sort: State<Vec<u8>>,
     pub(crate) background: State<Id>,
@@ -393,7 +395,7 @@ impl RoomObject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum ObjectKind {
     Token(TokenObject),
     Static(StaticObject),
@@ -401,7 +403,7 @@ pub(crate) enum ObjectKind {
     Room(RoomObject),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct LocalObject {
     pub(crate) id: RemoteId,
     pub(crate) group: State<RemoteId>,
@@ -562,7 +564,9 @@ impl LocalObject {
     }
 
     #[inline]
-    pub(crate) fn as_click_geometry(&self) -> Option<Geometry<'_>> {
+    pub(crate) fn as_click_geometry(&self) -> Geometry<'_> {
+        const ORIGIN: Transform = Transform::origin();
+
         let (transform, shape) = match &self.kind {
             ObjectKind::Token(this) => (
                 &*this.transform,
@@ -577,10 +581,15 @@ impl LocalObject {
                     height: *this.height,
                 },
             ),
-            _ => return None,
+            _ => {
+                return Geometry {
+                    transform: &ORIGIN,
+                    shape: Shape::Empty,
+                };
+            }
         };
 
-        Some(Geometry { transform, shape })
+        Geometry { transform, shape }
     }
 
     /// Returns `true` if this is a token.
