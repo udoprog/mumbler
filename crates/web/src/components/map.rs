@@ -1027,22 +1027,7 @@ impl Component for Map {
                             oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
                             ondragover={ctx.link().callback(Msg::CanvasDragOver)}
                             ondrop={ctx.link().callback(Msg::DropImage)}
-                        >
-                            if let Some(menu) = &self.s.context_menu {
-                                <ContextMenuDropdown
-                                    position={menu.position}
-                                    object_id={menu.object_id}
-                                    is_hidden={objects.get(menu.object_id).map(|o| o.is_hidden()).unwrap_or_default()}
-                                    mumble_object={*self.config.mumble_object}
-                                    onclose={menu.onclose.clone()}
-                                    onsettings={menu.onsettings.clone()}
-                                    onhidden={menu.onhidden.clone()}
-                                    onlocalhidden={menu.onlocalhidden.clone()}
-                                    onmumbleobject={menu.onmumbleobject.clone()}
-                                    onremove={menu.onremove.clone()}
-                                    />
-                            }
-                        </DynamicCanvas>
+                            />
                     </div>
 
                     <div class="col-3 rows">
@@ -1072,6 +1057,21 @@ impl Component for Map {
                 </div>
 
                 {footer}
+
+                if let Some(menu) = &self.s.context_menu {
+                    <ContextMenuDropdown
+                        position={menu.position}
+                        object_id={menu.object_id}
+                        is_hidden={objects.get(menu.object_id).map(|o| o.is_hidden()).unwrap_or_default()}
+                        mumble_object={*self.config.mumble_object}
+                        onclose={menu.onclose.clone()}
+                        onsettings={menu.onsettings.clone()}
+                        onhidden={menu.onhidden.clone()}
+                        onlocalhidden={menu.onlocalhidden.clone()}
+                        onmumbleobject={menu.onmumbleobject.clone()}
+                        onremove={menu.onremove.clone()}
+                        />
+                }
 
                 if let Some(modal) = &self.s.modal {
                     <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
@@ -1529,9 +1529,9 @@ impl Map {
                 _ = result.decode()?;
                 Ok(false)
             }
-            Msg::ContextMenu(e) => {
-                e.prevent_default();
-                self.on_context_menu(ctx, e)?;
+            Msg::ContextMenu(ev) => {
+                ev.prevent_default();
+                self.on_context_menu(ctx, ev)?;
                 Ok(true)
             }
             Msg::CloseContextMenu => {
@@ -2253,9 +2253,10 @@ impl Map {
 
         if let Some(object_id) = hit {
             self.s.selected = object_id;
+
             self.s.context_menu = Some(ContextMenu {
                 object_id,
-                position: ev.offset(),
+                position: ev.client(),
                 onclose: ctx.link().callback(|_| Msg::CloseContextMenu),
                 onsettings: ctx.link().callback(move |_| Msg::OpenSettings(object_id)),
                 onhidden: ctx.link().callback(move |_| Msg::ToggleHidden(object_id)),
@@ -2265,8 +2266,10 @@ impl Map {
                 onmumbleobject: ctx
                     .link()
                     .callback(move |_| Msg::ToggleMumbleObject(object_id)),
-                onremove: ctx.link().callback(move |_| Msg::RemoveObject(object_id)),
+                onremove: ctx.link().callback(move |_| Msg::ConfirmRemove(object_id)),
             });
+
+            self.s.redraw = true;
         } else {
             self.s.context_menu = None;
         }

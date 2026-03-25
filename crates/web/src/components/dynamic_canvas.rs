@@ -32,8 +32,6 @@ pub(crate) struct Props {
     pub(crate) ondragover: Callback<DragEvent>,
     #[prop_or_default]
     pub(crate) ondrop: Callback<DragEvent>,
-    #[prop_or_default]
-    pub(crate) children: Children,
 }
 
 pub(crate) struct DynamicCanvas {
@@ -93,7 +91,6 @@ impl Component for DynamicCanvas {
             oncontextmenu,
             ondragover,
             ondrop,
-            children,
             ..
         } = ctx.props();
 
@@ -112,8 +109,6 @@ impl Component for DynamicCanvas {
                 {ondrop}
             >
                 <canvas key="canvas" ref={self.canvas_ref.clone()} width="200" height="200" />
-
-                {children}
             </div>
         }
     }

@@ -59,32 +59,29 @@ pub(crate) fn context_menu_dropdown(props: &Props) -> Html {
         ev.prevent_default();
     });
 
+    let onclick = |ev: MouseEvent| ev.stop_propagation();
+
     html! {
         <div key="context-menu" class="context-menu-backdrop" onclick={props.onclose.reform(|_| ())}>
-            <div class="context-menu" {style} onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                <button class="context-menu-item"
-                    onclick={onsettings}>
+            <div class="context-menu" {style} {onclick}>
+                <button class="context-menu-item" onclick={onsettings}>
                     <Icon name="cog" invert={true} />
                     {"Settings"}
                 </button>
-                <button class="context-menu-item"
-                    onclick={onhidden}>
+                <button class="context-menu-item" onclick={onhidden}>
                     <Icon name={hidden_icon} invert={true} />
                     {hidden_label}
                 </button>
-                <button class="context-menu-item"
-                    onclick={onlocalhidden}>
+                <button class="context-menu-item" onclick={onlocalhidden}>
                     <Icon name="no-symbol" invert={true} />
                     {local_hidden_label}
                 </button>
-                <button class="context-menu-item"
-                    onclick={onmumbleobject}>
+                <button class="context-menu-item" onclick={onmumbleobject}>
                     <Icon name="mumble" invert={true} />
                     {mumble_label}
                 </button>
                 <div class="context-menu-separator" />
-                <button class="context-menu-item danger"
-                    onclick={onremove}>
+                <button class="context-menu-item danger" onclick={onremove}>
                     <Icon name="x-mark" invert={true} />
                     {"Remove"}
                 </button>
