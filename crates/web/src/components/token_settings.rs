@@ -29,7 +29,7 @@ pub(crate) enum Msg {
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
-    CanvasResized((i32, i32)),
+    CanvasResized((u32, u32)),
 }
 
 #[derive(Properties, PartialEq)]

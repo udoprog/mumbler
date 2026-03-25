@@ -32,7 +32,7 @@ pub(crate) enum Msg {
     WidthChanged(Event),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
-    CanvasResized((i32, i32)),
+    CanvasResized((u32, u32)),
 }
 
 #[derive(Properties, PartialEq)]

@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::{HtmlCanvasElement, HtmlElement, ResizeObserver};
+use web_sys::{HtmlCanvasElement, HtmlElement, PointerEvent, ResizeObserver};
 use yew::prelude::*;
 
 use crate::error::Error;
@@ -9,24 +9,44 @@ pub(crate) enum Msg {
 }
 
 #[derive(Properties, PartialEq)]
-pub(crate) struct DynamicCanvasProps {
+pub(crate) struct Props {
+    #[prop_or_default]
+    pub(crate) id: AttrValue,
     pub(crate) onload: Callback<HtmlCanvasElement>,
     #[prop_or_default]
     pub(crate) onerror: Callback<Error>,
     #[prop_or_default]
-    pub(crate) onresize: Callback<(i32, i32)>,
+    pub(crate) onresize: Callback<(u32, u32)>,
+    #[prop_or_default]
+    pub(crate) onpointerdown: Callback<PointerEvent>,
+    #[prop_or_default]
+    pub(crate) onpointermove: Callback<PointerEvent>,
+    #[prop_or_default]
+    pub(crate) onpointerup: Callback<PointerEvent>,
+    #[prop_or_default]
+    pub(crate) onpointerleave: Callback<PointerEvent>,
+    #[prop_or_default]
+    pub(crate) onwheel: Callback<WheelEvent>,
+    #[prop_or_default]
+    pub(crate) oncontextmenu: Callback<MouseEvent>,
+    #[prop_or_default]
+    pub(crate) ondragover: Callback<DragEvent>,
+    #[prop_or_default]
+    pub(crate) ondrop: Callback<DragEvent>,
+    #[prop_or_default]
+    pub(crate) children: Children,
 }
 
 pub(crate) struct DynamicCanvas {
     canvas_container: NodeRef,
     canvas_ref: NodeRef,
-    dimensions: Option<(i32, i32)>,
+    dimensions: Option<(u32, u32)>,
     _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
 }
 
 impl Component for DynamicCanvas {
     type Message = Msg;
-    type Properties = DynamicCanvasProps;
+    type Properties = Props;
 
     fn create(_ctx: &Context<Self>) -> Self {
         Self {
@@ -43,8 +63,8 @@ impl Component for DynamicCanvas {
                 let mut changed = false;
 
                 if let Some(container) = self.canvas_container.cast::<HtmlElement>() {
-                    let width = container.client_width();
-                    let height = container.client_height();
+                    let width = u32::try_from(container.client_width()).unwrap_or_default();
+                    let height = u32::try_from(container.client_height()).unwrap_or_default();
 
                     changed = match self.dimensions {
                         Some((w, h)) => w != width || h != height,
@@ -71,19 +91,7 @@ impl Component for DynamicCanvas {
         false
     }
 
-    fn changed(&mut self, ctx: &Context<Self>, old_props: &Self::Properties) -> bool {
-        if old_props.onload != ctx.props().onload
-            && let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>()
-        {
-            ctx.props().onload.emit(canvas);
-        }
-
-        if old_props.onresize != ctx.props().onresize
-            && let Some(dimensions) = self.dimensions
-        {
-            ctx.props().onresize.emit(dimensions);
-        }
-
+    fn changed(&mut self, _: &Context<Self>, _: &Self::Properties) -> bool {
         false
     }
 
@@ -99,10 +107,37 @@ impl Component for DynamicCanvas {
         }
     }
 
-    fn view(&self, _ctx: &Context<Self>) -> Html {
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let Props {
+            id,
+            onpointerdown,
+            onpointermove,
+            onpointerup,
+            onpointerleave,
+            onwheel,
+            oncontextmenu,
+            ondragover,
+            ondrop,
+            children,
+            ..
+        } = ctx.props();
+
         html! {
-            <div class="canvas-container" ref={self.canvas_container.clone()} key="canvas-container">
+            <div
+                {id}
+                class="canvas-container"
+                ref={self.canvas_container.clone()}
+                {onpointerdown}
+                {onpointermove}
+                {onpointerup}
+                {onpointerleave}
+                {onwheel}
+                {oncontextmenu}
+                {ondragover}
+                {ondrop}
+            >
                 <canvas ref={self.canvas_ref.clone()} width="200" height="200" />
+                {children}
             </div>
         }
     }

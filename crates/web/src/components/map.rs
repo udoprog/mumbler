@@ -12,8 +12,8 @@ use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlElement, HtmlImageElement,
-    KeyboardEvent, MouseEvent, ResizeObserver, Url, WheelEvent,
+    CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlImageElement, KeyboardEvent,
+    MouseEvent, Url, WheelEvent,
 };
 use yew::prelude::*;
 
@@ -29,8 +29,8 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    COMMON_ROOM, GroupSettings, HelpModal, Icon, ObjectList, RoomSettings, Rooms, StaticSettings,
-    TokenSettings, UNKNOWN_ROOM,
+    COMMON_ROOM, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList, RoomSettings, Rooms,
+    StaticSettings, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -453,7 +453,6 @@ pub(crate) struct Map {
     _config_update_listener: ws::Listener,
     _log_handle: ContextHandle<log::Log>,
     _remote_update_listener: ws::Listener,
-    _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
     _set_group: ws::Request,
     _set_mumble_follow: ws::Request,
     _set_sort: ws::Request,
@@ -462,8 +461,7 @@ pub(crate) struct Map {
     _update_world: ws::Request,
     _upload_image: ws::Request,
     animation_interval: Option<Interval>,
-    canvas_ref: NodeRef,
-    canvas_container: NodeRef,
+    canvas: Option<HtmlCanvasElement>,
     channel: ws::Channel,
     config: Config,
     drag_over: Option<DragOver>,
@@ -526,7 +524,6 @@ pub(crate) enum Msg {
     PointerMove(PointerEvent),
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    Resized,
     SelectObject(RemoteId),
     SetLog(log::Log),
     StateChanged(ws::State),
@@ -540,6 +537,8 @@ pub(crate) enum Msg {
     OpenRooms,
     Wheel(WheelEvent),
     ImageLoaded(Result<(), Error>),
+    CanvasLoaded(HtmlCanvasElement),
+    CanvasResized((u32, u32)),
 }
 
 #[derive(Properties, PartialEq)]
@@ -604,7 +603,6 @@ impl Component for Map {
             _config_update_listener,
             _log_handle,
             _remote_update_listener,
-            _resize_observer: None,
             _set_group: ws::Request::new(),
             _set_mumble_follow: ws::Request::new(),
             _set_sort: ws::Request::new(),
@@ -614,8 +612,7 @@ impl Component for Map {
             _upload_image: ws::Request::new(),
             action: None,
             animation_interval: None,
-            canvas_ref: NodeRef::default(),
-            canvas_container: NodeRef::default(),
+            canvas: None,
             config: Config::default(),
             channel: ws::Channel::default(),
             drag_over: None,
@@ -649,23 +646,11 @@ impl Component for Map {
         this
     }
 
-    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+    fn rendered(&mut self, _: &Context<Self>, first_render: bool) {
         if first_render {
-            self.resize_canvas();
-
-            if let Err(error) = self.setup_resizer(ctx) {
-                self.log.error("map::setup_resizer", error);
+            if let Err(error) = self.redraw() {
+                self.log.error("map::redraw", error);
             }
-        }
-
-        if let Err(error) = self.redraw() {
-            self.log.error("map::redraw", error);
-        }
-    }
-
-    fn destroy(&mut self, _: &Context<Self>) {
-        if let Some((observer, _closure)) = self._resize_observer.take() {
-            observer.disconnect();
         }
     }
 
@@ -1017,24 +1002,23 @@ impl Component for Map {
                     <div class="col-9 rows map-column">
                         {toolbar}
 
-                        <div class="canvas-container" ref={self.canvas_container.clone()} key="canvas-container">
-                            <canvas
-                                id="map"
-                                ref={self.canvas_ref.clone()}
-                                onpointerdown={ctx.link().callback(Msg::PointerDown)}
-                                onpointermove={ctx.link().callback(Msg::PointerMove)}
-                                onpointerup={ctx.link().callback(Msg::PointerUp)}
-                                onpointerleave={ctx.link().callback(Msg::PointerLeave)}
-                                onwheel={ctx.link().callback(Msg::Wheel)}
-                                oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
-                                ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
-                                ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
-                            ></canvas>
-
+                        <DynamicCanvas
+                            id="map"
+                            onload={ctx.link().callback(Msg::CanvasLoaded)}
+                            onresize={ctx.link().callback(Msg::CanvasResized)}
+                            onpointerdown={ctx.link().callback(Msg::PointerDown)}
+                            onpointermove={ctx.link().callback(Msg::PointerMove)}
+                            onpointerup={ctx.link().callback(Msg::PointerUp)}
+                            onpointerleave={ctx.link().callback(Msg::PointerLeave)}
+                            onwheel={ctx.link().callback(Msg::Wheel)}
+                            oncontextmenu={ctx.link().callback(Msg::ContextMenu)}
+                            ondragover={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::CanvasDragOver(ev) })}
+                            ondrop={ctx.link().callback(|ev: DragEvent| { ev.prevent_default(); Msg::DropImage(ev) })}
+                        >
                             if let Some(menu) = &self.s.context_menu {
                                 {self.render_context_menu(ctx, menu)}
                             }
-                        </div>
+                        </DynamicCanvas>
                     </div>
 
                     <div class="col-3 rows">
@@ -1339,11 +1323,6 @@ impl Map {
                 self.refresh(ctx);
                 Ok(true)
             }
-            Msg::Resized => {
-                self.resize_canvas();
-                self.s.redraw = true;
-                Ok(false)
-            }
             Msg::CanvasDragOver(ev) => {
                 ev.prevent_default();
                 Ok(false)
@@ -1534,6 +1513,23 @@ impl Map {
                 result?;
                 self.s.redraw = true;
                 Ok(false)
+            }
+            Msg::CanvasLoaded(canvas) => {
+                self.canvas = Some(canvas);
+                self.s.redraw = true;
+                Ok(true)
+            }
+            Msg::CanvasResized((width, height)) => {
+                self.view = ViewTransform::new(
+                    width,
+                    height,
+                    *self.config.zoom,
+                    &self.config.pan,
+                    &self.cache.extent,
+                );
+
+                self.s.redraw = true;
+                Ok(true)
             }
         }
     }
@@ -2434,56 +2430,6 @@ impl Map {
         Ok(())
     }
 
-    fn resize_canvas(&mut self) {
-        let Some(sizer) = self.canvas_container.cast::<HtmlElement>() else {
-            return;
-        };
-
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
-            return;
-        };
-
-        tracing::debug!(
-            width = sizer.client_width(),
-            height = sizer.client_height(),
-            "Resizing canvas"
-        );
-
-        canvas.set_width(sizer.client_width() as u32);
-        canvas.set_height(sizer.client_height() as u32);
-
-        self.view = ViewTransform::new(
-            canvas.width(),
-            canvas.height(),
-            *self.config.zoom,
-            &self.config.pan,
-            &self.cache.extent,
-        );
-    }
-
-    fn setup_resizer(&mut self, ctx: &Context<Self>) -> Result<(), Error> {
-        let sizer = self
-            .canvas_container
-            .cast::<HtmlElement>()
-            .ok_or("missing canvas sizer element")?;
-
-        let link = ctx.link().clone();
-        let closure = Closure::<dyn FnMut()>::new(move || {
-            link.send_message(Msg::Resized);
-        });
-
-        let observer = ResizeObserver::new(closure.as_ref().unchecked_ref())?;
-
-        observer.observe(&sizer);
-
-        if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
-            o.disconnect();
-            drop(_closure);
-        }
-
-        Ok(())
-    }
-
     fn drag_end(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
         let Some(drag_over) = self.drag_over.take() else {
             return Ok(false);
@@ -2661,7 +2607,7 @@ impl Map {
 
     #[tracing::instrument(skip_all)]
     fn redraw(&mut self) -> Result<(), Error> {
-        let Some(canvas) = self.canvas_ref.cast::<HtmlCanvasElement>() else {
+        let Some(canvas) = &self.canvas else {
             return Ok(());
         };
 
