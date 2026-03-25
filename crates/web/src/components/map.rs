@@ -45,6 +45,7 @@ enum Modal {
     Rooms,
     Remove { object: ObjectRef },
     Settings { object: ObjectRef },
+    Unlock { object: ObjectRef },
 }
 
 impl Modal {
@@ -67,6 +68,13 @@ impl Modal {
                 <>
                     {"Settings for "}
                     {object.title()}
+                </>
+            },
+            Modal::Unlock { object, .. } => html! {
+                <>
+                    {"Object "}
+                    <span class="object-bullet">{object.name()}</span>
+                    {" is locked!"}
                 </>
             },
         }
@@ -124,6 +132,22 @@ impl Modal {
                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
                 }}
             },
+            Modal::Unlock {
+                object: ObjectRef { id, .. },
+                ..
+            } => html! {
+                <>
+                    <div class="btn-group">
+                        <button class="btn primary" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
+                            {"Ok"}
+                        </button>
+                        <button class="btn danger" onclick={ctx.link().callback(move |_| Msg::ToggleLocked(id))}>
+                            <Icon name="lock-open" />
+                            {"Unlock"}
+                        </button>
+                    </div>
+                </>
+            },
         }
     }
 }
@@ -169,7 +193,12 @@ impl Inner {
         id: RemoteId,
         config: &mut Config,
         objects: &ObjectsRef,
-    ) {
+    ) -> bool {
+        if self.selected == id {
+            return false;
+        }
+
+        self.redraw = true;
         self.selected = id;
         self.context_menu = None;
 
@@ -182,17 +211,18 @@ impl Inner {
         }
 
         if !*config.mumble_follow || *config.mumble_object == id {
-            return;
+            return true;
         }
 
         if !id.is_zero() && !objects.is_interactive(id) {
-            return;
+            return true;
         }
 
         *config.mumble_object = id;
 
         self._toggle_mumble_request =
             channel.updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
+        true
     }
 
     fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, mouse: Vec3) {
@@ -1264,8 +1294,13 @@ impl Map {
                     return Ok(false);
                 };
 
-                let display = o.as_ref();
-                self.s.modal = Some(Modal::Settings { object: display });
+                let modal = if objects.is_locked(o.id) {
+                    Modal::Unlock { object: o.as_ref() }
+                } else {
+                    Modal::Settings { object: o.as_ref() }
+                };
+
+                self.s.modal = Some(modal);
                 Ok(true)
             }
             Msg::OpenRooms => {
@@ -1452,9 +1487,12 @@ impl Map {
                 self.cancel_action();
 
                 let objects = self.objects.borrow();
-                self.s
-                    .select_object(&self.channel, ctx, id, &mut self.config, &objects);
-                Ok(true)
+
+                let update =
+                    self.s
+                        .select_object(&self.channel, ctx, id, &mut self.config, &objects);
+
+                Ok(update)
             }
             Msg::ToggleFollowMumbleSelection => {
                 *self.config.mumble_follow = !*self.config.mumble_follow;
@@ -1510,8 +1548,13 @@ impl Map {
                     return Ok(false);
                 };
 
-                self.s.modal = Some(Modal::Remove { object: o.as_ref() });
+                let modal = if objects.is_locked(o.id) {
+                    Modal::Unlock { object: o.as_ref() }
+                } else {
+                    Modal::Remove { object: o.as_ref() }
+                };
 
+                self.s.modal = Some(modal);
                 Ok(true)
             }
             Msg::CloseModal => {
@@ -2037,26 +2080,19 @@ impl Map {
                     return Ok(false);
                 }
 
-                let objects = self.objects.borrow();
-
-                let Some(o) = objects.get(self.s.selected) else {
-                    return Ok(false);
-                };
-
-                self.s.context_menu = None;
-
-                let object = o.as_ref();
-
-                self.s.modal = Some(Modal::Remove { object });
-
-                Ok(true)
+                ctx.link().send_message(Msg::ConfirmRemove(self.s.selected));
+                Ok(false)
             }
             "Enter" => {
-                if let Some(Modal::Remove { object }) = self.s.modal.take() {
-                    ctx.link().send_message(Msg::RemoveObject(object.id));
-                }
+                if let Some(modal) = self.s.modal.take() {
+                    if let Modal::Remove { object } = modal {
+                        ctx.link().send_message(Msg::RemoveObject(object.id));
+                    }
 
-                Ok(false)
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
             }
             "F1" | "?" => {
                 self.s.modal = match self.s.modal {
@@ -2083,9 +2119,18 @@ impl Map {
                     return Ok(true);
                 }
 
-                self.s.selected = RemoteId::ZERO;
-                self.s.context_menu = None;
-                Ok(true)
+                if self.s.context_menu.is_some() {
+                    self.s.context_menu = None;
+                    return Ok(true);
+                }
+
+                if self.s.selected != RemoteId::ZERO {
+                    self.s.selected = RemoteId::ZERO;
+                    self.s.redraw = true;
+                    return Ok(true);
+                }
+
+                Ok(false)
             }
             "Shift" => self.start_rotation(),
             _ => Ok(false),
@@ -2414,6 +2459,14 @@ impl Map {
 
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
+
+        if objects.is_locked(id)
+            && let Some(o) = objects.get(id)
+        {
+            self.s.modal = Some(Modal::Unlock { object: o.as_ref() });
+
+            return Ok(true);
+        }
 
         let new_group = drag_over.target_group();
 

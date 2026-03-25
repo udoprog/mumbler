@@ -168,8 +168,8 @@ impl ObjectsRef {
 
     /// Test if the given group or any of its ancestors is locked.
     #[inline]
-    pub(crate) fn is_locked(&self, group: RemoteId) -> bool {
-        let mut current = group;
+    pub(crate) fn is_locked(&self, id: RemoteId) -> bool {
+        let mut current = id;
 
         while current != RemoteId::ZERO {
             let Some(object) = self.values.get(&current) else {

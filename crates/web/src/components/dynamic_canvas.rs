@@ -79,8 +79,6 @@ impl Component for DynamicCanvas {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        tracing::warn!("dynamic render");
-
         let Props {
             id,
             onpointerdown,
