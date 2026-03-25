@@ -346,8 +346,8 @@ impl Config {
 
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::WORLD_SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
-            Key::WORLD_PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
+            Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
+            Key::PAN => self.pan.update(value.as_pan().unwrap_or_else(Pan::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
             Key::ROOM => self.room.update(*value.as_stable_id()),
@@ -358,8 +358,8 @@ impl Config {
 
     fn world_values(&self) -> Vec<(Key, Value)> {
         let mut values = Vec::new();
-        values.push((Key::WORLD_SCALE, Value::from(*self.zoom)));
-        values.push((Key::WORLD_PAN, Value::from(*self.pan)));
+        values.push((Key::SCALE, Value::from(*self.zoom)));
+        values.push((Key::PAN, Value::from(*self.pan)));
         values
     }
 }
@@ -733,13 +733,16 @@ impl Component for Map {
             let f = transform.front;
 
             let zoom = *self.config.zoom;
+            let pan = *self.config.pan;
 
-            let position = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
-            let front = format!("X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
-            let other = format!("ZOOM:{:.02}", zoom);
+            let position = format!("POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
+            let front = format!("FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
+            let zoom = format!("ZOOM:{:.02}", zoom);
+            let pan = format!("PAN: X:{:.02}, Y:{:.02}", pan.x, pan.y);
+
             footer = html! {
                 <div class="row">
-                    <div class="col-12 footer">{position}{" / "}{front}{" / "}{other}</div>
+                    <div class="col-12 footer">{position}{" / "}{front}{" / "}{zoom}{" / "}{pan}</div>
                 </div>
             };
         } else {

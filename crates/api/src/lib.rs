@@ -95,10 +95,10 @@ crate::macros::keys! {
         MUMBLE_ENABLED: Boolean = 5;
         REMOTE_SERVER: String = 6;
         REMOTE_ENABLED: Boolean = 7;
-        WORLD_SCALE: Float = 8;
+        SCALE: Float = 8;
         REMOTE_TLS: Boolean = 11;
-        WORLD_ZOOM: Float = 9;
-        WORLD_PAN: Pan = 10;
+        ZOOM: Float = 9;
+        PAN: Pan = 10;
         ROOM_EXTENT: Extent = 12;
         /// The object which is used for mumble link.
         MUMBLE_OBJECT: Id = 14;
