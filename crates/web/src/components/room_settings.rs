@@ -1,4 +1,5 @@
-use api::{Extent, Id, Image, Key, PeerId, RemoteId, RemoteUpdateBody, Value};
+use api::{Extent, Id, Key, RemoteId, RemoteUpdateBody, Value};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -9,49 +10,42 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{ImageUpload, into_target};
+use super::{ImageUpload, SetupChannel, into_target};
 
 pub(crate) enum Msg {
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
+    Channel(Result<ws::Channel, Error>),
     ExtentXMinChanged(Event),
     ExtentXMaxChanged(Event),
     ExtentYMinChanged(Event),
     ExtentYMaxChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
-    ImageSelected(Id),
-    ImagesRefresh,
+    ImageSelected(RemoteId),
+    ImageClear,
     NameChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    SetLog(log::Log),
     ShowGridChanged(Event),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
     pub(crate) id: RemoteId,
 }
 
 pub(crate) struct RoomSettings {
     _list_settings: ws::Request,
-    _log_handle: ContextHandle<log::Log>,
     _remote_update_listener: ws::Listener,
     _select_background: ws::Request,
-    _state_change: ws::StateListener,
     _update_extent: ws::Request,
     _update_name: ws::Request,
     _update_show_grid: ws::Request,
-    background: State<Id>,
+    background: State<RemoteId>,
     extent: State<Extent>,
-    images: Vec<Image>,
     log: log::Log,
     name: State<String>,
     show_grid: State<bool>,
-    state: ws::State,
-    _channel: ws::Request,
     channel: ws::Channel,
+    _setup_channel: SetupChannel,
 }
 
 impl Component for RoomSettings {
@@ -59,43 +53,26 @@ impl Component for RoomSettings {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _remote_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
-
-        let mut this = Self {
+        Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _list_settings: ws::Request::new(),
-            _log_handle,
-            _remote_update_listener,
+            _remote_update_listener: ws::Listener::new(),
             _select_background: ws::Request::new(),
-            _state_change,
             _update_extent: ws::Request::new(),
             _update_name: ws::Request::new(),
             _update_show_grid: ws::Request::new(),
-            background: State::new(Id::ZERO),
+            background: State::new(RemoteId::ZERO),
             extent: State::new(Extent::arena()),
-            images: Vec::new(),
-            log,
             name: State::default(),
             show_grid: State::new(true),
-            state,
-            _channel: ws::Request::new(),
-            channel: ws::Channel::default(),
-        };
-
-        this.refresh(ctx);
-        this
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -109,8 +86,8 @@ impl Component for RoomSettings {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let background_src = (!self.background.is_zero())
-            .then(|| format!("/api/image/{}/{}", PeerId::ZERO, *self.background));
+        let background_src =
+            (!self.background.is_zero()).then(|| format!("/api/image/{}", *self.background));
 
         let extent = *self.extent;
 
@@ -182,15 +159,13 @@ impl Component for RoomSettings {
                 </section>
 
                 <ImageUpload
-                    ws={&ctx.props().ws}
-                    images={self.images.clone()}
                     selected={*self.background}
                     sizing={api::ImageSizing::Crop}
                     size={1024}
                     role={api::Role::BACKGROUND}
                     input_id="background"
                     onselect={ctx.link().callback(Msg::ImageSelected)}
-                    onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
+                    onclear={ctx.link().callback(|_| Msg::ImageClear)}
                 />
 
                 if let Some(src) = background_src {
@@ -205,28 +180,19 @@ impl Component for RoomSettings {
 }
 
 impl RoomSettings {
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
-        }
-    }
-
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
-                Ok(true)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
+
+                self._remote_update_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
 
                 self._list_settings = self
                     .channel
@@ -247,17 +213,18 @@ impl RoomSettings {
                     self.update_property(key, value);
                 }
 
-                self.images = body.images;
                 Ok(true)
-            }
-            Msg::ImagesRefresh => {
-                self.refresh(ctx);
-                Ok(false)
             }
             Msg::ImageSelected(id) => {
                 *self.background = id;
                 self._select_background =
-                    object_update(&self.channel, ctx, Key::ROOM_BACKGROUND, id);
+                    object_update(&self.channel, ctx, Key::ROOM_BACKGROUND, id.id);
+                Ok(true)
+            }
+            Msg::ImageClear => {
+                *self.background = RemoteId::ZERO;
+                self._select_background =
+                    object_update(&self.channel, ctx, Key::ROOM_BACKGROUND, Id::ZERO);
                 Ok(true)
             }
             Msg::ShowGridChanged(e) => {
@@ -324,10 +291,6 @@ impl RoomSettings {
 
                 Ok(changed)
             }
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
-            }
             Msg::UpdateResult(result) => {
                 let result = result?;
                 _ = result.decode()?;
@@ -339,7 +302,7 @@ impl RoomSettings {
     fn update_property(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::NAME => self.name.update(value.as_str().to_owned()),
-            Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
+            Key::ROOM_BACKGROUND => self.background.update(RemoteId::local(value.as_id())),
             Key::ROOM_EXTENT => self
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),

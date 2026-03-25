@@ -4,7 +4,7 @@ use core::time::Duration;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
+use api::{Image, Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
 use async_fuse::Fuse;
 use musli_web::api::ChannelId;
 use tokio::net::TcpStream;
@@ -58,9 +58,10 @@ async fn handle_peer(
                         images.push(RemoteImage {
                             id: image.id,
                             content_type: image.content_type,
-                            bytes: Box::from(image.bytes.as_slice()),
+                            role: image.role,
                             width: image.width,
                             height: image.height,
+                            bytes: Box::from(image.bytes.as_slice()),
                         });
                     }
 
@@ -226,7 +227,15 @@ async fn handle_peer(
                 let id = RemoteId::new(body.peer_id, body.image.id);
                 images.store(id, body.image.bytes.clone());
 
-                b.broadcast(RemoteUpdateBody::ImageAdded { id });
+                let image = Image {
+                    id,
+                    content_type: body.image.content_type,
+                    role: body.image.role,
+                    width: body.image.width,
+                    height: body.image.height,
+                };
+
+                b.broadcast(RemoteUpdateBody::ImageCreated { image });
             }
             Event::ObjectRemoved => {
                 let body = body.decode::<ObjectRemovedBody>()?;
@@ -361,9 +370,10 @@ pub(crate) async fn run(b: Backend, connect: String, tls: bool) -> Result<()> {
                     peer.image_create(RemoteImage {
                         id: image.id,
                         content_type: image.content_type,
-                        bytes: Box::from(image.bytes.as_slice()),
+                        role: image.role,
                         width: image.width,
                         height: image.height,
+                        bytes: Box::from(image.bytes.as_slice()),
                     })?;
                 }
 

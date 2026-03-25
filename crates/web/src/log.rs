@@ -130,8 +130,8 @@ impl Log {
         self.log(component, message, Severity::Info);
     }
 
-    pub(crate) fn error(&self, component: impl fmt::Display, error: Error) {
-        let error = error.into_inner();
+    pub(crate) fn error(&self, component: impl fmt::Display, error: impl Into<Error>) {
+        let error = error.into().into_inner();
 
         let mut message = String::new();
 

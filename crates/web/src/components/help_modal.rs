@@ -3,7 +3,7 @@ use yew::prelude::*;
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {}
 
-#[function_component(HelpModal)]
+#[component(HelpModal)]
 pub(crate) fn help_modal(_: &Props) -> Html {
     html! {
         <dl class="shortcuts">

@@ -4,9 +4,9 @@ use crate::log;
 
 use super::Icon;
 
-#[function_component(Log)]
+#[component(Log)]
 pub(crate) fn log_component() -> Html {
-    let log_context = use_context::<log::Log>().expect("ErrorLog context not found");
+    let log_context = use_context::<log::Log>().expect("Log context not found");
     let force_update = use_force_update();
 
     let _listener_handle = {

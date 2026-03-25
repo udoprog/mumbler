@@ -276,16 +276,16 @@ impl ImageSizing {
 pub struct UploadImageRequest {
     /// MIME type of the uploaded image (e.g. "image/png").
     pub content_type: String,
-    /// Raw bytes of the image file.
-    pub data: Vec<u8>,
+    /// The role of the image being uploaded.
+    pub role: Role,
     /// The crop region to apply to the source image.
     pub crop: CropRegion,
     /// Requested image sizing.
     pub sizing: ImageSizing,
     /// The requested maximum size.
     pub size: u32,
-    /// The role of the image being uploaded.
-    pub role: Role,
+    /// Raw bytes of the image file.
+    pub data: Vec<u8>,
 }
 
 /// A square crop region expressed in the source image's natural pixel space.
@@ -310,8 +310,8 @@ impl CropRegion {
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
 pub struct UploadImageResponse {
-    /// The unique identifier of the uploaded image.
-    pub id: Id,
+    /// The uploaded image.
+    pub image: Image,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
@@ -714,7 +714,7 @@ pub struct GetConfigRequest;
 #[musli(crate = musli_core)]
 pub struct Image {
     /// The unique identifier of the image.
-    pub id: Id,
+    pub id: RemoteId,
     /// The content type of the image.
     pub content_type: ContentType,
     /// The role of the image.
@@ -729,15 +729,17 @@ pub struct Image {
 #[musli(crate = musli_core)]
 pub struct ImageWithData {
     /// The unique identifier of the image.
-    pub id: Id,
+    pub id: RemoteId,
     /// The content type of the image.
     pub content_type: ContentType,
-    /// The raw bytes of the image file.
-    pub bytes: Vec<u8>,
+    /// The role of the image.
+    pub role: Role,
     /// The width of the image in pixels.
     pub width: u32,
     /// The height of the image in pixels.
     pub height: u32,
+    /// The raw bytes of the image file.
+    pub bytes: Vec<u8>,
 }
 
 /// Request to fetch settings for a single object.
@@ -753,10 +755,21 @@ pub struct GetObjectSettingsRequest {
 pub struct GetObjectSettingsResponse {
     /// The object, if it exists.
     pub object: RemoteObject,
-    /// List of image identifiers currently stored in the database.
-    pub images: Vec<Image>,
     /// The public key associated with the local peer.
     pub public_key: PublicKey,
+}
+
+/// Request to fetch images..
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct InitializeImageUploadRequest;
+
+/// Response when fetching images.
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct InitializeImageUploadResponse {
+    /// The images currently stored in the database.
+    pub images: Vec<Image>,
 }
 
 /// Request to create a new local object.
@@ -890,8 +903,8 @@ pub enum RemoteUpdateBody {
         channel: ChannelId,
         id: RemoteId,
     },
-    ImageAdded {
-        id: RemoteId,
+    ImageCreated {
+        image: Image,
     },
     ImageRemoved {
         id: RemoteId,
@@ -939,6 +952,13 @@ api::define! {
     impl Endpoint for GetObjectSettings {
         impl Request for GetObjectSettingsRequest;
         type Response<'de> = GetObjectSettingsResponse;
+    }
+
+    pub type InitializeImageUpload;
+
+    impl Endpoint for InitializeImageUpload {
+        impl Request for InitializeImageUploadRequest;
+        type Response<'de> = InitializeImageUploadResponse;
     }
 
     pub type CreateObject;

@@ -1,4 +1,4 @@
-use api::{Id, Image, Role};
+use api::{RemoteId, Role};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -9,9 +9,10 @@ use yew::prelude::*;
 use crate::error::Error;
 use crate::log;
 
-use super::{CropModal, Icon, ImageGalleryModal, into_target};
+use super::{CropModal, Icon, ImageGalleryModal, SetupChannel, into_target};
 
 pub(crate) enum Msg {
+    Channel(Result<ws::Channel, Error>),
     FileSelected(Event),
     FileRead(String, Result<Vec<u8>, gloo::file::FileReadError>),
     CropConfirmed(api::CropRegion),
@@ -19,30 +20,31 @@ pub(crate) enum Msg {
     Uploaded(Result<Packet<api::UploadImage>, ws::Error>),
     OpenGallery,
     CloseGallery,
-    SelectImage(Id),
-    RemoveImage(Id),
+    SelectImage(RemoteId),
+    RemoveImage(RemoteId),
     RemoveResult(Result<Packet<api::RemoveImage>, ws::Error>),
-    SetLog(log::Log),
 }
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
-    pub(crate) images: Vec<Image>,
-    pub(crate) selected: Id,
+    pub(crate) selected: RemoteId,
     pub(crate) sizing: api::ImageSizing,
     pub(crate) size: u32,
     #[prop_or_default]
     pub(crate) ratio: Option<f64>,
     pub(crate) input_id: AttrValue,
     pub(crate) role: Role,
-    pub(crate) onselect: Callback<Id>,
-    pub(crate) onrefresh: Callback<()>,
+    pub(crate) onselect: Callback<RemoteId>,
     #[prop_or_default]
     pub(crate) onrescale: Option<Callback<Option<f64>>>,
+    #[prop_or_default]
+    pub(crate) onclear: Callback<()>,
 }
 
 pub(crate) struct ImageUpload {
+    log: log::Log,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     _remove_image: ws::Request,
     _file_reader: Option<FileReader>,
     _upload_image: ws::Request,
@@ -50,8 +52,6 @@ pub(crate) struct ImageUpload {
     crop_source_url: Option<String>,
     gallery_open: bool,
     uploading: bool,
-    log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
 }
 
 impl Component for ImageUpload {
@@ -59,12 +59,15 @@ impl Component for ImageUpload {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
         Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _remove_image: ws::Request::new(),
             _file_reader: None,
             _upload_image: ws::Request::new(),
@@ -72,8 +75,6 @@ impl Component for ImageUpload {
             crop_source_url: None,
             gallery_open: false,
             uploading: false,
-            log,
-            _log_handle,
         }
     }
 
@@ -90,6 +91,9 @@ impl Component for ImageUpload {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let input_id = ctx.props().input_id.clone();
 
+        let can_clear = !ctx.props().selected.is_zero();
+        let onclear = can_clear.then(|| ctx.props().onclear.reform(|_| ()));
+
         html! {
             <>
             <section class="btn-group">
@@ -103,6 +107,11 @@ impl Component for ImageUpload {
                     <Icon name="photo" />
                 </button>
 
+                <button class={classes!("btn", "danger", (!can_clear).then_some("disabled"))} onclick={onclear}>
+                    {"Clear"}
+                    <Icon name="x-circle" />
+                </button>
+
                 <input
                     id={input_id}
                     class="hidden"
@@ -114,7 +123,6 @@ impl Component for ImageUpload {
 
             if self.gallery_open {
                 <ImageGalleryModal
-                    images={ctx.props().images.clone()}
                     selected={ctx.props().selected}
                     default_role={ctx.props().role}
                     onselect={ctx.link().callback(Msg::SelectImage)}
@@ -140,6 +148,10 @@ impl Component for ImageUpload {
 impl ImageUpload {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::Channel(channel) => {
+                self.channel = channel?;
+                Ok(false)
+            }
             Msg::FileSelected(e) => {
                 let input = into_target!(e, HtmlInputElement);
 
@@ -176,9 +188,8 @@ impl ImageUpload {
                     return Err("image data not ready".into());
                 };
 
-                self._upload_image = ctx
-                    .props()
-                    .ws
+                self._upload_image = self
+                    .channel
                     .request()
                     .body(api::UploadImageRequest {
                         content_type,
@@ -213,8 +224,7 @@ impl ImageUpload {
                     let _ = Url::revoke_object_url(&url);
                 }
 
-                ctx.props().onselect.emit(body.id);
-                ctx.props().onrefresh.emit(());
+                ctx.props().onselect.emit(body.image.id);
                 Ok(true)
             }
             Msg::SelectImage(id) => {
@@ -223,11 +233,10 @@ impl ImageUpload {
                 Ok(true)
             }
             Msg::RemoveImage(id) => {
-                self._remove_image = ctx
-                    .props()
-                    .ws
+                self._remove_image = self
+                    .channel
                     .request()
-                    .body(api::RemoveImageRequest { id })
+                    .body(api::RemoveImageRequest { id: id.id })
                     .on_packet(ctx.link().callback(Msg::RemoveResult))
                     .send();
                 Ok(false)
@@ -235,7 +244,7 @@ impl ImageUpload {
             Msg::RemoveResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
-                ctx.props().onrefresh.emit(());
+                ctx.props().onselect.emit(RemoteId::ZERO);
                 Ok(false)
             }
             Msg::OpenGallery => {
@@ -245,10 +254,6 @@ impl ImageUpload {
             Msg::CloseGallery => {
                 self.gallery_open = false;
                 Ok(true)
-            }
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
             }
         }
     }

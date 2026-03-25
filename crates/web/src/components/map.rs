@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Canvas2, Color, Extent, Key, PeerId, RemoteId, RemoteUpdateBody, StableId, Type, UpdateBody,
-    Value, Vec3,
+    Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId, RemoteUpdateBody,
+    StableId, Type, UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -30,7 +31,7 @@ use crate::state::State;
 use super::render::{self, ViewTransform};
 use super::{
     COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList,
-    RoomSettings, Rooms, StaticSettings, TokenSettings, UNKNOWN_ROOM,
+    RoomSettings, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -40,7 +41,8 @@ const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const ANIMATION_FPS: u32 = 60;
 
-enum Modal {
+#[derive(Debug, PartialEq)]
+pub(crate) enum Modal {
     Help,
     Rooms,
     Remove { object: ObjectRef },
@@ -80,13 +82,13 @@ impl Modal {
         }
     }
 
-    fn view(&self, ctx: &Context<Map>, ws: &ws::Handle) -> Html {
+    fn view(&self, ctx: &Context<Map>) -> Html {
         match *self {
             Modal::Help => html! {
                 <HelpModal />
             },
             Modal::Rooms => html! {
-                <Rooms {ws}
+                <Rooms
                     onopensettings={ctx.link().callback(Msg::OpenSettings)}
                     onrequestdelete={ctx.link().callback(Msg::ConfirmRemove)}
                     />
@@ -118,16 +120,16 @@ impl Modal {
             } => html! {
                  {match object.ty {
                     Type::STATIC => {
-                        html! { <StaticSettings {ws} {id} /> }
+                        html! { <StaticSettings {id} /> }
                     }
                     Type::GROUP => {
-                        html! { <GroupSettings {ws} {id} /> }
+                        html! { <GroupSettings {id} /> }
                     }
                     Type::TOKEN => {
-                        html! { <TokenSettings {ws} {id} /> }
+                        html! { <TokenSettings {id} /> }
                     }
                     Type::ROOM => {
-                        html! { <RoomSettings {ws} {id} /> }
+                        html! { <RoomSettings {id} /> }
                     }
                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
                 }}
@@ -497,33 +499,31 @@ struct ObjectRequests {
 }
 
 pub(crate) struct Map {
+    log: log::Log,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     _create_dropped_object: ws::Request,
     _create_group: ws::Request,
     _create_object: ws::Request,
     _create_static: ws::Request,
     _remove_object: ws::Request,
     _initialize: ws::Request,
-    _channel: ws::Request,
     _keydown_listener: EventListener,
     _keyup_listener: EventListener,
-    _config_update_listener: ws::Listener,
-    _log_handle: ContextHandle<log::Log>,
-    _remote_update_listener: ws::Listener,
+    _config_update: ws::Listener,
+    _remote_update: ws::Listener,
     _set_group: ws::Request,
     _set_mumble_follow: ws::Request,
     _set_sort: ws::Request,
-    _state_change: ws::StateListener,
     _toggle_locked: ws::Request,
     _update_world: ws::Request,
     _upload_image: ws::Request,
     animation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
-    channel: ws::Channel,
     config: Config,
     drag_over: Option<DragOver>,
     drop_image: Option<DropImage>,
     images: Images,
-    log: log::Log,
     look_at_requests: HashMap<RemoteId, ws::Request>,
     mouse: Option<Vec3>,
     object_ondragend: Callback<RemoteId>,
@@ -541,7 +541,6 @@ pub(crate) struct Map {
     peers: Peers,
     cache: Cache,
     action: Option<Action>,
-    state: ws::State,
     transform_requests: HashMap<RemoteId, ws::Request>,
     look_ats: Vec<(Vec3, Color)>,
     s: Inner,
@@ -550,12 +549,11 @@ pub(crate) struct Map {
 
 #[derive(Debug)]
 pub(crate) enum Msg {
-    SetLog(log::Log),
     Error(Error),
+    Channel(Result<ws::Channel, Error>),
     AnimationFrame,
     CloseModal,
     CloseContextMenu,
-    OpenHelp,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmRemove(RemoteId),
@@ -571,7 +569,6 @@ pub(crate) enum Msg {
     DropImageLoaded(u32, u32),
     DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
     DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
-    Channel(Result<ws::Channel, ws::Error>),
     Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
@@ -584,7 +581,6 @@ pub(crate) enum Msg {
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectObject(RemoteId),
-    StateChanged(ws::State),
     ToggleFollowMumbleSelection,
     ToggleHidden(RemoteId),
     ToggleLocalHidden(RemoteId),
@@ -592,7 +588,7 @@ pub(crate) enum Msg {
     ToggleLocked(RemoteId),
     ToggleMumbleObject(RemoteId),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
-    OpenRooms,
+    OpenModal(Modal),
     Wheel(WheelEvent),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
@@ -600,34 +596,17 @@ pub(crate) enum Msg {
 }
 
 #[derive(Properties, PartialEq)]
-pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
-}
+pub(crate) struct Props;
 
 impl Component for Map {
     type Message = Msg;
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
-            .expect("ErrorLog context not found");
-
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _config_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
-
-        let _remote_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
         let document = web_sys::window()
             .expect("window")
@@ -648,23 +627,23 @@ impl Component for Map {
             }
         });
 
-        let mut this = Self {
+        Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _create_dropped_object: ws::Request::new(),
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
-            _channel: ws::Request::new(),
             _remove_object: ws::Request::new(),
             _initialize: ws::Request::new(),
             _keydown_listener,
             _keyup_listener,
-            _config_update_listener,
-            _log_handle,
-            _remote_update_listener,
+            _config_update: ws::Listener::new(),
+            _remote_update: ws::Listener::new(),
             _set_group: ws::Request::new(),
             _set_mumble_follow: ws::Request::new(),
             _set_sort: ws::Request::new(),
-            _state_change,
             _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
             _upload_image: ws::Request::new(),
@@ -672,11 +651,9 @@ impl Component for Map {
             animation_interval: None,
             canvas: None,
             config: Config::default(),
-            channel: ws::Channel::default(),
             drag_over: None,
             drop_image: None,
             images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
-            log,
             look_at_requests: HashMap::new(),
             look_ats: Vec::new(),
             mouse: None,
@@ -695,13 +672,9 @@ impl Component for Map {
             peers: Peers::default(),
             cache: Cache::default(),
             s: Inner::default(),
-            state,
             transform_requests: HashMap::new(),
             view: ViewTransform::simple(0, 0, 1.0),
-        };
-
-        this.refresh(ctx);
-        this
+        }
     }
 
     fn rendered(&mut self, _: &Context<Self>, first_render: bool) {
@@ -781,7 +754,6 @@ impl Component for Map {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let ws = &ctx.props().ws;
         let objects = self.objects.borrow();
 
         let footer;
@@ -992,7 +964,7 @@ impl Component for Map {
 
             let help = {
                 html! {
-                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenHelp)}>
+                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenModal(Modal::Help))}>
                         <Icon name="question-mark-circle" />
                     </button>
                 }
@@ -1008,7 +980,7 @@ impl Component for Map {
                     {locked}
 
                     <section class="icon-group">
-                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenRooms)}>
+                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenModal(Modal::Rooms))}>
                             <Icon name={self.cache.room_icon} />
                             <span>{self.cache.room_name.clone()}</span>
                         </button>
@@ -1127,7 +1099,7 @@ impl Component for Map {
                                 </button>
                             </div>
                             <div class="modal-body rows">
-                                {modal.view(ctx, ws)}
+                                {modal.view(ctx)}
                             </div>
                         </div>
                     </div>
@@ -1139,19 +1111,6 @@ impl Component for Map {
 }
 
 impl Map {
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
-        }
-    }
-
     fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
         // Already processing a drop.
         if self.drop_image.is_some() {
@@ -1272,10 +1231,6 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
-            }
             Msg::Error(error) => {
                 self.log.error("map", error);
                 Ok(false)
@@ -1303,25 +1258,39 @@ impl Map {
                 self.s.modal = Some(modal);
                 Ok(true)
             }
-            Msg::OpenRooms => {
-                self.s.modal = Some(Modal::Rooms);
-                Ok(true)
-            }
-            Msg::OpenHelp => {
-                self.s.modal = Some(Modal::Help);
-                Ok(true)
+            Msg::OpenModal(modal) => {
+                if self.s.modal.as_ref() != Some(&modal) {
+                    self.s.modal = Some(modal);
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
             }
             Msg::ConfigResult(result) => {
                 result?;
                 Ok(false)
             }
-            Msg::ToggleMumbleObject(id) => self.toggle_mumble_object(ctx, id),
-            Msg::ToggleLocked(id) => self.toggle_locked(ctx, id),
-            Msg::ToggleHidden(id) => self.toggle_hidden(ctx, id),
-            Msg::ToggleLocalHidden(id) => self.toggle_local_hidden(ctx, id),
-            Msg::ToggleExpanded(id) => self.toggle_expanded(ctx, id),
+            Msg::ToggleMumbleObject(id) => Ok(self.toggle_mumble_object(ctx, id)),
+            Msg::ToggleLocked(id) => Ok(self.toggle_locked(ctx, id)),
+            Msg::ToggleHidden(id) => Ok(self.toggle_hidden(ctx, id)),
+            Msg::ToggleLocalHidden(id) => Ok(self.toggle_local_hidden(ctx, id)),
+            Msg::ToggleExpanded(id) => Ok(self.toggle_expanded(ctx, id)),
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
+
+                self._config_update = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
+
+                self._remote_update = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
 
                 self._initialize = self
                     .channel
@@ -1335,48 +1304,7 @@ impl Map {
             Msg::Initialize(body) => {
                 let body = body?;
                 let body = body.decode()?;
-
-                tracing::debug!(?body, "Initialize");
-
-                self.peers.public_key = body.public_key;
-                self.config = Config::from_config(body.props);
-
-                self.objects = body
-                    .objects
-                    .iter()
-                    .filter_map(|object| LocalObject::new(PeerId::ZERO, object))
-                    .collect();
-
-                let mut order = self.order.borrow_mut();
-                let mut objects = self.objects.borrow_mut();
-
-                order.extend(objects.values());
-
-                self.peers.clear();
-
-                for peer in body.peers {
-                    self.peers.insert(peer, &self.config.room);
-                }
-
-                for (peer_id, object) in body.peer_objects {
-                    let Some(object) = LocalObject::new(peer_id, &object) else {
-                        continue;
-                    };
-
-                    order.insert(&object);
-                    objects.insert(object);
-                }
-
-                self.images.clear();
-
-                for id in body.images {
-                    self.images
-                        .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
-                }
-
-                self.s.update_cache = true;
-                self.s.redraw = true;
-                Ok(true)
+                Ok(self.initialize(ctx, body))
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
@@ -1386,19 +1314,12 @@ impl Map {
             Msg::RemoteUpdate(body) => {
                 let body = body?;
                 let body = body.decode()?;
-                let update = self.remote_update(ctx, body)?;
-                self.s.redraw = true;
-                Ok(update)
+                Ok(self.remote_update(ctx, body))
             }
             Msg::UpdateResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(false)
-            }
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
-                Ok(true)
             }
             Msg::CanvasDragOver(ev) => {
                 ev.prevent_default();
@@ -1453,7 +1374,7 @@ impl Map {
                     Type::STATIC,
                     [
                         (Key::HIDDEN, Value::from(true)),
-                        (Key::IMAGE_ID, Value::from(body.id)),
+                        (Key::IMAGE_ID, Value::from(body.image.id.id)),
                         (Key::TRANSFORM, Value::from(transform)),
                         (Key::STATIC_WIDTH, Value::from(width)),
                         (Key::STATIC_HEIGHT, Value::from(height)),
@@ -1561,16 +1482,7 @@ impl Map {
                 self.s.modal = None;
                 Ok(true)
             }
-            Msg::RemoveObject(id) => {
-                self._remove_object = self
-                    .channel
-                    .request()
-                    .body(api::RemoveObjectRequest { id: id.id })
-                    .on_packet(ctx.link().callback(Msg::ObjectRemoved))
-                    .send();
-
-                Ok(self.remove_object(ctx, id))
-            }
+            Msg::RemoveObject(id) => Ok(self.remove_object_remote(ctx, id)),
             Msg::ObjectRemoved(result) => {
                 let result = result?;
                 _ = result.decode()?;
@@ -1610,6 +1522,50 @@ impl Map {
         }
     }
 
+    fn initialize(&mut self, ctx: &Context<Self>, body: InitializeMapResponse) -> bool {
+        tracing::debug!(?body, "Initialize");
+
+        self.peers.public_key = body.public_key;
+        self.config = Config::from_config(body.props);
+
+        self.objects = body
+            .objects
+            .iter()
+            .filter_map(|object| LocalObject::new(PeerId::ZERO, object))
+            .collect();
+
+        let mut order = self.order.borrow_mut();
+        let mut objects = self.objects.borrow_mut();
+
+        order.extend(objects.values());
+
+        self.peers.clear();
+
+        for peer in body.peers {
+            self.peers.insert(peer, &self.config.room);
+        }
+
+        for (peer_id, object) in body.peer_objects {
+            let Some(object) = LocalObject::new(peer_id, &object) else {
+                continue;
+            };
+
+            order.insert(&object);
+            objects.insert(object);
+        }
+
+        self.images.clear();
+
+        for id in body.images {
+            self.images
+                .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
+        }
+
+        self.s.update_cache = true;
+        self.s.redraw = true;
+        true
+    }
+
     fn config_update(&mut self, body: UpdateBody) -> Result<bool, Error> {
         tracing::debug!(?body, "Config update");
 
@@ -1647,11 +1603,7 @@ impl Map {
         }
     }
 
-    fn remote_update(
-        &mut self,
-        ctx: &Context<Self>,
-        body: RemoteUpdateBody,
-    ) -> Result<bool, Error> {
+    fn remote_update(&mut self, ctx: &Context<Self>, body: RemoteUpdateBody) -> bool {
         tracing::debug!(?body, "Remote update");
 
         match body {
@@ -1664,11 +1616,12 @@ impl Map {
                 self.images.retain(|peer_id| peer_id == PeerId::ZERO);
                 self.peers.clear();
                 self.s.update_cache = true;
-                Ok(true)
+                self.s.redraw = true;
+                true
             }
             RemoteUpdateBody::PeerConnected { peer } => {
                 self.peers.insert(peer, &self.config.room);
-                Ok(true)
+                true
             }
             RemoteUpdateBody::PeerJoin {
                 peer_id,
@@ -1686,7 +1639,8 @@ impl Map {
                     objects.insert(object);
                 }
 
-                Ok(true)
+                self.s.redraw = true;
+                true
             }
             RemoteUpdateBody::PeerLeave { peer_id } => {
                 let mut objects = self.objects.borrow_mut();
@@ -1696,7 +1650,9 @@ impl Map {
                 // local objects.
                 objects.retain(|id, global| global || id.peer_id != peer_id);
                 order.retain(|this| this != peer_id);
-                Ok(true)
+
+                self.s.redraw = true;
+                true
             }
             RemoteUpdateBody::PeerDisconnect { peer_id } => {
                 let mut objects = self.objects.borrow_mut();
@@ -1707,7 +1663,9 @@ impl Map {
                 objects.retain(|id, _| id.peer_id != peer_id);
                 order.retain(|this| this != peer_id);
                 self.peers.remove_peer(peer_id);
-                Ok(true)
+
+                self.s.redraw = true;
+                true
             }
             RemoteUpdateBody::PeerUpdate {
                 peer_id,
@@ -1715,22 +1673,19 @@ impl Map {
                 value,
             } => {
                 let Some(peer) = self.peers.get_mut(peer_id) else {
-                    return Ok(false);
+                    return false;
                 };
 
                 peer.update(key, value, &self.config.room);
-                Ok(true)
+                true
             }
-            RemoteUpdateBody::ObjectCreated { id, object, .. } => {
-                Ok(self.create_object(id, object))
-            }
+            RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
             RemoteUpdateBody::ObjectRemoved { channel, id } => {
                 if self.channel.id() == channel {
-                    return Ok(false);
+                    return false;
                 }
 
-                self.remove_object(ctx, id);
-                Ok(true)
+                self.remove_object(ctx, id)
             }
             RemoteUpdateBody::ObjectUpdated {
                 channel,
@@ -1742,42 +1697,44 @@ impl Map {
                 let mut order = self.order.borrow_mut();
 
                 if self.channel.id() == channel {
-                    return Ok(false);
+                    return false;
                 }
 
                 let Some(o) = objects.get_mut(id) else {
-                    return Ok(false);
+                    return false;
                 };
 
-                let update = match key {
-                    Key::SORT => {
+                let mut update = match key {
+                    Key::SORT => 'done: {
                         let Some((_, sort)) = o.sort_mut() else {
-                            return Ok(false);
+                            break 'done false;
                         };
 
                         let new = value.as_bytes().to_vec();
 
                         let Some(old) = sort.replace(new) else {
-                            return Ok(false);
+                            break 'done false;
                         };
 
-                        order.reorder(*o.group, &old, *o.group, o.sort(), o.id);
-                        true
+                        order.reorder(*o.group, &old, *o.group, o.sort(), o.id)
                     }
                     _ => false,
                 };
 
                 self.s.update_cache = o.ty() == Type::ROOM;
-                Ok(o.update(key, value) || update)
+                update |= o.update(key, value);
+                update
             }
-            RemoteUpdateBody::ImageAdded { id } => {
+            RemoteUpdateBody::ImageCreated { image } => {
                 self.images
-                    .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
-                Ok(true)
+                    .load_id(&image.id, ctx.link().callback(Msg::ImageLoaded));
+                self.s.redraw = true;
+                true
             }
             RemoteUpdateBody::ImageRemoved { id } => {
                 self.images.remove(&id);
-                Ok(true)
+                self.s.redraw = true;
+                true
             }
         }
     }
@@ -1811,7 +1768,19 @@ impl Map {
         order.insert(&object);
         objects.insert(object);
         self.s.update_cache = true;
+        self.s.redraw = true;
         true
+    }
+
+    fn remove_object_remote(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+        self._remove_object = self
+            .channel
+            .request()
+            .body(api::RemoveObjectRequest { id: id.id })
+            .on_packet(ctx.link().callback(Msg::ObjectRemoved))
+            .send();
+
+        self.remove_object(ctx, id)
     }
 
     fn remove_object(&mut self, ctx: &Context<Map>, id: RemoteId) -> bool {
@@ -1840,6 +1809,7 @@ impl Map {
         self.s.modal = None;
         self.object_requests.remove(&id);
         self.s.update_cache = true;
+        self.s.redraw = true;
         true
     }
 
@@ -1881,10 +1851,12 @@ impl Map {
         false
     }
 
-    fn start_translate_on_hit(&mut self, ctx: &Context<Self>) {
+    fn start_translate_on_hit(&mut self, ctx: &Context<Self>) -> bool {
         let Some(mouse) = self.mouse else {
-            return;
+            return false;
         };
+
+        let mut update = false;
 
         let id = {
             let order = self.order.borrow();
@@ -1907,13 +1879,18 @@ impl Map {
                 }
 
                 if self.s.selected.is_zero() || hit.is_token() {
-                    self.s
-                        .select_object(&self.channel, ctx, hit.id, &mut self.config, &objects);
+                    update = self.s.select_object(
+                        &self.channel,
+                        ctx,
+                        hit.id,
+                        &mut self.config,
+                        &objects,
+                    );
 
                     // For token selection, we want to avoid "stutter", so we
                     // don't immediately start translating.
                     if hit.is_token() {
-                        return;
+                        return update;
                     }
 
                     break 'done hit.id;
@@ -1923,26 +1900,27 @@ impl Map {
             }
         };
 
-        self.start_translate(id)
+        update |= self.start_translate(id);
+        update
     }
 
-    fn start_translate(&mut self, id: RemoteId) {
+    fn start_translate(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return;
+            return false;
         }
 
         let Some(mouse) = self.mouse else {
-            return;
+            return false;
         };
 
         let mut objects = self.objects.borrow_mut();
 
         if objects.is_locked(id) {
-            return;
+            return false;
         }
 
         let Some(o) = objects.get_mut(id) else {
-            return;
+            return false;
         };
 
         self.s.arrow_target.remove(&id);
@@ -1951,7 +1929,7 @@ impl Map {
 
         let offset = if is_static {
             let Some(transform) = o.as_transform() else {
-                return;
+                return false;
             };
 
             // Keep the cursor's offset relative to the object's origin while
@@ -1969,6 +1947,7 @@ impl Map {
         }));
 
         self.s.apply(&mut objects, action, mouse);
+        true
     }
 
     fn start_scale(&mut self) -> bool {
@@ -2083,17 +2062,7 @@ impl Map {
                 ctx.link().send_message(Msg::ConfirmRemove(self.s.selected));
                 Ok(false)
             }
-            "Enter" => {
-                if let Some(modal) = self.s.modal.take() {
-                    if let Modal::Remove { object } = modal {
-                        ctx.link().send_message(Msg::RemoveObject(object.id));
-                    }
-
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
+            "Enter" => Ok(self.accept(ctx)),
             "F1" | "?" => {
                 self.s.modal = match self.s.modal {
                     Some(Modal::Help) => None,
@@ -2103,63 +2072,74 @@ impl Map {
                 Ok(true)
             }
             "s" | "S" => Ok(self.start_scale()),
-            "t" | "T" => self.toggle_locked(ctx, self.s.selected),
-            "r" | "R" => self.start_rotation(),
-            "g" | "G" => {
-                self.start_translate(self.s.selected);
-                Ok(true)
-            }
-            "Escape" => {
-                if self.cancel_action() {
-                    return Ok(false);
-                }
-
-                if self.s.modal.is_some() {
-                    self.s.modal = None;
-                    return Ok(true);
-                }
-
-                if self.s.context_menu.is_some() {
-                    self.s.context_menu = None;
-                    return Ok(true);
-                }
-
-                if self.s.selected != RemoteId::ZERO {
-                    self.s.selected = RemoteId::ZERO;
-                    self.s.redraw = true;
-                    return Ok(true);
-                }
-
-                Ok(false)
-            }
-            "Shift" => self.start_rotation(),
+            "t" | "T" => Ok(self.toggle_locked(ctx, self.s.selected)),
+            "r" | "R" => Ok(self.start_rotation()),
+            "g" | "G" => Ok(self.start_translate(self.s.selected)),
+            "Escape" => Ok(self.cancel()),
+            "Shift" => Ok(self.start_rotation()),
             _ => Ok(false),
         }
     }
 
-    fn start_rotation(&mut self) -> Result<bool, Error> {
+    fn accept(&mut self, ctx: &Context<Self>) -> bool {
+        let Some(modal) = self.s.modal.take() else {
+            return false;
+        };
+
+        if let Modal::Remove { object } = modal {
+            self.remove_object_remote(ctx, object.id);
+        }
+
+        true
+    }
+
+    fn cancel(&mut self) -> bool {
+        if self.cancel_action() {
+            return false;
+        }
+
+        if self.s.modal.is_some() {
+            self.s.modal = None;
+            return true;
+        }
+
+        if self.s.context_menu.is_some() {
+            self.s.context_menu = None;
+            return true;
+        }
+
+        if self.s.selected != RemoteId::ZERO {
+            self.s.selected = RemoteId::ZERO;
+            self.s.redraw = true;
+            return true;
+        }
+
+        false
+    }
+
+    fn start_rotation(&mut self) -> bool {
         if self.s.selected.is_zero() || !self.s.selected.is_local() {
-            return Ok(false);
+            return false;
         }
 
         let Some(mouse) = self.mouse else {
-            return Ok(false);
+            return false;
         };
 
         let mut objects = self.objects.borrow_mut();
 
         if objects.is_locked(self.s.selected) {
-            return Ok(false);
+            return false;
         }
 
         let Some(o) = objects.get(self.s.selected) else {
-            return Ok(false);
+            return false;
         };
 
         let object_id = o.id;
 
         let Some(transform) = o.as_transform() else {
-            return Ok(false);
+            return false;
         };
 
         let center = transform.position;
@@ -2179,7 +2159,7 @@ impl Map {
         }));
 
         self.s.apply(&mut objects, action, mouse);
-        Ok(true)
+        true
     }
 
     fn interpolate_movement(&mut self) {
@@ -2245,7 +2225,7 @@ impl Map {
     }
 
     fn send_transform_updates(&mut self, ctx: &Context<Self>) {
-        if !matches!(self.state, ws::State::Open) {
+        if self.channel.id() == ChannelId::NONE {
             self.s.transforms.clear();
             return;
         }
@@ -2269,7 +2249,7 @@ impl Map {
     }
 
     fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
-        if !matches!(self.state, ws::State::Open) {
+        if self.channel.id() == ChannelId::NONE {
             self.s.look_at.clear();
             return;
         }
@@ -2335,7 +2315,7 @@ impl Map {
 
                 self.mouse = Some(e);
 
-                if self.start_rotation()? {
+                if self.start_rotation() {
                     ev.prevent_default();
                     return Ok(());
                 }
@@ -2513,9 +2493,9 @@ impl Map {
         Ok(true)
     }
 
-    fn toggle_mumble_object(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn toggle_mumble_object(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return Ok(false);
+            return false;
         }
 
         self.s.context_menu = None;
@@ -2532,22 +2512,22 @@ impl Map {
             .channel
             .updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update.id))]);
 
-        Ok(true)
+        true
     }
 
-    fn toggle_locked(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn toggle_locked(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return Ok(false);
+            return false;
         }
 
         let mut objects = self.objects.borrow_mut();
 
         let Some(object) = objects.get_mut(id) else {
-            return Ok(false);
+            return false;
         };
 
         let Some(locked) = object.as_locked_mut() else {
-            return Ok(false);
+            return false;
         };
 
         let new = !**locked;
@@ -2556,12 +2536,12 @@ impl Map {
             .channel
             .object_update(ctx, id, Key::LOCKED, Value::from(new));
         self.s.redraw = true;
-        Ok(true)
+        true
     }
 
-    fn toggle_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn toggle_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return Ok(false);
+            return false;
         }
 
         self.s.context_menu = None;
@@ -2569,7 +2549,7 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
 
         let Some(object) = objects.get_mut(id) else {
-            return Ok(false);
+            return false;
         };
 
         let new_hidden = !*object.hidden;
@@ -2577,12 +2557,12 @@ impl Map {
 
         let requests = self.object_requests.entry(id).or_default();
         requests._toggle_hidden = self.channel.object_update(ctx, id, Key::HIDDEN, new_hidden);
-        Ok(true)
+        true
     }
 
-    fn toggle_local_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn toggle_local_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return Ok(false);
+            return false;
         }
 
         self.s.context_menu = None;
@@ -2590,22 +2570,24 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
 
         let Some(object) = objects.get_mut(id) else {
-            return Ok(false);
+            return false;
         };
 
         let new_local_hidden = !*object.local_hidden;
         *object.local_hidden = new_local_hidden;
 
         let requests = self.object_requests.entry(id).or_default();
+
         requests._toggle_local_hidden =
             self.channel
                 .object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
-        Ok(true)
+
+        true
     }
 
-    fn toggle_expanded(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn toggle_expanded(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
-            return Ok(false);
+            return false;
         }
 
         self.s.context_menu = None;
@@ -2613,11 +2595,11 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
 
         let Some(object) = objects.get_mut(id) else {
-            return Ok(false);
+            return false;
         };
 
         let Some(expanded) = object.as_expanded_mut() else {
-            return Ok(false);
+            return false;
         };
 
         let new_expanded = !**expanded;
@@ -2627,7 +2609,7 @@ impl Map {
         requests._expanded = self
             .channel
             .object_update(ctx, id, Key::EXPANDED, new_expanded);
-        Ok(true)
+        true
     }
 
     #[tracing::instrument(skip_all)]

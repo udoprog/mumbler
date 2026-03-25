@@ -131,6 +131,16 @@ impl ws::Handler for Handler<'_> {
                 let response = super::get_object_settings(&self.backend, request).await?;
                 outgoing.write(response);
             }
+            api::Request::InitializeImageUpload => {
+                let request = incoming
+                    .read::<api::InitializeImageUploadRequest>()
+                    .context("missing request")?;
+
+                tracing::debug!(?id, ?request);
+
+                let response = super::initialize_image_upload(&self.backend).await?;
+                outgoing.write(response);
+            }
             api::Request::CreateObject => {
                 let request = incoming
                     .read::<api::CreateObjectRequest>()
@@ -174,11 +184,14 @@ impl ws::Handler for Handler<'_> {
 
                 tracing::debug!(?id, ?request);
 
-                let id = super::upload_image(&self.backend, request).await?;
-                outgoing.write(api::UploadImageResponse { id });
-                self.backend.broadcast(RemoteUpdateBody::ImageAdded {
-                    id: RemoteId::local(id),
+                let image = super::upload_image(&self.backend, request).await?;
+
+                outgoing.write(api::UploadImageResponse {
+                    image: image.clone(),
                 });
+
+                self.backend
+                    .broadcast(RemoteUpdateBody::ImageCreated { image });
             }
             api::Request::RemoveImage => {
                 let request = incoming

@@ -1,4 +1,5 @@
 use api::{Color, Key, RemoteId, Value};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -9,39 +10,34 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::into_target;
+use super::{SetupChannel, into_target};
 
 pub(crate) enum Msg {
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
+    Channel(Result<ws::Channel, Error>),
     ColorChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     NameChanged(Event),
     SelectColor(api::Color),
-    SetLog(log::Log),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
     pub(crate) id: RemoteId,
 }
 
 pub(crate) struct GroupSettings {
+    log: log::Log,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     _list_settings: ws::Request,
-    _remote_update_listener: ws::Listener,
-    _log_handle: ContextHandle<log::Log>,
+    _remote_update: ws::Listener,
     _select_color: ws::Request,
-    _state_change: ws::StateListener,
     _update_name: ws::Request,
     color: State<Option<api::Color>>,
-    log: log::Log,
     name: State<String>,
-    state: ws::State,
     _channel: ws::Request,
-    channel: ws::Channel,
 }
 
 impl Component for GroupSettings {
@@ -49,38 +45,23 @@ impl Component for GroupSettings {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _remote_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
-
-        let mut this = Self {
-            state,
+        Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             color: State::default(),
             name: State::default(),
-            log,
-            _log_handle,
-            _state_change,
             _list_settings: ws::Request::new(),
             _select_color: ws::Request::new(),
             _update_name: ws::Request::new(),
-            _remote_update_listener,
+            _remote_update: ws::Listener::new(),
             _channel: ws::Request::new(),
-            channel: ws::Channel::default(),
-        };
-
-        this.refresh(ctx);
-        this
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -134,28 +115,14 @@ impl Component for GroupSettings {
 }
 
 impl GroupSettings {
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if matches!(self.state, ws::State::Open) {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
-        }
-    }
-
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
-                Ok(true)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
 
                 self._list_settings = self
                     .channel
@@ -165,6 +132,11 @@ impl GroupSettings {
                     })
                     .on_packet(ctx.link().callback(Msg::GetObjectSettings))
                     .send();
+
+                self._remote_update = self
+                    .channel
+                    .handle()
+                    .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
 
                 Ok(true)
             }
@@ -200,10 +172,6 @@ impl GroupSettings {
 
                 *self.name = name.clone();
                 self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
-                Ok(false)
-            }
-            Msg::SetLog(log) => {
-                self.log = log;
                 Ok(false)
             }
             Msg::UpdateResult(result) => {

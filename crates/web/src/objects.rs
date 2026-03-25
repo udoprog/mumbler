@@ -676,6 +676,7 @@ impl LocalObject {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct ObjectRef {
     pub(crate) ty: Type,
     pub(crate) name: String,

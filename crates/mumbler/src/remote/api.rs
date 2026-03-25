@@ -6,7 +6,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use musli_core::{Decode, Encode};
 use musli_web::api;
 
-use ::api::{ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Value};
+use ::api::{ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Role, Value};
 
 /// The engine used for base64.
 static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
@@ -142,12 +142,14 @@ pub struct RemoteImage {
     pub id: Id,
     /// The content type of the image.
     pub content_type: ContentType,
-    /// The bytes of the image.
-    pub bytes: Box<[u8]>,
+    /// The role of the image.
+    pub role: Role,
     /// The width of the image.
     pub width: u32,
     /// The height of the image.
     pub height: u32,
+    /// The bytes of the image.
+    pub bytes: Box<[u8]>,
 }
 
 #[derive(Debug, Encode, Decode)]

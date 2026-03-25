@@ -1,4 +1,5 @@
 use api::{Color, Id, Key, PublicKey, RemoteId, RemoteUpdateBody, UpdateBody, Value};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -11,23 +12,21 @@ use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
-use super::{DynamicCanvas, ImageUpload, into_target, render};
+use super::{DynamicCanvas, ImageUpload, SetupChannel, into_target, render};
 
 pub(crate) enum Msg {
-    SetLog(log::Log),
+    Channel(Result<ws::Channel, Error>),
     Error(Error),
     ColorChanged(Event),
     FixedRatioChanged(Event),
     HeightChanged(Event),
-    ImageSelected(Id),
-    ImagesRefresh,
+    ImageSelected(RemoteId),
+    ImageClear,
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     NameChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     Rescale(Option<f64>),
     SelectColor(api::Color),
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
     Update(Result<Packet<api::Update>, ws::Error>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
     WidthChanged(Event),
@@ -38,34 +37,29 @@ pub(crate) enum Msg {
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
     pub(crate) id: RemoteId,
 }
 
 pub(crate) struct StaticSettings {
+    log: log::Log,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     _list_settings: ws::Request,
     _remote_update_listener: ws::Listener,
     _update_listener: ws::Listener,
-    _log_handle: ContextHandle<log::Log>,
     _select_color: ws::Request,
     _select_image: ws::Request,
-    _state_change: ws::StateListener,
     _update_dimensions: ws::Request,
     _update_fixed_ratio: ws::Request,
     _update_name: ws::Request,
     color: State<Option<api::Color>>,
     height: State<f32>,
-    image: State<Id>,
-    images: Vec<api::Image>,
+    image: State<RemoteId>,
     public_key: PublicKey,
-    log: log::Log,
     name: State<String>,
     canvas: Option<HtmlCanvasElement>,
     preview_images: Images,
     ratio: State<Option<f32>>,
-    state: ws::State,
-    _channel: ws::Request,
-    channel: ws::Channel,
     width: State<f32>,
 }
 
@@ -74,55 +68,33 @@ impl Component for StaticSettings {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::SetLog))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _remote_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
-
-        let _update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::Update>(ctx.link().callback(Msg::Update));
-
-        let mut this = Self {
+        Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _list_settings: ws::Request::new(),
-            _remote_update_listener,
-            _update_listener,
-            _log_handle,
+            _remote_update_listener: ws::Listener::new(),
+            _update_listener: ws::Listener::new(),
             _select_color: ws::Request::new(),
             _select_image: ws::Request::new(),
-            _state_change,
             _update_dimensions: ws::Request::new(),
             _update_fixed_ratio: ws::Request::new(),
             _update_name: ws::Request::new(),
             color: State::default(),
             height: State::new(1.0),
-            image: State::new(Id::ZERO),
-            images: Vec::new(),
+            image: State::new(RemoteId::ZERO),
             public_key: PublicKey::ZERO,
-            log,
             name: State::default(),
             canvas: None,
             preview_images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             ratio: State::default(),
-            state,
-            _channel: ws::Request::new(),
-            channel: ws::Channel::default(),
             width: State::new(1.0),
-        };
-
-        this.refresh(ctx);
-        this
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -225,8 +197,6 @@ impl Component for StaticSettings {
                     </section>
 
                     <ImageUpload
-                        ws={ctx.props().ws.clone()}
-                        images={self.images.clone()}
                         selected={*self.image}
                         sizing={api::ImageSizing::Crop}
                         size={512}
@@ -234,7 +204,7 @@ impl Component for StaticSettings {
                         role={api::Role::STATIC}
                         input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}
-                        onrefresh={ctx.link().callback(|_| Msg::ImagesRefresh)}
+                        onclear={ctx.link().callback(|_| Msg::ImageClear)}
                         onrescale={ctx.link().callback(Msg::Rescale)}
                     />
                 </div>
@@ -255,25 +225,8 @@ impl Component for StaticSettings {
 }
 
 impl StaticSettings {
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
-        }
-    }
-
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::SetLog(log) => {
-                self.log = log;
-                Ok(false)
-            }
             Msg::Error(error) => {
                 self.log.error("static_settings", error);
                 Ok(false)
@@ -286,37 +239,44 @@ impl StaticSettings {
                     self.update_property(ctx, key, value);
                 }
 
-                self.images = body.images;
                 self.public_key = body.public_key;
-                Ok(true)
-            }
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
                 Ok(true)
             }
             Msg::Channel(channel) => {
                 self.channel = channel?;
 
-                self._list_settings = self
-                    .channel
-                    .request()
-                    .body(api::GetObjectSettingsRequest {
-                        id: ctx.props().id.id,
-                    })
-                    .on_packet(ctx.link().callback(Msg::Initialize))
-                    .send();
+                if self.channel.id() == ChannelId::NONE {
+                    self._remote_update_listener = self
+                        .channel
+                        .handle()
+                        .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
+
+                    self._update_listener = self
+                        .channel
+                        .handle()
+                        .on_broadcast(ctx.link().callback(Msg::Update));
+
+                    self._list_settings = self
+                        .channel
+                        .request()
+                        .body(api::GetObjectSettingsRequest {
+                            id: ctx.props().id.id,
+                        })
+                        .on_packet(ctx.link().callback(Msg::Initialize))
+                        .send();
+                }
 
                 Ok(true)
             }
-            Msg::ImagesRefresh => {
-                self.refresh(ctx);
-                Ok(false)
+            Msg::ImageClear => {
+                *self.image = RemoteId::ZERO;
+                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, Id::ZERO);
+                Ok(true)
             }
             Msg::ImageSelected(id) => {
                 *self.image = id;
                 self.load_preview_image(ctx);
-                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id);
+                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id.id);
                 Ok(true)
             }
             Msg::Rescale(ratio) => {
@@ -475,7 +435,7 @@ impl StaticSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(value.as_id()) {
+                if self.image.update(RemoteId::local(value.as_id())) {
                     self.load_preview_image(ctx);
                     true
                 } else {
@@ -495,9 +455,8 @@ impl StaticSettings {
         self.preview_images.clear();
 
         if !self.image.is_zero() {
-            let id = RemoteId::local(*self.image);
             self.preview_images
-                .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
+                .load_id(&self.image, ctx.link().callback(Msg::ImageLoaded));
         }
     }
 
@@ -525,7 +484,7 @@ impl StaticSettings {
 
         let render = render::RenderStatic {
             transform: &api::Transform::origin(),
-            image: RemoteId::local(*self.image),
+            image: *self.image,
             color: self.color.unwrap_or_else(Color::neutral),
             width: *self.width,
             height: *self.height,

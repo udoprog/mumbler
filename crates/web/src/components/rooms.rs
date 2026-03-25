@@ -2,6 +2,7 @@ use core::cmp::Ordering;
 
 use api::{Key, PeerId, RemoteId, StableId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
@@ -10,11 +11,10 @@ use crate::error::Error;
 use crate::log;
 use crate::peers::Peers;
 
-use super::{COMMON_ROOM, Icon};
+use super::{COMMON_ROOM, Icon, SetupChannel};
 
 pub(crate) enum Msg {
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
+    Channel(Result<ws::Channel, Error>),
     Initialized(Result<Packet<api::InitializeRooms>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
@@ -23,12 +23,10 @@ pub(crate) enum Msg {
     ConnectResult(Result<Packet<api::Updates>, ws::Error>),
     CreateRoom,
     CreateRoomResult(Result<Packet<api::CreateObject>, ws::Error>),
-    ContextUpdate(log::Log),
 }
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
     pub(crate) onopensettings: Callback<RemoteId>,
     pub(crate) onrequestdelete: Callback<RemoteId>,
 }
@@ -68,19 +66,16 @@ impl Room {
 }
 
 pub(crate) struct Rooms {
-    state: ws::State,
     peers: Peers,
     rooms: Vec<Room>,
     active_room: StableId,
     log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
-    _state_change: ws::StateListener,
     _init_request: ws::Request,
     _remote_listener: ws::Listener,
     _config_listener: ws::Listener,
     _connect_room_request: ws::Request,
     _create_room_request: ws::Request,
-    _channel: ws::Request,
+    _setup_channel: SetupChannel,
     channel: ws::Channel,
 }
 
@@ -89,45 +84,24 @@ impl Component for Rooms {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::ContextUpdate))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _remote_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::RemoteUpdate>(ctx.link().callback(Msg::RemoteUpdate));
-
-        let _config_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
-
-        let mut this = Self {
-            state,
+        Self {
             peers: Peers::default(),
             rooms: Vec::new(),
             active_room: StableId::ZERO,
             log,
-            _log_handle,
-            _state_change,
             _init_request: ws::Request::new(),
-            _remote_listener,
-            _config_listener,
+            _remote_listener: ws::Listener::new(),
+            _config_listener: ws::Listener::new(),
             _connect_room_request: ws::Request::new(),
             _create_room_request: ws::Request::new(),
-            _channel: ws::Request::new(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             channel: ws::Channel::default(),
-        };
-
-        this.refresh(ctx);
-        this
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -274,31 +248,18 @@ impl Rooms {
         }
     }
 
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.peers = Peers::default();
-            self.active_room = StableId::ZERO;
-            self.rooms.clear();
-        }
-    }
-
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.rooms.clear();
-                self.refresh(ctx);
-                Ok(true)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                self.peers = Peers::default();
+                self.active_room = StableId::ZERO;
+                self.rooms.clear();
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
 
                 self._init_request = self
                     .channel
@@ -306,6 +267,16 @@ impl Rooms {
                     .body(api::InitializeRoomsRequest)
                     .on_packet(ctx.link().callback(Msg::Initialized))
                     .send();
+
+                self._remote_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
+
+                self._config_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
 
                 Ok(true)
             }
@@ -496,10 +467,6 @@ impl Rooms {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(true)
-            }
-            Msg::ContextUpdate(log) => {
-                self.log = log;
-                Ok(false)
             }
         }
     }

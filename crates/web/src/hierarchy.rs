@@ -141,9 +141,9 @@ impl HierarchyRef {
     }
 
     /// Insert an object into the hierarchy. Does nothing if the object has no sort key.
-    pub(crate) fn insert(&mut self, object: &LocalObject) {
+    pub(crate) fn insert(&mut self, object: &LocalObject) -> bool {
         if object.is_global() {
-            return;
+            return false;
         }
 
         let group = as_group(*object.group);
@@ -155,7 +155,10 @@ impl HierarchyRef {
 
         if self.children.entry(group).or_default().insert(key) {
             self.len = self.len.saturating_add(1);
+            return true;
         }
+
+        false
     }
 
     /// Move an object from one position to another.
@@ -166,9 +169,9 @@ impl HierarchyRef {
         new_group: RemoteId,
         new_sort: &[u8],
         id: RemoteId,
-    ) {
+    ) -> bool {
         if !self._remove(old_group, old_sort, id) {
-            return;
+            return false;
         }
 
         let new_group = as_group(new_group);
@@ -180,7 +183,10 @@ impl HierarchyRef {
 
         if self.children.entry(new_group).or_default().insert(key) {
             self.len = self.len.saturating_add(1);
+            return true;
         }
+
+        false
     }
 
     /// Extend the hierarchy with the given objects.

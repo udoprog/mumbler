@@ -11,15 +11,12 @@ const COMPONENT: &str = "app::update";
 
 pub struct App {
     ws: ws::Service,
-    state: ws::State,
     log: log::Log,
-    _state_listener: ws::StateListener,
     _notification_listener: ws::Listener,
 }
 
 pub enum Msg {
     Error(Error),
-    StateChanged(ws::State),
     Notification(Result<ws::Packet<api::Notification>, ws::Error>),
 }
 
@@ -47,19 +44,13 @@ impl Component for App {
             .on_error(ctx.link().callback(Msg::Error).reform(Into::into))
             .build();
 
-        let (state, _state_listener) = ws
-            .handle()
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
         let _notification_listener = ws
             .handle()
             .on_broadcast::<api::Notification>(ctx.link().callback(Msg::Notification));
 
         Self {
             ws,
-            state,
             log: log::Log::new(),
-            _state_listener,
             _notification_listener,
         }
     }
@@ -70,10 +61,6 @@ impl Component for App {
                 self.log
                     .error_message(COMPONENT, format_args!("Websocket error: {error:#}"));
                 false
-            }
-            Msg::StateChanged(state) => {
-                self.state = state;
-                true
             }
             Msg::Notification(result) => {
                 match result.and_then(|p| p.decode()) {
@@ -97,23 +84,22 @@ impl Component for App {
     }
 
     fn view(&self, _: &Context<Self>) -> Html {
-        let ws = self.ws.handle().clone();
-        let state = self.state;
-
         html! {
             <ContextProvider<log::Log> context={self.log.clone()}>
-                <BrowserRouter>
-                    <Switch<Route> render={move |route| switch(route, &ws, state)} />
-                </BrowserRouter>
+                <ContextProvider<ws::Handle> context={self.ws.handle()}>
+                    <BrowserRouter>
+                        <Switch<Route> render={switch} />
+                    </BrowserRouter>
+                </ContextProvider<ws::Handle>>
             </ContextProvider<log::Log>>
         }
     }
 }
 
-fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
+fn switch(route: Route) -> Html {
     let component = match route {
-        Route::Map => html!(<Map ws={ws.clone()} />),
-        Route::Settings => html!(<Settings ws={ws.clone()} />),
+        Route::Map => html!(<Map />),
+        Route::Settings => html!(<Settings />),
         Route::Log => html!(<Log />),
         Route::NotFound => {
             html! {
@@ -122,10 +108,50 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
         }
     };
 
+    html! {
+        <div class="container rows">
+            <div class="status">
+                <Navigation route={route} />
+                <MumbleStatus />
+                <RemoteStatus />
+                <ConnectionStatus />
+            </div>
+
+            {component}
+        </div>
+    }
+}
+
+#[component(ConnectionStatus)]
+fn connection_status() -> Html {
+    let ws = use_context::<ws::Handle>().expect("WebSocket context not found");
+
+    let state = use_state(|| ws::State::Closed);
+
+    {
+        let state = state.clone();
+
+        use_effect(move || {
+            let (s, listener) = ws.on_state_change({
+                let state = state.clone();
+
+                Callback::from(move |new_state| {
+                    state.set(new_state);
+                })
+            });
+
+            state.set(s);
+
+            move || {
+                drop(listener);
+            }
+        });
+    }
+
     let name;
     let title;
 
-    match state {
+    match *state {
         ws::State::Open => {
             name = "signal";
             title = "Connected to application";
@@ -137,17 +163,8 @@ fn switch(route: Route, ws: &ws::Handle, state: ws::State) -> Html {
     }
 
     html! {
-        <div class="container rows">
-            <div class="status">
-                <Navigation route={route} />
-                <MumbleStatus ws={ws.clone()} />
-                <RemoteStatus ws={ws.clone()} />
-                <section class="connection control-group" {title}>
-                    <Icon {name} invert={true} small={true} />
-                </section>
-            </div>
-
-            {component}
-        </div>
+        <section class="connection control-group" {title}>
+            <Icon {name} invert={true} small={true} />
+        </section>
     }
 }

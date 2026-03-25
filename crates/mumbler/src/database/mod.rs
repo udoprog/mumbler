@@ -79,10 +79,10 @@ macro_rules! value_kind_switch {
 pub(crate) struct Image {
     pub(crate) id: Id,
     pub(crate) content_type: ContentType,
-    pub(crate) bytes: Vec<u8>,
+    pub(crate) role: Role,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) role: Role,
+    pub(crate) bytes: Vec<u8>,
 }
 
 use crate::Paths;
@@ -196,7 +196,7 @@ impl Database {
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 insert_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
                 select_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
-                select_images: c.prepare("SELECT id, content_type, data, width, height, role FROM images")?.into_send()?,
+                select_images: c.prepare("SELECT id, content_type, role, width, height, data FROM images")?.into_send()?,
                 select_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
                 select_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
             }
@@ -243,10 +243,10 @@ impl Database {
         &self,
         id: Id,
         content_type: ContentType,
-        data: Vec<u8>,
+        role: Role,
         width: u32,
         height: u32,
-        role: Role,
+        data: Vec<u8>,
     ) -> Result<Id> {
         let mut inner = self.inner.clone().lock_owned().await;
 

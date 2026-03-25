@@ -67,14 +67,14 @@ pub(crate) struct LocalImage {
     pub id: Id,
     /// The content type of the image.
     pub content_type: ContentType,
-    /// The bytes of the image.
-    pub bytes: Vec<u8>,
+    /// The role of the image.
+    pub role: Role,
     /// The width of the image.
     pub width: u32,
     /// The height of the image.
     pub height: u32,
-    /// The role of the image.
-    pub role: Role,
+    /// The bytes of the image.
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -628,10 +628,10 @@ impl Backend {
     pub(crate) async fn insert_image(
         &self,
         content_type: ContentType,
-        bytes: Vec<u8>,
+        role: Role,
         width: u32,
         height: u32,
-        role: Role,
+        bytes: Vec<u8>,
     ) -> Result<Id> {
         let id = self.new_id().await?;
 
@@ -648,10 +648,10 @@ impl Backend {
             .save_image(
                 image.id,
                 image.content_type,
-                image.bytes.clone(),
+                image.role,
                 image.width,
                 image.height,
-                image.role,
+                image.bytes.clone(),
             )
             .await?;
 

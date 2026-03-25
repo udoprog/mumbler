@@ -60,6 +60,9 @@ use self::dynamic_canvas::DynamicCanvas;
 mod context_menu_dropdown;
 use self::context_menu_dropdown::ContextMenuDropdown;
 
+mod setup_channel;
+use self::setup_channel::SetupChannel;
+
 use yew::prelude::*;
 
 const UNKNOWN_ROOM: &str = "Unknown Room";
@@ -76,7 +79,7 @@ pub(crate) struct IconProps {
     pub(crate) small: bool,
 }
 
-#[function_component(Icon)]
+#[component(Icon)]
 pub(crate) fn icon(props: &IconProps) -> Html {
     let title = props.title.clone();
 

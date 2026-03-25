@@ -1,42 +1,37 @@
 use api::{Key, UpdateBody, Value};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
 
-use super::Icon;
 use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
+use super::{Icon, SetupChannel};
+
 pub(crate) enum Msg {
+    Channel(Result<ws::Channel, Error>),
     Restart,
     RestartResponse(Result<Packet<api::MumbleRestart>, ws::Error>),
     Toggle,
     ToggleResponse(Result<Packet<api::Updates>, ws::Error>),
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
-    LogUpdate(log::Log),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
-pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
-}
+pub(crate) struct Props;
 
 pub(crate) struct MumbleStatus {
-    enabled: State<bool>,
     log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
-    _state_change: ws::StateListener,
-    state: ws::State,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     _get_status: ws::Request,
     _restart_request: ws::Request,
     _toggle_request: ws::Request,
     _config_update_listener: ws::Listener,
-    _channel: ws::Request,
-    channel: ws::Channel,
+    enabled: State<bool>,
 }
 
 impl Component for MumbleStatus {
@@ -44,37 +39,21 @@ impl Component for MumbleStatus {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::LogUpdate))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _config_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
-
-        let mut this = Self {
-            enabled: State::new(false),
+        Self {
             log,
-            _log_handle,
-            _state_change,
-            state,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _get_status: ws::Request::new(),
             _restart_request: ws::Request::new(),
             _toggle_request: ws::Request::new(),
-            _config_update_listener,
-            _channel: ws::Request::new(),
-            channel: ws::Channel::default(),
-        };
-
-        this.refresh(ctx);
-        this
+            _config_update_listener: ws::Listener::new(),
+            enabled: State::new(false),
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -129,7 +108,7 @@ impl MumbleStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Restart => {
-                if !matches!(self.state, ws::State::Open) {
+                if self.channel.id() == ChannelId::NONE {
                     return Ok(false);
                 }
 
@@ -147,7 +126,7 @@ impl MumbleStatus {
                 Ok(false)
             }
             Msg::Toggle => {
-                if !matches!(self.state, ws::State::Open) {
+                if self.channel.id() == ChannelId::NONE {
                     return Ok(false);
                 }
 
@@ -170,26 +149,24 @@ impl MumbleStatus {
                 _ = body.decode()?;
                 Ok(false)
             }
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
-                Ok(true)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
 
-                self._get_status = self
-                    .channel
-                    .request()
-                    .body(api::GetConfigRequest)
-                    .on_packet(ctx.link().callback(Msg::GetConfig))
-                    .send();
+                if self.channel.id() != ChannelId::NONE {
+                    self._config_update_listener = self
+                        .channel
+                        .handle()
+                        .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
+
+                    self._get_status = self
+                        .channel
+                        .request()
+                        .body(api::GetConfigRequest)
+                        .on_packet(ctx.link().callback(Msg::GetConfig))
+                        .send();
+                }
 
                 Ok(true)
-            }
-            Msg::LogUpdate(log) => {
-                self.log = log;
-                Ok(false)
             }
             Msg::GetConfig(body) => {
                 let body = body?;
@@ -222,19 +199,6 @@ impl MumbleStatus {
         match key {
             Key::MUMBLE_ENABLED => Ok(self.enabled.update(value.as_bool())),
             _ => Ok(false),
-        }
-    }
-
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
         }
     }
 }

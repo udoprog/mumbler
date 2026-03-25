@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 
 use anyhow::{Context as _, Result};
 use api::{
-    GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeMapResponse,
-    InitializeRoomsResponse, Key, PeerId, Properties, RemoteId, RemoteObject, RemotePeer, Type,
-    UploadImageRequest, Value,
+    GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeImageUploadResponse,
+    InitializeMapResponse, InitializeRoomsResponse, Key, PeerId, Properties, RemoteId,
+    RemoteObject, RemotePeer, Type, UploadImageRequest, Value,
 };
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
@@ -236,20 +236,26 @@ async fn initialize_rooms(b: &Backend) -> Result<InitializeRoomsResponse> {
     Ok(res)
 }
 
-async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<Id> {
+async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<Image> {
     tracing::info!(?request.content_type, size = request.data.len(), "received image upload request");
 
     let task = task::spawn_blocking(move || {
         imaging::process(&request.data, request.crop, request.sizing, request.size)
     });
 
-    let (content_type, bytes, width, height) = task.await??;
+    let (content_type, width, height, bytes) = task.await??;
 
     let id = backend
-        .insert_image(content_type, bytes, width, height, request.role)
+        .insert_image(content_type, request.role, width, height, bytes)
         .await?;
 
-    Ok(id)
+    Ok(Image {
+        id: RemoteId::local(id),
+        content_type,
+        role: request.role,
+        width,
+        height,
+    })
 }
 
 async fn remove_image(backend: &Backend, id: Id) -> Result<()> {
@@ -283,11 +289,17 @@ async fn get_object_settings(
         props: object.props.clone(),
     };
 
+    Ok(GetObjectSettingsResponse { object, public_key })
+}
+
+async fn initialize_image_upload(backend: &Backend) -> Result<InitializeImageUploadResponse> {
+    let state = backend.client_state().await;
+
     let mut images = Vec::new();
 
     for image in state.images.values() {
         images.push(Image {
-            id: image.id,
+            id: RemoteId::local(image.id),
             content_type: image.content_type,
             role: image.role,
             width: image.width,
@@ -295,11 +307,7 @@ async fn get_object_settings(
         });
     }
 
-    Ok(GetObjectSettingsResponse {
-        object,
-        images,
-        public_key,
-    })
+    Ok(InitializeImageUploadResponse { images })
 }
 
 async fn object_update(backend: &Backend, object_id: Id, key: Key, value: &Value) -> Result<()> {

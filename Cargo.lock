@@ -729,7 +729,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1539,7 +1539,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1673,9 +1673,9 @@ dependencies = [
 
 [[package]]
 name = "libredox"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1744e39d1d6a9948f4f388969627434e31128196de472883b39f148769bfe30a"
+checksum = "7ddbf48fd451246b1f8c2610bd3b4ac0cc6e149d89832867093ab69a17194f08"
 dependencies = [
  "libc",
 ]
@@ -1852,6 +1852,8 @@ dependencies = [
 [[package]]
 name = "musli"
 version = "0.0.149"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d1824ac6e17853c4eabc4d952122aecc1454c0e22bbfd3a44f43c1a46c1af3"
 dependencies = [
  "loom",
  "musli-core",
@@ -1862,6 +1864,8 @@ dependencies = [
 [[package]]
 name = "musli-core"
 version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a89a1338c2da9f8cbf8b60c4e3edaab4eb0809d52fc2d7f69ac4da58d9050953"
 dependencies = [
  "musli-macros",
 ]
@@ -1869,6 +1873,8 @@ dependencies = [
 [[package]]
 name = "musli-macros"
 version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff6dea70dccfc68fd441c128bdaf31c454542676f750f095465640367fd94118"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1877,7 +1883,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web"
-version = "0.3.4"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "facdee4ce0ddf2021693b4acd138365643ddb4f2a0906909d44d77e90e139898"
 dependencies = [
  "axum",
  "axum-core",
@@ -1898,7 +1906,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web-macros"
-version = "0.3.4"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4eefe016339174bdece6b0b1993e0ff1059b446b28f0af7a62755e564e5949d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3601,7 +3611,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

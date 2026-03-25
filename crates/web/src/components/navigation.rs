@@ -4,7 +4,7 @@ use yew_router::prelude::*;
 use crate::log::{self, Severity};
 
 #[derive(Debug, Clone, PartialEq, Routable)]
-pub enum Route {
+pub(crate) enum Route {
     #[at("/")]
     Map,
     #[at("/settings")]
@@ -17,13 +17,13 @@ pub enum Route {
 }
 
 #[derive(Properties, PartialEq)]
-pub struct NavigationProps {
-    pub route: Route,
+pub(crate) struct NavigationProps {
+    pub(crate) route: Route,
 }
 
-#[function_component(Navigation)]
+#[component(Navigation)]
 pub(crate) fn navigation(props: &NavigationProps) -> Html {
-    let log_context = use_context::<log::Log>().expect("ErrorLog context not found");
+    let log_context = use_context::<log::Log>().expect("Log context not found");
     let error_count = use_state(|| {
         log_context
             .borrow_entries()

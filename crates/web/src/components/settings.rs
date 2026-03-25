@@ -1,4 +1,5 @@
 use api::{Key, UpdateBody, Value};
+use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
@@ -9,28 +10,26 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::into_target;
+use super::{SetupChannel, into_target};
 
 pub(crate) enum Msg {
-    StateChanged(ws::State),
-    Channel(Result<ws::Channel, ws::Error>),
+    Channel(Result<ws::Channel, Error>),
     NameChanged(Event),
     PeerSecretChanged(Event),
     ServerChanged(Event),
     TlsToggled(Event),
     UpdateConfig(Result<Packet<api::Updates>, ws::Error>),
-    ContextUpdate(log::Log),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
-pub(crate) struct Props {
-    pub(crate) ws: ws::Handle,
-}
+pub(crate) struct Props;
 
 pub(crate) struct Settings {
-    state: ws::State,
+    log: log::Log,
+    channel: ws::Channel,
+    _setup_channel: SetupChannel,
     name: State<String>,
     _name_request: ws::Request,
     peer_secret: State<String>,
@@ -40,12 +39,7 @@ pub(crate) struct Settings {
     remote_server_tls: State<bool>,
     _remote_server_tls_request: ws::Request,
     _get_config_request: ws::Request,
-    log: log::Log,
-    _log_handle: ContextHandle<log::Log>,
-    _state_change: ws::StateListener,
-    _config_update_listener: ws::Listener,
-    _channel: ws::Request,
-    channel: ws::Channel,
+    _config_update: ws::Listener,
 }
 
 impl Component for Settings {
@@ -53,23 +47,15 @@ impl Component for Settings {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
-        let (log, _log_handle) = ctx
+        let (log, _) = ctx
             .link()
-            .context::<log::Log>(ctx.link().callback(Msg::ContextUpdate))
-            .expect("ErrorLog context not found");
+            .context::<log::Log>(Callback::noop())
+            .expect("Log context not found");
 
-        let (state, _state_change) = ctx
-            .props()
-            .ws
-            .on_state_change(ctx.link().callback(Msg::StateChanged));
-
-        let _config_update_listener = ctx
-            .props()
-            .ws
-            .on_broadcast::<api::Update>(ctx.link().callback(Msg::ConfigUpdate));
-
-        let mut this = Self {
-            state,
+        Self {
+            log,
+            channel: ws::Channel::default(),
+            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             name: State::new(String::new()),
             _name_request: ws::Request::new(),
             peer_secret: State::new(String::new()),
@@ -79,16 +65,8 @@ impl Component for Settings {
             remote_server_tls: State::new(false),
             _remote_server_tls_request: ws::Request::new(),
             _get_config_request: ws::Request::new(),
-            log,
-            _log_handle,
-            _state_change,
-            _config_update_listener,
-            _channel: ws::Request::new(),
-            channel: ws::Channel::default(),
-        };
-
-        this.refresh(ctx);
-        this
+            _config_update: ws::Listener::new(),
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -155,28 +133,19 @@ impl Component for Settings {
 }
 
 impl Settings {
-    fn refresh(&mut self, ctx: &Context<Self>) {
-        if self.state.is_open() {
-            self._channel = ctx
-                .props()
-                .ws
-                .channel()
-                .on_open(ctx.link().callback(Msg::Channel))
-                .send();
-        } else {
-            self.channel = ws::Channel::default();
-        }
-    }
-
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::StateChanged(state) => {
-                self.state = state;
-                self.refresh(ctx);
-                Ok(true)
-            }
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
+
+                self._config_update = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
 
                 self._get_config_request = self
                     .channel
@@ -283,10 +252,6 @@ impl Settings {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(true)
-            }
-            Msg::ContextUpdate(log) => {
-                self.log = log;
-                Ok(false)
             }
             Msg::GetConfig(body) => {
                 let body = body?;

@@ -17,7 +17,7 @@ pub(crate) struct Props {
     pub(crate) onremove: Callback<()>,
 }
 
-#[function_component(ContextMenuDropdown)]
+#[component(ContextMenuDropdown)]
 pub(crate) fn context_menu_dropdown(props: &Props) -> Html {
     let object_id = props.object_id;
 
