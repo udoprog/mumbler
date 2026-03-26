@@ -15,31 +15,20 @@
     }
 }
 
-.btn > .icon {
-    width: $icon-height;
-    height: $icon-height;
-}
-
-.btn.sm > .icon {
-    width: $icon-height-sm;
-    height: $icon-height-sm;
-}
-
 .icon {
     display: inline-block;
     vertical-align: middle;
 
-    width: $btn-height;
-    height: $btn-height;
+    height: 100%;
+    aspect-ratio: 1;
+
+    &.sm {
+        height: 80%;
+    }
 
     mask-size: contain;
     mask-repeat: no-repeat;
     mask-position: center;
-
-    &.sm {
-        width: $btn-height-sm;
-        height: $btn-height-sm;
-    }
 
     @include icon('x-mark');
     @include icon('check');

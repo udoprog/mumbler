@@ -80,6 +80,16 @@ impl HierarchyRef {
             .unwrap_or(true)
     }
 
+    /// Get the number of children in the given group.
+    pub(crate) fn child_count(&self, group: RemoteId) -> usize {
+        let group = as_group(group);
+
+        self.children
+            .get(&group)
+            .map(|s| s.len())
+            .unwrap_or_default()
+    }
+
     /// Get the children of the given group, sorted by their sort key.
     pub(crate) fn iter(&self, group: RemoteId) -> impl DoubleEndedIterator<Item = RemoteId> {
         let group = as_group(group);

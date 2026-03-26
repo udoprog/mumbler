@@ -184,9 +184,11 @@ impl Component for ObjectList {
                         target
                     });
 
+                    let name = if is_expanded { "folder-open" } else { "folder" };
+
                     html! {
                         <button {class} title="Expand or collapse group" {onclick}>
-                            <Icon name="folder-open" />
+                            <Icon {name} />
                         </button>
                     }
                 });
@@ -312,6 +314,11 @@ impl Component for ObjectList {
                     <section {class}>
                         <Icon name={o.icon()} invert={true} small={true} />
                         <span class="list-label">{label}</span>
+
+                        if o.is_group() && !o.is_expanded() {
+                            <span class="list-count">{order.child_count(o.id)}</span>
+                        }
+
                         {buttons}
                     </section>
                 </section>

@@ -504,7 +504,13 @@ impl LocalObject {
         match &self.kind {
             ObjectKind::Token(..) => "user",
             ObjectKind::Static(..) => "squares-2x2",
-            ObjectKind::Group(..) => "folder",
+            ObjectKind::Group(g) => {
+                if *g.expanded {
+                    "folder-open"
+                } else {
+                    "folder"
+                }
+            }
             ObjectKind::Room(..) => "home",
         }
     }

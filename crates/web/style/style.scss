@@ -73,10 +73,11 @@ h6 {
 }
 
 .control-group {
+    height: 20px;
+    display: flex;
     background-color: var(--control-color);
     border: 1px solid var(--border-color);
     border-radius: $border-radius;
-    display: flex;
     align-items: center;
     padding: 0.25em;
     gap: $control-gap;
@@ -513,10 +514,6 @@ body {
     flex-direction: column;
     font-size: 16px;
 
-    .icon {
-        height: 1em;
-    }
-
     &.static {
         gap: $text-gap;
     }
@@ -601,6 +598,17 @@ body {
         text-overflow: ellipsis;
         white-space: nowrap;
         min-width: 0;
+    }
+
+    &-count {
+        font-size: 0.75em;
+        color: var(--text-color-muted);
+        background-color: var(--input-color);
+        padding: 0.25em;
+        border-radius: $border-radius;
+        text-align: center;
+        min-width: 1em;
+        aspect-ratio: 1;
     }
 }
 

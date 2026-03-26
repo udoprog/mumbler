@@ -581,6 +581,7 @@ pub(crate) enum Msg {
     PointerUp(PointerEvent),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectObject(RemoteId),
+    OpenObject(RemoteId),
     ToggleFollowMumbleSelection,
     ToggleHidden(RemoteId),
     ToggleLocalHidden(RemoteId),
@@ -665,7 +666,7 @@ impl Component for Map {
             object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
             object_onselect: ctx.link().callback(Msg::SelectObject),
-            object_onopen: ctx.link().callback(Msg::OpenSettings),
+            object_onopen: ctx.link().callback(Msg::OpenObject),
             object_requests: HashMap::new(),
             objects: Objects::default(),
             order: Hierarchy::default(),
@@ -988,7 +989,7 @@ impl Component for Map {
                     </section>
 
                     if room_id.is_local() {
-                        <button class="btn" title="Room settings" onclick={ctx.link().callback(move |_| Msg::OpenSettings(room_id))}>
+                        <button class="btn square" title="Room settings" onclick={ctx.link().callback(move |_| Msg::OpenSettings(room_id))}>
                             <Icon name="cog" />
                         </button>
                     }
@@ -1009,14 +1010,14 @@ impl Component for Map {
 
                 <div class="list" key="players">
                     <section class="list-content">
-                        <Icon name="user" invert={true} />
+                        <Icon name="user" invert={true} small={true} />
                         <span class="list-label">{self.config.display()}</span>
                     </section>
 
                     {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
                         html! {
                             <section class="list-content">
-                                <Icon name="user" invert={true} />
+                                <Icon name="user" invert={true} small={true} />
                                 <span class="list-label">{peer.display()}</span>
                             </section>
                         }
@@ -1416,6 +1417,24 @@ impl Map {
                         .select_object(&self.channel, ctx, id, &mut self.config, &objects);
 
                 Ok(update)
+            }
+            Msg::OpenObject(id) => {
+                let objects = self.objects.borrow();
+
+                let Some(o) = objects.get(id) else {
+                    return Ok(false);
+                };
+
+                match &o.kind {
+                    ObjectKind::Group(..) => {
+                        ctx.link().send_message(Msg::ToggleExpanded(id));
+                        Ok(false)
+                    }
+                    _ => {
+                        ctx.link().send_message(Msg::OpenSettings(id));
+                        Ok(false)
+                    }
+                }
             }
             Msg::ToggleFollowMumbleSelection => {
                 *self.config.mumble_follow = !*self.config.mumble_follow;
