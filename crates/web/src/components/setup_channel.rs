@@ -26,20 +26,13 @@ impl SetupChannel {
     where
         T: Component,
     {
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         let this = Self {
             _inner: Rc::new_cyclic(|inner: &Weak<RefCell<Inner>>| {
-                let on_ws = Callback::from({
-                    let inner = inner.clone();
-
-                    move |ws| {
-                        let Some(inner) = inner.upgrade() else {
-                            return;
-                        };
-
-                        inner.borrow_mut().on_ws(ws);
-                    }
-                });
-
                 let on_state = Callback::from({
                     let inner = inner.clone();
 
@@ -51,11 +44,6 @@ impl SetupChannel {
                         inner.borrow_mut().on_state(state);
                     }
                 });
-
-                let (ws, _ws_handle) = ctx
-                    .link()
-                    .context::<ws::Handle>(on_ws)
-                    .expect("WebSocket context not found");
 
                 let on_channel = Callback::from({
                     let inner = inner.clone();
@@ -87,11 +75,6 @@ impl SetupChannel {
 }
 
 impl Inner {
-    fn on_ws(&mut self, ws: ws::Handle) {
-        self.ws = ws;
-        self.setup();
-    }
-
     fn on_state(&mut self, state: ws::State) {
         self.state = state;
         self.refresh();

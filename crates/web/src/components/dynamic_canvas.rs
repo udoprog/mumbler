@@ -38,7 +38,7 @@ pub(crate) struct DynamicCanvas {
     canvas_container: NodeRef,
     canvas_ref: NodeRef,
     dimensions: Option<(u32, u32)>,
-    _resize_observer: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
+    resize: Option<(ResizeObserver, Closure<dyn FnMut()>)>,
 }
 
 impl Component for DynamicCanvas {
@@ -50,7 +50,7 @@ impl Component for DynamicCanvas {
             canvas_container: NodeRef::default(),
             canvas_ref: NodeRef::default(),
             dimensions: None,
-            _resize_observer: None,
+            resize: None,
         }
     }
 
@@ -75,6 +75,13 @@ impl Component for DynamicCanvas {
             }
 
             self.refresh(ctx);
+        }
+    }
+
+    fn destroy(&mut self, _: &Context<Self>) {
+        if let Some((o, closure)) = self.resize.take() {
+            o.disconnect();
+            drop(closure);
         }
     }
 
@@ -128,9 +135,9 @@ impl DynamicCanvas {
 
         observer.observe(&container);
 
-        if let Some((o, _closure)) = self._resize_observer.replace((observer, closure)) {
+        if let Some((o, closure)) = self.resize.replace((observer, closure)) {
             o.disconnect();
-            drop(_closure);
+            drop(closure);
         }
 
         Ok(())
@@ -161,6 +168,15 @@ impl DynamicCanvas {
         {
             canvas.set_width(width);
             canvas.set_height(height);
+        }
+    }
+}
+
+impl Drop for DynamicCanvas {
+    fn drop(&mut self) {
+        if let Some((o, closure)) = self.resize.take() {
+            o.disconnect();
+            drop(closure);
         }
     }
 }

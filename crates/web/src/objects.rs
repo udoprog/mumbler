@@ -689,7 +689,9 @@ impl ObjectRef {
     pub(crate) fn name(&self) -> Html {
         if !self.name.is_empty() {
             return html! {
-                <span>{self.name.as_str()}</span>
+                <span class="object">
+                    <span class="object-name">{self.name.to_string()}</span>
+                </span>
             };
         }
 
@@ -706,7 +708,10 @@ impl ObjectRef {
     pub(crate) fn title(&self) -> Html {
         if !self.name.is_empty() {
             return html! {
-                <span>{self.name.as_str()}</span>
+                <span class="object">
+                    <span class="object-type">{self.ty.title()}</span>
+                    <span class="object-name">{self.name.as_str()}</span>
+                </span>
             };
         }
 

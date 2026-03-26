@@ -80,7 +80,7 @@ impl Component for GroupSettings {
         html! {
             <>
             <div id="content" class="row">
-                <div class="rows">
+                <div class="col-12 rows">
                     <section class="input-group">
                         <label for="group-name">{"Name:"}</label>
 

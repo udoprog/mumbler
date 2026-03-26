@@ -17,6 +17,7 @@ pub(crate) struct Props {
     pub(crate) drop_into_last: Option<RemoteId>,
     pub(crate) selected: Option<RemoteId>,
     pub(crate) onselect: Callback<RemoteId>,
+    pub(crate) onopen: Callback<RemoteId>,
     pub(crate) ondragend: Callback<RemoteId>,
     pub(crate) ondragover: Callback<DragOver>,
     pub(crate) onhiddentoggle: Callback<RemoteId>,
@@ -101,6 +102,11 @@ impl Component for ObjectList {
             let label = o.as_ref().name();
 
             let onclick = ctx.props().onselect.reform(move |ev: MouseEvent| {
+                ev.stop_propagation();
+                target
+            });
+
+            let ondblclick = ctx.props().onopen.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
                 target
             });
@@ -298,6 +304,7 @@ impl Component for ObjectList {
                     class="list-drag"
                     draggable={true}
                     {onclick}
+                    {ondblclick}
                     {ondragstart}
                     {ondragend}
                     {ondragover}
@@ -324,6 +331,7 @@ impl Component for ObjectList {
                                 {drop_into_last}
                                 selected={ctx.props().selected}
                                 onselect={ctx.props().onselect.clone()}
+                                onopen={ctx.props().onopen.clone()}
                                 ondragover={ctx.props().ondragover.clone()}
                                 ondragend={ctx.props().ondragend.clone()}
                                 onhiddentoggle={ctx.props().onhiddentoggle.clone()}

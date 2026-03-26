@@ -68,7 +68,6 @@ impl Modal {
             },
             Modal::Settings { object, .. } => html! {
                 <>
-                    {"Settings for "}
                     {object.title()}
                 </>
             },
@@ -534,6 +533,7 @@ pub(crate) struct Map {
     object_onlockedtoggle: Callback<RemoteId>,
     object_onmumbletoggle: Callback<RemoteId>,
     object_onselect: Callback<RemoteId>,
+    object_onopen: Callback<RemoteId>,
     object_requests: HashMap<RemoteId, ObjectRequests>,
     objects: Objects,
     order: Hierarchy,
@@ -665,6 +665,7 @@ impl Component for Map {
             object_onlockedtoggle: ctx.link().callback(Msg::ToggleLocked),
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
             object_onselect: ctx.link().callback(Msg::SelectObject),
+            object_onopen: ctx.link().callback(Msg::OpenSettings),
             object_requests: HashMap::new(),
             objects: Objects::default(),
             order: Hierarchy::default(),
@@ -1057,6 +1058,7 @@ impl Component for Map {
                                     mumble_object={*self.config.mumble_object}
                                     selected={self.s.selected}
                                     onselect={self.object_onselect.clone()}
+                                    onopen={self.object_onopen.clone()}
                                     ondragover={self.object_ondragover.clone()}
                                     ondragend={self.object_ondragend.clone()}
                                     onhiddentoggle={self.object_onhiddentoggle.clone()}
@@ -1723,6 +1725,7 @@ impl Map {
 
                 self.s.update_cache = o.ty() == Type::ROOM;
                 update |= o.update(key, value);
+                self.s.redraw |= update;
                 update
             }
             RemoteUpdateBody::ImageCreated { image } => {
@@ -2557,6 +2560,7 @@ impl Map {
 
         let requests = self.object_requests.entry(id).or_default();
         requests._toggle_hidden = self.channel.object_update(ctx, id, Key::HIDDEN, new_hidden);
+        self.s.redraw = true;
         true
     }
 
@@ -2582,6 +2586,7 @@ impl Map {
             self.channel
                 .object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
 
+        self.s.redraw = true;
         true
     }
 

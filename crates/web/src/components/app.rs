@@ -131,7 +131,7 @@ fn connection_status() -> Html {
     {
         let state = state.clone();
 
-        use_effect(move || {
+        use_memo((), move |_| {
             let (s, listener) = ws.on_state_change({
                 let state = state.clone();
 
@@ -141,10 +141,7 @@ fn connection_status() -> Html {
             });
 
             state.set(s);
-
-            move || {
-                drop(listener);
-            }
+            listener
         });
     }
 
