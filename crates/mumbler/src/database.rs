@@ -1,3 +1,4 @@
+use core::ffi::c_int;
 use core::str;
 
 use std::collections::HashSet;
@@ -10,70 +11,12 @@ use api::{
     ValueKind, ValueType, Vec3,
 };
 use jiff::Timestamp;
-use musli::mode::Binary;
-use musli::{Encode, descriptive};
+use musli::descriptive;
 use relative_path::{RelativePath, RelativePathBuf};
 use rust_embed::RustEmbed;
-use sqll::{OpenOptions, SendStatement};
+use sqll::{BIND_INDEX, OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
-
-macro_rules! value_kind_switch {
-    ($self:expr, $value:expr, ($($args:expr),*), $add:ident, $delete:ident) => {
-        match $value.into_kind() {
-            ValueKind::String(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Float(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Integer(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Boolean(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Bytes(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Id(value) => {
-                if value.is_zero() {
-                    $self.$delete($($args),*).await?;
-                } else {
-                    $self.$add($($args),*, value).await?;
-                }
-            }
-            ValueKind::StableId(value) => {
-                if value.id.is_zero() {
-                    $self.$delete($($args),*).await?;
-                } else {
-                    $self.$add($($args),*, value).await?;
-                }
-            }
-            ValueKind::Transform(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Color(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Vec3(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Extent(extent) => {
-                $self.$add($($args),*, extent).await?;
-            }
-            ValueKind::Canvas2(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::PeerId(value) => {
-                $self.$add($($args),*, value).await?;
-            }
-            ValueKind::Empty => {
-                $self.$delete($($args),*).await?;
-            }
-        }
-    };
-}
 
 #[derive(sqll::Row)]
 pub(crate) struct Image {
@@ -93,15 +36,12 @@ struct Migrations;
 
 struct Inner {
     scratch: Vec<u8>,
-    delete_config: SendStatement,
     delete_image: SendStatement,
     delete_object: SendStatement,
     delete_property: SendStatement,
-    insert_config: SendStatement,
     insert_image: SendStatement,
     insert_object: SendStatement,
     insert_property: SendStatement,
-    select_configs: SendStatement,
     select_images: SendStatement,
     select_objects: SendStatement,
     select_properties: SendStatement,
@@ -187,17 +127,14 @@ impl Database {
         let inner = unsafe {
             Inner {
                 scratch: Vec::new(),
-                delete_config: c.prepare("DELETE FROM config WHERE key = ?")?.into_send()?,
                 delete_image: c.prepare("DELETE FROM images WHERE id = ?")?.into_send()?,
                 delete_object: c.prepare("DELETE FROM objects WHERE id = ?")?.into_send()?,
                 delete_property: c.prepare("DELETE FROM properties WHERE id = ? AND key = ?")?.into_send()?,
-                insert_config: c.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?.into_send()?,
                 insert_image: c.prepare("INSERT INTO images (id, content_type, data, width, height, role) VALUES (?, ?, ?, ?, ?, ?)")?.into_send()?,
                 insert_object: c.prepare("INSERT INTO objects (id, type) VALUES (?, ?)")?.into_send()?,
                 insert_property: c.prepare("INSERT INTO properties (id, key, value) VALUES (?, ?, ?) ON CONFLICT(id, key) DO UPDATE SET value = excluded.value")?.into_send()?,
-                select_configs: c.prepare("SELECT key, value FROM config")?.into_send()?,
                 select_images: c.prepare("SELECT id, content_type, role, width, height, data FROM images")?.into_send()?,
-                select_objects: c.prepare("SELECT id, type, group_id FROM objects")?.into_send()?,
+                select_objects: c.prepare("SELECT id, type FROM objects")?.into_send()?,
                 select_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
             }
         };
@@ -260,40 +197,34 @@ impl Database {
         task.await?
     }
 
-    /// Set the specified configuration.
-    pub(crate) async fn set_config_value(&self, key: Key, value: Value) -> Result<()> {
-        value_kind_switch!(self, value, (key), set_config, delete_config);
-        Ok(())
-    }
-
-    pub(crate) async fn set_config<T>(&self, key: Key, value: T) -> Result<()>
-    where
-        T: 'static + Send + Encode<Binary>,
-    {
+    /// Set specific configuration by key, or delete it if the value is unset.
+    pub(crate) async fn set_property(&self, id: Id, key: Key, value: Value) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            descriptive::encode(&mut inner.scratch, &value)?;
-
             let Inner {
-                insert_config,
+                insert_property: insert,
+                delete_property: delete,
                 scratch,
                 ..
             } = &mut *inner;
 
-            insert_config.execute((key, &scratch[..]))?;
-            scratch.clear();
-            Ok(())
-        });
+            tracing::debug!(?id, ?key, ?value, "storing property");
 
-        task.await?
-    }
+            insert.reset()?;
+            insert.bind_value(BIND_INDEX, id)?;
+            insert.bind_value(BIND_INDEX + 1, key)?;
 
-    pub(crate) async fn delete_config(&self, key: Key) -> Result<()> {
-        let mut inner = self.inner.clone().lock_owned().await;
+            match to_outcome(key, &value, &mut *scratch)? {
+                Outcome::Remove => {
+                    delete.execute((id, key))?;
+                }
+                Outcome::Insert(value) => {
+                    insert.execute((id, key, value))?;
+                    scratch.clear();
+                }
+            }
 
-        let task = task::spawn_blocking(move || {
-            inner.delete_config.execute((key,))?;
             Ok(())
         });
 
@@ -301,31 +232,34 @@ impl Database {
     }
 
     /// Set specific configuration by key, or delete it if the value is unset.
-    pub(crate) async fn set_property_value(&self, id: Id, key: Key, value: Value) -> Result<()> {
-        value_kind_switch!(self, value, (id, key), set_property, remove_property);
-        Ok(())
-    }
-
-    /// Set specific configuration by key.
-    pub(crate) async fn set_property(
+    pub(crate) async fn set_properties(
         &self,
-        id: Id,
-        key: Key,
-        value: impl 'static + Send + Encode<Binary>,
+        values: impl IntoIterator<Item = (Id, Key, Value)> + Send + 'static,
     ) -> Result<()> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            descriptive::encode(&mut inner.scratch, &value)?;
-
             let Inner {
-                insert_property: set_property,
+                insert_property: insert,
+                delete_property: delete,
                 scratch,
                 ..
             } = &mut *inner;
 
-            set_property.execute((id, key, &scratch[..]))?;
-            scratch.clear();
+            for (id, key, value) in values {
+                tracing::debug!(?id, ?key, ?value, "storing property");
+
+                match to_outcome(key, &value, &mut *scratch)? {
+                    Outcome::Remove => {
+                        delete.execute((id, key))?;
+                    }
+                    Outcome::Insert(value) => {
+                        insert.execute((id, key, value))?;
+                        scratch.clear();
+                    }
+                }
+            }
+
             Ok(())
         });
 
@@ -369,7 +303,7 @@ impl Database {
     }
 
     /// List all objects in the database.
-    pub(crate) async fn objects(&self) -> Result<Vec<(Id, Type, Option<Id>)>> {
+    pub(crate) async fn objects(&self) -> Result<Vec<(Id, Type)>> {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
@@ -377,11 +311,9 @@ impl Database {
 
             let mut objects = Vec::new();
 
-            while let Some((id, ty, group_id)) =
-                inner.select_objects.next::<(Id, Type, Option<Id>)>()?
-            {
+            while let Some((id, ty)) = inner.select_objects.next::<(Id, Type)>()? {
                 tracing::debug!(?id, ?ty, "loading object");
-                objects.push((id, ty, group_id));
+                objects.push((id, ty));
             }
 
             Ok(objects)
@@ -394,42 +326,27 @@ impl Database {
         let mut inner = self.inner.clone().lock_owned().await;
 
         let task = task::spawn_blocking(move || {
-            inner.select_properties.bind((id,))?;
+            let Inner {
+                select_properties: select,
+                ..
+            } = &mut *inner;
+
+            select.bind((id,))?;
 
             let mut props = Vec::new();
 
-            while let Some((key, value)) = inner.select_properties.next::<(Key, &[u8])>()? {
+            while select.step()?.is_row() {
+                let key = select.column::<Key>(0)?;
+
                 let Some(ty) = key.ty() else {
                     continue;
                 };
 
                 tracing::debug!(?id, ?key, "loading property");
-                let value =
-                    value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
-                props.push((key, value));
-            }
-
-            Ok(props)
-        });
-
-        task.await?
-    }
-
-    pub(crate) async fn configs(&self) -> Result<Vec<(Key, Value)>> {
-        let mut inner = self.inner.clone().lock_owned().await;
-
-        let task = task::spawn_blocking(move || {
-            inner.select_configs.reset()?;
-
-            let mut props = Vec::new();
-
-            while let Some((key, value)) = inner.select_configs.next::<(Key, &[u8])>()? {
-                let Some(ty) = key.ty() else {
-                    continue;
-                };
 
                 let value =
-                    value_from_blob(ty, value).with_context(|| anyhow!("decoding {key}"))?;
+                    value_from_blob(ty, select).with_context(|| anyhow!("Decoding {key}"))?;
+
                 props.push((key, value));
             }
 
@@ -440,21 +357,154 @@ impl Database {
     }
 }
 
-fn value_from_blob(ty: ValueType, blog: &[u8]) -> Result<Value> {
-    let value = match ty {
-        ValueType::Boolean => Value::from(descriptive::from_slice::<bool>(blog)?),
-        ValueType::Bytes => Value::from(descriptive::from_slice::<Vec<u8>>(blog)?),
-        ValueType::Color => Value::from(descriptive::from_slice::<Color>(blog)?),
-        ValueType::Extent => Value::from(descriptive::from_slice::<Extent>(blog)?),
-        ValueType::Float => Value::from(descriptive::from_slice::<f64>(blog)?),
-        ValueType::Id => Value::from(descriptive::from_slice::<Id>(blog)?),
-        ValueType::Integer => Value::from(descriptive::from_slice::<i64>(blog)?),
-        ValueType::Canvas2 => Value::from(descriptive::from_slice::<Canvas2>(blog)?),
-        ValueType::PeerId => Value::from(descriptive::from_slice::<PeerId>(blog)?),
-        ValueType::StableId => Value::from(descriptive::from_slice::<StableId>(blog)?),
-        ValueType::String => Value::from(descriptive::from_slice::<String>(blog)?),
-        ValueType::Transform => Value::from(descriptive::from_slice::<Transform>(blog)?),
-        ValueType::Vec3 => Value::from(descriptive::from_slice::<Vec3>(blog)?),
+enum Outcome<'a> {
+    Remove,
+    Insert(Insert<'a>),
+}
+
+enum Insert<'a> {
+    String(&'a str),
+    Float(f64),
+    Integer(i64),
+    Boolean(bool),
+    Bytes(&'a [u8]),
+    Id(Id),
+    PeerId(PeerId),
+    Encoded(&'a [u8]),
+}
+
+impl sqll::BindValue for Insert<'_> {
+    #[inline]
+    fn bind_value(&self, stmt: &mut sqll::Statement, index: c_int) -> sqll::Result<()> {
+        match *self {
+            Insert::String(value) => stmt.bind_value(index, value),
+            Insert::Float(value) => stmt.bind_value(index, value),
+            Insert::Integer(value) => stmt.bind_value(index, value),
+            Insert::Boolean(value) => stmt.bind_value(index, value),
+            Insert::Bytes(value) => stmt.bind_value(index, value),
+            Insert::Id(value) => stmt.bind_value(index, value),
+            Insert::PeerId(value) => stmt.bind_value(index, value),
+            Insert::Encoded(value) => stmt.bind_value(index, value),
+        }
+    }
+}
+
+fn to_outcome<'a>(key: Key, value: &'a Value, scratch: &'a mut Vec<u8>) -> Result<Outcome<'a>> {
+    let Some(ty) = key.ty() else {
+        return Ok(Outcome::Remove);
+    };
+
+    match (ty, value.as_kind()) {
+        (ValueType::String, ValueKind::String(value)) => {
+            if value.is_empty() {
+                Ok(Outcome::Remove)
+            } else {
+                Ok(Outcome::Insert(Insert::String(value)))
+            }
+        }
+        (ValueType::Float, ValueKind::Float(value)) => Ok(Outcome::Insert(Insert::Float(*value))),
+        (ValueType::Integer, ValueKind::Integer(value)) => {
+            Ok(Outcome::Insert(Insert::Integer(*value)))
+        }
+        (ValueType::Boolean, ValueKind::Boolean(value)) => {
+            Ok(Outcome::Insert(Insert::Boolean(*value)))
+        }
+        (ValueType::Bytes, ValueKind::Bytes(value)) => {
+            if value.is_empty() {
+                Ok(Outcome::Remove)
+            } else {
+                Ok(Outcome::Insert(Insert::Bytes(value)))
+            }
+        }
+        (ValueType::Id, ValueKind::Id(value)) => {
+            if value.is_zero() {
+                Ok(Outcome::Remove)
+            } else {
+                Ok(Outcome::Insert(Insert::Id(*value)))
+            }
+        }
+        (ValueType::StableId, ValueKind::StableId(value)) => {
+            if value.id.is_zero() {
+                Ok(Outcome::Remove)
+            } else {
+                descriptive::encode(&mut *scratch, &value)?;
+                Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+            }
+        }
+        (ValueType::Transform, ValueKind::Transform(value)) => {
+            descriptive::encode(&mut *scratch, &value)?;
+            Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+        }
+        (ValueType::Color, ValueKind::Color(value)) => {
+            descriptive::encode(&mut *scratch, &value)?;
+            Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+        }
+        (ValueType::Vec3, ValueKind::Vec3(value)) => {
+            descriptive::encode(&mut *scratch, &value)?;
+            Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+        }
+        (ValueType::Extent, ValueKind::Extent(value)) => {
+            descriptive::encode(&mut *scratch, &value)?;
+            Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+        }
+        (ValueType::Canvas2, ValueKind::Canvas2(value)) => {
+            descriptive::encode(&mut *scratch, &value)?;
+            Ok(Outcome::Insert(Insert::Encoded(&scratch[..])))
+        }
+        (ValueType::PeerId, ValueKind::PeerId(value)) => {
+            if value.is_zero() {
+                Ok(Outcome::Remove)
+            } else {
+                Ok(Outcome::Insert(Insert::PeerId(*value)))
+            }
+        }
+        (_, ValueKind::Empty) => Ok(Outcome::Remove),
+        (ty, kind) => Err(anyhow!(
+            "value kind {kind:?} does not match expected key type {ty:?}"
+        )),
+    }
+}
+
+fn value_from_blob(ty: ValueType, stmt: &mut SendStatement) -> Result<Value> {
+    const COLUMN: c_int = 1;
+
+    let value = match (ty, stmt.column_type(COLUMN)) {
+        (ValueType::Boolean, sqll::ValueType::INTEGER) => {
+            Value::from(stmt.column::<i64>(COLUMN)? != 0)
+        }
+        (ValueType::Bytes, sqll::ValueType::BLOB) => Value::from(stmt.column::<Vec<u8>>(COLUMN)?),
+        (ValueType::Color, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<Color>(stmt.column(COLUMN)?)?)
+        }
+        (ValueType::Extent, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<Extent>(stmt.column(COLUMN)?)?)
+        }
+        (ValueType::Float, sqll::ValueType::BLOB) => Value::from(stmt.column::<f64>(COLUMN)?),
+        (ValueType::Id, sqll::ValueType::BLOB) => Value::from(stmt.column::<Id>(COLUMN)?),
+        (ValueType::Integer, sqll::ValueType::BLOB) => Value::from(stmt.column::<i64>(COLUMN)?),
+        (ValueType::Canvas2, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<Canvas2>(stmt.column(COLUMN)?)?)
+        }
+        (ValueType::PeerId, sqll::ValueType::INTEGER) => {
+            Value::from(stmt.column::<PeerId>(COLUMN)?)
+        }
+        (ValueType::StableId, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<StableId>(stmt.column(COLUMN)?)?)
+        }
+        (ValueType::String, sqll::ValueType::TEXT) => {
+            Value::from(stmt.unsized_column::<str>(COLUMN)?)
+        }
+        (ValueType::Transform, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<Transform>(stmt.column(COLUMN)?)?)
+        }
+        (ValueType::Vec3, sqll::ValueType::BLOB) => {
+            Value::from(descriptive::from_slice::<Vec3>(stmt.column(COLUMN)?)?)
+        }
+        (ty, found) => {
+            return Err(anyhow!(
+                "Database column {found} does not match type {ty:?}"
+            ));
+        }
     };
 
     Ok(value)

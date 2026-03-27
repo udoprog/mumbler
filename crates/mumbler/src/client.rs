@@ -4,7 +4,9 @@ use core::time::Duration;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use api::{Image, Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value};
+use api::{
+    Id, Image, Key, Properties, RemoteId, RemoteObject, RemotePeer, RemoteUpdateBody, Value,
+};
 use async_fuse::Fuse;
 use musli_web::api::ChannelId;
 use tokio::net::TcpStream;
@@ -266,7 +268,10 @@ async fn handle_peer(
                 if remove_room {
                     b.updates(ChannelId::NONE, &[(Key::ROOM, Value::empty())])
                         .await?;
-                    b.db().set_config_value(Key::ROOM, Value::empty()).await?;
+
+                    b.db()
+                        .set_property(Id::ZERO, Key::ROOM, Value::empty())
+                        .await?;
                 }
             }
             Event::ImageRemoved => {

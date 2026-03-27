@@ -35,6 +35,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn as_kind(&self) -> &ValueKind {
+        &self.kind
+    }
+
+    #[inline]
     pub const fn empty() -> Self {
         Self {
             kind: ValueKind::Empty,

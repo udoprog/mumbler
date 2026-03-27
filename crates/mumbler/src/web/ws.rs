@@ -23,7 +23,6 @@ use crate::backend::{Backend, Broadcast};
 struct Handler<'a> {
     backend: Backend,
     database_updates: HashMap<(Id, Key), Value>,
-    database_config: HashMap<Key, Value>,
     database_updates_notify: &'a Notify,
 }
 
@@ -32,7 +31,6 @@ impl<'a> Handler<'a> {
         Self {
             backend,
             database_updates: HashMap::new(),
-            database_config: HashMap::new(),
             database_updates_notify,
         }
     }
@@ -80,7 +78,7 @@ impl ws::Handler for Handler<'_> {
                         .await?;
 
                     for (key, value) in request.values {
-                        self.database_config.insert(key, value);
+                        self.database_updates.insert((Id::ZERO, key), value);
                     }
 
                     self.database_updates_notify.notify_one();
@@ -256,7 +254,6 @@ pub(super) async fn entry(
             );
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
-            let mut local_configs = HashMap::new();
 
             loop {
                 let (result, done) = tokio::select! {
@@ -266,17 +263,11 @@ pub(super) async fn entry(
                     () = database_updates_notify.notified() => {
                         let handler = &mut server.handler_mut();
 
-                        let was_empty = local_updates.is_empty() && local_configs.is_empty();
+                        let was_empty = local_updates.is_empty();
 
                         if !handler.database_updates.is_empty() {
                             for (key, value) in handler.database_updates.drain() {
                                 local_updates.insert(key, value);
-                            }
-                        }
-
-                        if !handler.database_config.is_empty() {
-                            for (key, value) in handler.database_config.drain() {
-                                local_configs.insert(key, value);
                             }
                         }
 
@@ -291,14 +282,8 @@ pub(super) async fn entry(
                         tracing::debug!("Saving updates");
 
                         let result = async {
-                            for ((id, key), value) in local_updates.drain() {
-                                backend.db().set_property_value(id, key, value).await?;
-                            }
-
-                            for (key, value) in local_configs.drain() {
-                                backend.db().set_config_value(key, value).await?;
-                            }
-
+                            let values = local_updates.drain().map(|((id, key), value)| (id, key, value)).collect::<Vec<_>>();
+                            backend.db().set_properties(values).await?;
                             Ok(())
                         };
 

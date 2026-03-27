@@ -379,11 +379,11 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    fn display(&self) -> String {
+    fn display(&self) -> &str {
         if self.name.is_empty() {
-            String::from("You")
+            "You"
         } else {
-            format!("{} (You)", *self.name)
+            &self.name
         }
     }
 

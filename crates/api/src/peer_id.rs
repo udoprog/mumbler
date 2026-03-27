@@ -1,4 +1,6 @@
 use core::error::Error;
+#[cfg(feature = "sqll")]
+use core::ffi::c_int;
 use core::fmt;
 use core::str::FromStr;
 
@@ -7,6 +9,8 @@ use base64::display::Base64Display;
 use base64::engine::Engine as _;
 use musli_core::{Decode, Encode};
 use serde_core::de;
+#[cfg(feature = "sqll")]
+use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 /// The engine used for base64.
 static ENGINE: base64::engine::general_purpose::GeneralPurpose =
@@ -177,5 +181,32 @@ impl FromStr for PeerId {
         }
 
         Ok(PeerId::new(u32::from_le_bytes(dest)))
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl BindValue for PeerId {
+    #[inline]
+    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
+        self.repr.bind_value(stmt, index)
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl Bind for PeerId {
+    #[inline]
+    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
+        self.bind_value(stmt, BIND_INDEX)
+    }
+}
+
+#[cfg(feature = "sqll")]
+impl FromColumn<'_> for PeerId {
+    type Type = ty::Integer;
+
+    #[inline]
+    fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
+        let repr = u32::from_column(stmt, index)?;
+        Ok(PeerId::new(repr))
     }
 }

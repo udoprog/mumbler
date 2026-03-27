@@ -266,7 +266,7 @@ async fn remove_image(backend: &Backend, id: Id) -> Result<()> {
 async fn get_config(backend: &Backend) -> Result<Properties> {
     let mut props = Properties::new();
 
-    for (key, value) in backend.db().configs().await? {
+    for (key, value) in backend.db().properties(Id::ZERO).await? {
         props.insert(key, value);
     }
 

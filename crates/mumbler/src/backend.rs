@@ -197,10 +197,8 @@ impl Backend {
         let mut images = HashMap::new();
         let mut hidden = HashSet::new();
 
-        for (id, ty, group_id) in database.objects().await? {
+        for (id, ty) in database.objects().await? {
             let mut props = Properties::new();
-
-            props.insert(Key::GROUP, Value::from(group_id));
 
             for (key, value) in database.properties(id).await? {
                 match key {
@@ -238,16 +236,18 @@ impl Backend {
 
         let mut props = Properties::new();
 
-        for (key, value) in database.configs().await? {
+        for (key, value) in database.properties(Id::ZERO).await? {
             props.insert(key, value);
         }
 
         let client_secret = match props.get(Key::PEER_SECRET).as_str() {
             "" => {
                 let secret = crypto::random_string();
+
                 database
-                    .set_config_value(Key::PEER_SECRET, Value::from(secret.clone()))
+                    .set_property(Id::ZERO, Key::PEER_SECRET, Value::from(secret.clone()))
                     .await?;
+
                 props.insert(Key::PEER_SECRET, Value::from(secret.clone()));
                 secret
             }
@@ -592,7 +592,7 @@ impl Backend {
         };
 
         for (key, value) in props.iter() {
-            self.db().set_property_value(id, key, value.clone()).await?;
+            self.db().set_property(id, key, value.clone()).await?;
         }
 
         self.inner.client_notify.notify_one();
@@ -615,7 +615,8 @@ impl Backend {
         if *state.props.get(Key::ROOM).as_stable_id()
             == StableId::new(state.keypair.public_key(), id)
         {
-            self.db().delete_config(Key::ROOM).await?;
+            self.db().remove_property(Id::ZERO, Key::ROOM).await?;
+
             state.props.remove(Key::ROOM);
             state.props_changed.insert(Key::ROOM);
         }
