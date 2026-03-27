@@ -2,6 +2,7 @@ use core::error::Error;
 #[cfg(feature = "sqll")]
 use core::ffi::c_int;
 use core::fmt;
+use core::num::NonZeroU32;
 use core::str::FromStr;
 
 use base64::display::Base64Display;
@@ -54,6 +55,11 @@ impl Id {
     #[inline]
     pub fn to_vec(&self) -> Vec<u8> {
         self.repr.to_le_bytes().to_vec()
+    }
+
+    #[inline]
+    pub fn to_non_zero_u32(&self) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.repr)
     }
 }
 

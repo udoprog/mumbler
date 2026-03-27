@@ -1,10 +1,11 @@
 use core::num::NonZeroU32;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use std::collections::VecDeque;
 
 use crate::hash;
 
-/// A generator for random-look identifiers.
+/// A generator for random-looking identifiers.
 pub struct Ids {
     /// Random seed used for mapping sequential peer IDs to random-looking ones.
     seed: u32,
@@ -43,6 +44,32 @@ impl Ids {
         if let Some(id) = NonZeroU32::new(id) {
             self.free.push_back(id);
         }
+    }
+}
+
+/// An atomic generator for random-looking identifiers.
+pub struct AtomicIds {
+    /// Random seed used for mapping sequential peer IDs to random-looking ones.
+    seed: u32,
+    /// The last peer identifier used.
+    last: AtomicU32,
+}
+
+impl AtomicIds {
+    /// Construct a new id allocator.
+    #[inline]
+    pub(crate) fn new(seed: u32) -> Self {
+        Self {
+            seed,
+            last: AtomicU32::new(1),
+        }
+    }
+
+    /// Get the next identifier.
+    #[inline]
+    pub(crate) fn next(&self) -> Option<NonZeroU32> {
+        let next = NonZeroU32::new(self.last.fetch_add(1, Ordering::Relaxed))?;
+        NonZeroU32::new(hash::map(next.get(), self.seed))
     }
 }
 

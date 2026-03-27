@@ -1,4 +1,5 @@
 use core::fmt;
+use core::num::NonZeroU32;
 use core::sync::atomic::Ordering;
 
 use core::sync::atomic::AtomicU32;
@@ -20,6 +21,7 @@ use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWrit
 
 use crate::crypto;
 use crate::crypto::Keypair;
+use crate::ids::AtomicIds;
 
 use super::{Database, Paths};
 
@@ -91,8 +93,8 @@ pub(crate) struct PeerInfo {
 
 /// Information about remote peers.
 pub(crate) struct ClientState {
-    /// Helper to generate unique identifiers.
-    pub(crate) ids: HashSet<Id>,
+    /// Set of used identifiers.
+    pub(crate) used_ids: HashSet<NonZeroU32>,
     /// The keypair associated with this client.
     pub(crate) keypair: Keypair,
     /// Remote objects.
@@ -161,6 +163,7 @@ pub(crate) struct MumblelinkState {
 }
 
 struct Inner {
+    ids: AtomicIds,
     database: Database,
     #[allow(unused)]
     paths: Paths,
@@ -189,7 +192,7 @@ impl Backend {
 
         tracing::debug!("loading objects from database");
 
-        let mut ids = HashSet::new();
+        let mut used_ids = HashSet::new();
         let mut objects = HashMap::new();
         let mut images = HashMap::new();
         let mut hidden = HashSet::new();
@@ -227,7 +230,10 @@ impl Backend {
             }
 
             objects.insert(id, object);
-            ids.insert(id);
+
+            if let Some(id) = id.to_non_zero_u32() {
+                used_ids.insert(id);
+            }
         }
 
         let mut props = Properties::new();
@@ -276,7 +282,9 @@ impl Backend {
                 },
             );
 
-            ids.insert(image.id);
+            if let Some(id) = image.id.to_non_zero_u32() {
+                used_ids.insert(id);
+            }
         }
 
         let mumble_object = props.get(Key::MUMBLE_OBJECT).as_id();
@@ -285,10 +293,11 @@ impl Backend {
 
         Ok(Self {
             inner: Arc::new(Inner {
+                ids: AtomicIds::new(rand::random()),
                 database,
                 paths,
                 client_state: Mutex::new(ClientState {
-                    ids,
+                    used_ids,
                     keypair,
                     peers: HashMap::new(),
                     objects,
@@ -316,21 +325,15 @@ impl Backend {
 
     /// Generate a new unique identifier.
     async fn new_id(&self) -> Result<Id> {
-        let mut state = self.inner.client_state.lock().await;
+        loop {
+            let Some(id) = self.inner.ids.next() else {
+                bail!("exhausted all possible identifiers");
+            };
 
-        let mut attempts = 0usize;
-
-        while attempts < 10 {
-            let id = Id::new(rand::random());
-
-            if state.ids.insert(id) {
-                return Ok(id);
+            if self.inner.client_state.lock().await.used_ids.insert(id) {
+                return Ok(Id::new(id.get()));
             }
-
-            attempts += 1;
         }
-
-        bail!("failed to generate a unique identifier")
     }
 
     /// Get a reference to the database.
