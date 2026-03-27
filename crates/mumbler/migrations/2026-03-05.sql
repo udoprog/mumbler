@@ -1,9 +1,10 @@
 CREATE TABLE `images` (
     `id` INTEGER PRIMARY KEY,
     `content_type` INTEGER NOT NULL,
-    `data` BLOB NOT NULL,
+    `role` INTEGER NOT NULL,
     `width` INTEGER NOT NULL,
-    `height` INTEGER NOT NULL
+    `height` INTEGER NOT NULL,
+    `data` BLOB NOT NULL,
 );
 
 -- Global configuration.
