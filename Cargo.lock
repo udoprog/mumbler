@@ -2838,9 +2838,9 @@ dependencies = [
 
 [[package]]
 name = "sqll"
-version = "0.12.5"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2d64653ddaae22b2e314a9c084db7d97c4c2c51ffe3e97038a4bdff8b17fc70"
+checksum = "23ca1489bef7647b7c80e46a13ce355d18ece93ded2ace6cc1d82fddc74a5d38"
 dependencies = [
  "sqll-macros",
  "sqll-sys",
@@ -2848,9 +2848,9 @@ dependencies = [
 
 [[package]]
 name = "sqll-macros"
-version = "0.12.5"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b524edf7fc20c4732e523d4e39190c8003ec51b15e60321ed5907aaa462719b9"
+checksum = "dda56251dafab59b614c8064d7d97750330d91b4e7f07793b913119849db37dc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2859,9 +2859,9 @@ dependencies = [
 
 [[package]]
 name = "sqll-sys"
-version = "0.12.5+sqlite3.51.2"
+version = "0.12.7+sqlite3.51.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b2b188c18c678ca3b88c7de3b6c5c496b1ba8bc940ac5e6bf38c90f32b6a910"
+checksum = "d698c8cef873eac33f54d9dc98724ada80cfd463678f115303832873a0229219"
 dependencies = [
  "cc",
  "pkg-config",

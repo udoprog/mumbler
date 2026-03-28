@@ -3,7 +3,7 @@ use std::io::Cursor;
 use anyhow::{Context, Result};
 use api::{ContentType, CropRegion, ImageSizing};
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat, imageops};
+use image::{DynamicImage, ImageFormat, Rgba, imageops};
 
 /// Process raw image bytes into a PNG.
 ///
@@ -48,25 +48,25 @@ pub(crate) fn process(
 
     let small = imageops::resize(&rgba, new_w, new_h, FilterType::Lanczos3);
 
-    let (r, g, b, a) = small
+    let [r, g, b, a] = small
         .pixels()
-        .try_fold((0u64, 0u64, 0u64, 0u64), |(r, g, b, a), p| {
-            Some((
-                r.checked_add(p[0] as u64)?,
-                g.checked_add(p[1] as u64)?,
-                b.checked_add(p[2] as u64)?,
-                a.checked_add(p[3] as u64)?,
-            ))
+        .try_fold([0u64; 4], |[r0, g0, b0, a0], &Rgba([r1, g1, b1, a1])| {
+            Some([
+                r0.checked_add(u64::from(r1))?,
+                g0.checked_add(u64::from(g1))?,
+                b0.checked_add(u64::from(b1))?,
+                a0.checked_add(u64::from(a1))?,
+            ])
         })
         .context("image is too large to process")?;
 
     let count = (new_w * new_h) as u64;
 
     let avg = image::Rgba([
-        (r / count) as u8,
-        (g / count) as u8,
-        (b / count) as u8,
-        (a / count) as u8,
+        u8::try_from(r / count).unwrap_or(u8::MAX),
+        u8::try_from(g / count).unwrap_or(u8::MAX),
+        u8::try_from(b / count).unwrap_or(u8::MAX),
+        u8::try_from(a / count).unwrap_or(u8::MAX),
     ]);
 
     let (out_w, out_h) = if sizing.is_square() {
