@@ -1,6 +1,6 @@
+use core::fmt;
 use core::num::ParseIntError;
-use std::fmt;
-use std::str::Utf8Error;
+use core::str::Utf8Error;
 
 /// Errors raised in this application.
 pub struct Error {
@@ -8,6 +8,13 @@ pub struct Error {
 }
 
 impl Error {
+    #[inline]
+    pub(crate) fn message(message: impl fmt::Display + fmt::Debug + Send + Sync + 'static) -> Self {
+        Self {
+            error: anyhow::Error::msg(message),
+        }
+    }
+
     #[inline]
     pub(crate) fn into_inner(self) -> anyhow::Error {
         self.error

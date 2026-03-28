@@ -1,6 +1,7 @@
 @import "_reset";
 @import "_mixins";
 @import "_grid";
+@import "_loader";
 
 $margin: 10px;
 $border-radius: 4px;
@@ -103,6 +104,23 @@ h6 {
 
 .hidden {
     display: none;
+}
+
+.clickable {
+    cursor: pointer;
+}
+
+.image {
+    border-radius: $border-radius;
+    outline: 2px solid transparent;
+
+    &.selected {
+        outline: 2px solid var(--link-color);
+    }
+
+    &:hover:not(.selected) {
+        outline: 2px solid var(--input-color);
+    }
 }
 
 .btn {
@@ -312,7 +330,7 @@ body {
     box-shadow: 0 0 $margin rgba(0, 0, 0, 0.5);
     box-sizing: border-box;
 
-    & > .fill {
+    &>.fill {
         flex: 1;
     }
 }
@@ -399,15 +417,6 @@ body {
     }
 }
 
-.token {
-    width: 128px;
-    height: 128px;
-    object-fit: contain;
-    border-radius: $border-radius;
-    border: 2px solid transparent;
-    display: block;
-}
-
 .image-entry {
     position: relative;
     display: inline-block;
@@ -425,15 +434,6 @@ body {
     &:hover .btn.floating {
         opacity: 1;
     }
-}
-
-.token.selected {
-    border: 2px solid var(--link-color);
-    border-radius: $border-radius;
-}
-
-.token.clickable:not(.selected) {
-    cursor: pointer;
 }
 
 .input-group {
@@ -579,7 +579,7 @@ body {
             color: var(--link-color);
         }
 
-        &:hover {
+        &:hover:not(.selected) {
             background-color: var(--input-color);
         }
 

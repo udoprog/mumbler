@@ -1,4 +1,5 @@
 use api::{Image, RemoteId, Role};
+use musli_web::api::ChannelId;
 use musli_web::web03::prelude::*;
 use web_sys::MouseEvent;
 use yew::prelude::*;
@@ -107,7 +108,7 @@ impl Component for ImageGalleryModal {
                 });
 
                 let classes = classes!(
-                    "token",
+                    "image",
                     (ctx.props().selected == image.id).then_some("selected"),
                     "clickable"
                 );
@@ -125,6 +126,7 @@ impl Component for ImageGalleryModal {
                 <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
                     <div class="modal-header">
                         <h2>{"Select Image"}</h2>
+
                         <button class="btn sm square danger" title="Close"
                             onclick={ctx.link().callback(|_| Msg::Close)}>
                             <Icon name="x-mark" />
@@ -160,6 +162,18 @@ impl ImageGalleryModal {
             }
             Msg::Role(role) => {
                 self.filter = role;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
+
+                self._initialize = self
+                    .channel
+                    .request()
+                    .body(api::InitializeImageUploadRequest)
+                    .on_packet(ctx.link().callback(Msg::Initialize))
+                    .send();
+
                 Ok(true)
             }
             Msg::Log(log) => {
@@ -172,6 +186,10 @@ impl ImageGalleryModal {
             }
             Msg::Channel(channel) => {
                 self.channel = channel?;
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
 
                 self._initialize = self
                     .channel
@@ -188,44 +206,27 @@ impl ImageGalleryModal {
                 Ok(false)
             }
             Msg::Initialize(response) => {
-                if let Err(error) = self.initialize(response) {
-                    self.log.error("ImageGalleryModal::initialize", error);
-                }
-
+                let response = response?;
+                let response = response.decode()?;
+                self.initialize(response);
                 Ok(true)
             }
             Msg::RemoteUpdate(response) => {
-                if let Err(error) = self.remote_update(response) {
-                    self.log.error("ImageGalleryModal::remote_update", error);
-                }
-
-                Ok(true)
+                let response = response?;
+                let response = response.decode()?;
+                Ok(self.remote_update(response))
             }
         }
     }
 
-    fn initialize(
-        &mut self,
-        response: Result<ws::Packet<api::InitializeImageUpload>, ws::Error>,
-    ) -> Result<(), ws::Error> {
-        let response = response?;
-        let response = response.decode()?;
-
+    fn initialize(&mut self, response: api::InitializeImageUploadResponse) {
         self.images = response.images;
 
         self.images
             .retain(|image| self.filter == Role::NONE || image.role == self.filter);
-
-        Ok(())
     }
 
-    fn remote_update(
-        &mut self,
-        response: Result<ws::Packet<api::RemoteUpdate>, ws::Error>,
-    ) -> Result<bool, ws::Error> {
-        let response = response?;
-        let response = response.decode()?;
-
+    fn remote_update(&mut self, response: api::RemoteUpdateBody) -> bool {
         match response {
             api::RemoteUpdateBody::ImageCreated { image } => {
                 self.images.push(image);
@@ -233,9 +234,9 @@ impl ImageGalleryModal {
             api::RemoteUpdateBody::ImageRemoved { id } => {
                 self.images.retain(|image| image.id != id);
             }
-            _ => return Ok(false),
+            _ => return false,
         }
 
-        Ok(true)
+        true
     }
 }

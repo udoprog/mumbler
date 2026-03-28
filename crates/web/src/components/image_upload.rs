@@ -1,17 +1,19 @@
+use anyhow::Context as _;
 use api::{RemoteId, Role};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlInputElement, Url};
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
 
-use super::{CropModal, Icon, ImageGalleryModal, SetupChannel, into_target};
+use super::{CropModal, Icon, ImageGalleryModal, SetupChannel, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
+    Error(Error),
     Channel(Result<ws::Channel, Error>),
     FileSelected(Event),
     FileRead(String, Result<Vec<u8>, gloo::file::FileReadError>),
@@ -49,7 +51,7 @@ pub(crate) struct ImageUpload {
     _file_reader: Option<FileReader>,
     _upload_image: ws::Request,
     crop_source_data: Option<(String, Vec<u8>)>,
-    crop_source_url: Option<String>,
+    crop_source_url: Option<TemporaryUrl>,
     gallery_open: bool,
     uploading: bool,
 }
@@ -98,8 +100,13 @@ impl Component for ImageUpload {
             <>
             <section class="btn-group">
                 <label for={input_id.clone()} class={classes!("btn", "primary", self.uploading.then_some("disabled"))}>
-                    {"Upload"}
-                    <Icon name="arrow-up-on-square" />
+                    if self.uploading {
+                        {"Uploading"}
+                        <span class="loader" />
+                    } else {
+                        {"Upload"}
+                        <Icon name="arrow-up-on-square" />
+                    }
                 </label>
 
                 <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
@@ -131,9 +138,9 @@ impl Component for ImageUpload {
                 />
             }
 
-            if let Some(src) = &self.crop_source_url {
+            if let Some(source_url) = &self.crop_source_url {
                 <CropModal
-                    source_url={src.clone()}
+                    source_url={(*source_url).to_string()}
                     ratio={ctx.props().ratio}
                     onconfirm={ctx.link().callback(Msg::CropConfirmed)}
                     oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
@@ -148,6 +155,7 @@ impl Component for ImageUpload {
 impl ImageUpload {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::Error(error) => Err(error),
             Msg::Channel(channel) => {
                 self.channel = channel?;
                 Ok(false)
@@ -155,18 +163,16 @@ impl ImageUpload {
             Msg::FileSelected(e) => {
                 let input = into_target!(e, HtmlInputElement);
 
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
+                self.crop_source_url = None;
                 self.crop_source_data = None;
 
                 let files = input.files().ok_or("no file list")?;
                 let file = files.get(0).ok_or("no file selected")?;
 
-                if let Ok(url) = Url::create_object_url_with_blob(&file) {
-                    self.crop_source_url = Some(url);
-                }
+                self.crop_source_url = Some(TemporaryUrl::create(
+                    &file,
+                    ctx.link().callback(Msg::Error),
+                )?);
 
                 let content_type = file.type_();
                 let gloo_file = gloo::file::File::from(file);
@@ -179,7 +185,9 @@ impl ImageUpload {
             }
             Msg::FileRead(content_type, result) => {
                 self._file_reader = None;
-                let data = result.map_err(|e| anyhow::anyhow!("file read error: {e}"))?;
+                let data = result
+                    .map_err(anyhow::Error::from)
+                    .context("reading image")?;
                 self.crop_source_data = Some((content_type, data));
                 Ok(false)
             }
@@ -188,28 +196,27 @@ impl ImageUpload {
                     return Err("image data not ready".into());
                 };
 
+                self.crop_source_url = None;
+                self.uploading = true;
+
                 self._upload_image = self
                     .channel
                     .request()
-                    .body(api::UploadImageRequest {
-                        content_type,
-                        data,
+                    .body(api::UploadImageRequestRef {
+                        content_type: &content_type,
+                        role: ctx.props().role,
                         crop,
                         sizing: ctx.props().sizing,
                         size: ctx.props().size,
-                        role: ctx.props().role,
+                        data: &data,
                     })
                     .on_packet(ctx.link().callback(Msg::Uploaded))
                     .send();
 
-                self.uploading = true;
                 Ok(true)
             }
             Msg::CropCancelled => {
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
-
+                self.crop_source_url = None;
                 self.crop_source_data = None;
                 self._file_reader = None;
                 Ok(true)
@@ -218,11 +225,8 @@ impl ImageUpload {
                 let body = body?;
                 let body = body.decode()?;
 
+                self.crop_source_url = None;
                 self.uploading = false;
-
-                if let Some(url) = self.crop_source_url.take() {
-                    let _ = Url::revoke_object_url(&url);
-                }
 
                 ctx.props().onselect.emit(body.image.id);
                 Ok(true)

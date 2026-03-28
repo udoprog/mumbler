@@ -306,14 +306,13 @@ impl Component for ObjectList {
                     class="list-drag"
                     draggable={true}
                     {onclick}
-                    {ondblclick}
                     {ondragstart}
                     {ondragend}
                     {ondragover}
                 >
                     <section {class}>
                         <Icon name={o.icon()} invert={true} small={true} />
-                        <span class="list-label">{label}</span>
+                        <span class="list-label" {ondblclick}>{label}</span>
 
                         if o.is_group() && !o.is_expanded() {
                             <span class="list-count">{order.child_count(o.id)}</span>

@@ -288,6 +288,23 @@ pub struct UploadImageRequest {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct UploadImageRequestRef<'a> {
+    /// MIME type of the uploaded image (e.g. "image/png").
+    pub content_type: &'a str,
+    /// The role of the image being uploaded.
+    pub role: Role,
+    /// The crop region to apply to the source image.
+    pub crop: CropRegion,
+    /// Requested image sizing.
+    pub sizing: ImageSizing,
+    /// The requested maximum size.
+    pub size: u32,
+    /// Raw bytes of the image file.
+    pub data: &'a [u8],
+}
+
 /// A square crop region expressed in the source image's natural pixel space.
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -937,6 +954,7 @@ api::define! {
 
     impl Endpoint for UploadImage {
         impl Request for UploadImageRequest;
+        impl Request for UploadImageRequestRef<'_>;
         type Response<'de> = UploadImageResponse;
     }
 

@@ -63,6 +63,9 @@ use self::context_menu_dropdown::ContextMenuDropdown;
 mod setup_channel;
 use self::setup_channel::SetupChannel;
 
+mod temporary_url;
+use self::temporary_url::TemporaryUrl;
+
 use yew::prelude::*;
 
 const UNKNOWN_ROOM: &str = "Unknown Room";

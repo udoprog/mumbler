@@ -14,7 +14,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
     CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlImageElement, KeyboardEvent,
-    MouseEvent, Url, WheelEvent,
+    MouseEvent, WheelEvent,
 };
 use yew::prelude::*;
 
@@ -31,7 +31,7 @@ use crate::state::State;
 use super::render::{self, ViewTransform};
 use super::{
     COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList,
-    RoomSettings, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
+    RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -436,11 +436,11 @@ struct DropImage {
     _onerror: Closure<dyn FnMut()>,
     _onload: Closure<dyn FnMut()>,
     _img: HtmlImageElement,
+    _url: TemporaryUrl,
     bytes: Option<Vec<u8>>,
     content_type: String,
     file_reader: Option<FileReader>,
     pixel_size: Option<(u32, u32)>,
-    url: String,
     world_pos: Vec3,
     world_size: Option<(f32, f32)>,
 }
@@ -465,13 +465,6 @@ impl DropImage {
         } else {
             (2.0 * (width / height), 2.0)
         }
-    }
-}
-
-impl Drop for DropImage {
-    #[inline]
-    fn drop(&mut self) {
-        let _ = Url::revoke_object_url(&self.url);
     }
 }
 
@@ -1140,9 +1133,7 @@ impl Map {
             return Ok(false);
         }
 
-        let Ok(url) = Url::create_object_url_with_blob(&file) else {
-            return Ok(false);
-        };
+        let url = TemporaryUrl::create(&file, ctx.link().callback(Msg::Error))?;
 
         let img = HtmlImageElement::new()?;
         let link = ctx.link().clone();
@@ -1177,11 +1168,11 @@ impl Map {
             _onerror: onerror,
             _onload: onload,
             _img: img,
+            _url: url,
             bytes: None,
             content_type,
             file_reader: Some(file_reader),
             pixel_size: None,
-            url,
             world_pos,
             world_size: None,
         });
@@ -1213,9 +1204,9 @@ impl Map {
         self._upload_image = self
             .channel
             .request()
-            .body(api::UploadImageRequest {
-                content_type: drop_image.content_type.clone(),
-                data,
+            .body(api::UploadImageRequestRef {
+                content_type: &drop_image.content_type,
+                role: api::Role::TOKEN,
                 crop: api::CropRegion {
                     x1: 0,
                     y1: 0,
@@ -1224,7 +1215,7 @@ impl Map {
                 },
                 sizing: api::ImageSizing::Crop,
                 size: 512,
-                role: api::Role::TOKEN,
+                data: &data,
             })
             .on_packet(ctx.link().callback(Msg::DropImageUploaded))
             .send();
