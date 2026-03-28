@@ -12,14 +12,13 @@ use std::sync::Arc;
 use std::task::Wake;
 
 use anyhow::{Context as _, Result, anyhow};
-use api::{Id, Key, PeerId, Properties, PublicKey, RemoteObject, StableId, Type};
+use api::{Id, Ids, Key, PeerId, Properties, PublicKey, RemoteObject, StableId, Type};
 use parking_lot::Mutex;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio::time::{self, Sleep};
 
 use crate::crypto;
-use crate::ids::Ids;
 use crate::remote::api::{
     ImageCreateBody, ImageRemoveBody, ObjectCreateBody, ObjectRemoveBody, ObjectUpdateBody,
     PeerUpdateBody, RemoteImage,

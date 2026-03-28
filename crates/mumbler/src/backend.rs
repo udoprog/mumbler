@@ -8,11 +8,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use anyhow::bail;
-use api::RemoteId;
-use api::RemoteUpdateBody;
 use api::{
-    ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, Role, StableId, Transform,
-    Type, UpdateBody, Value,
+    AtomicIds, ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteId, RemoteObject,
+    RemoteUpdateBody, Role, StableId, Transform, Type, UpdateBody, Value,
 };
 use musli_web::api::ChannelId;
 use parking_lot::RwLock as BlockingRwLock;
@@ -21,7 +19,6 @@ use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWrit
 
 use crate::crypto;
 use crate::crypto::Keypair;
-use crate::ids::AtomicIds;
 
 use super::{Database, Paths};
 
@@ -188,7 +185,7 @@ pub struct Backend {
 impl Backend {
     /// Construct a new backend.
     pub async fn new(database: Database, paths: Paths) -> Result<Self> {
-        let (broadcast, _) = tokio::sync::broadcast::channel(16);
+        let (broadcast, _) = tokio::sync::broadcast::channel(128);
 
         tracing::debug!("loading objects from database");
 

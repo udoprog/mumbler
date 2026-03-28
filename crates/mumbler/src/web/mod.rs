@@ -240,10 +240,13 @@ async fn upload_image(backend: &Backend, request: UploadImageRequest) -> Result<
     tracing::info!(?request.content_type, size = request.data.len(), "received image upload request");
 
     let task = task::spawn_blocking(move || {
-        imaging::process(&request.data, request.crop, request.sizing, request.size)
+        let image = imaging::process(&request.data, request.crop, request.sizing, request.size)?;
+        Ok::<_, anyhow::Error>(image)
     });
 
-    let (content_type, width, height, bytes) = task.await??;
+    let result = task.await;
+
+    let (content_type, width, height, bytes) = result??;
 
     let id = backend
         .insert_image(content_type, request.role, width, height, bytes)

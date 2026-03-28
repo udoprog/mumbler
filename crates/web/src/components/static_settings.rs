@@ -246,25 +246,27 @@ impl StaticSettings {
                 self.channel = channel?;
 
                 if self.channel.id() == ChannelId::NONE {
-                    self._remote_update_listener = self
-                        .channel
-                        .handle()
-                        .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
-
-                    self._update_listener = self
-                        .channel
-                        .handle()
-                        .on_broadcast(ctx.link().callback(Msg::Update));
-
-                    self._list_settings = self
-                        .channel
-                        .request()
-                        .body(api::GetObjectSettingsRequest {
-                            id: ctx.props().id.id,
-                        })
-                        .on_packet(ctx.link().callback(Msg::Initialize))
-                        .send();
+                    return Ok(false);
                 }
+
+                self._remote_update_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
+
+                self._update_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::Update));
+
+                self._list_settings = self
+                    .channel
+                    .request()
+                    .body(api::GetObjectSettingsRequest {
+                        id: ctx.props().id.id,
+                    })
+                    .on_packet(ctx.link().callback(Msg::Initialize))
+                    .send();
 
                 Ok(true)
             }

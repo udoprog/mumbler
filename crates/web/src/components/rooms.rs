@@ -137,7 +137,9 @@ impl Component for Rooms {
                 <div class="control-group">
                     <Icon name="home" invert={true} />
                     <span>{"Rooms"}</span>
-                    <div class="fill"></div>
+
+                    <section class="fill"></section>
+
                     <button class="btn square primary" title="Add room"
                         onclick={ctx.link().callback(|_| Msg::CreateRoom)}>
                         <Icon name="plus-circle" />

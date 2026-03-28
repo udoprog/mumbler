@@ -1,8 +1,9 @@
+use core::num::NonZeroU32;
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId, RemoteUpdateBody,
-    StableId, Type, UpdateBody, Value, Vec3,
+    AtomicIds, Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId,
+    RemoteUpdateBody, Role, StableId, Type, UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
 use gloo::file::callbacks::{FileReader, read_as_bytes};
@@ -433,6 +434,7 @@ impl Default for Config {
 }
 
 struct DropImage {
+    id: NonZeroU32,
     _onerror: Closure<dyn FnMut()>,
     _onload: Closure<dyn FnMut()>,
     _img: HtmlImageElement,
@@ -443,6 +445,8 @@ struct DropImage {
     pixel_size: Option<(u32, u32)>,
     world_pos: Vec3,
     world_size: Option<(f32, f32)>,
+    _upload_image: ws::Request,
+    _create_dropped_object: ws::Request,
 }
 
 impl DropImage {
@@ -491,10 +495,10 @@ struct ObjectRequests {
 }
 
 pub(crate) struct Map {
+    ids: AtomicIds,
     log: log::Log,
     channel: ws::Channel,
     _setup_channel: SetupChannel,
-    _create_dropped_object: ws::Request,
     _create_group: ws::Request,
     _create_object: ws::Request,
     _create_static: ws::Request,
@@ -509,12 +513,11 @@ pub(crate) struct Map {
     _set_sort: ws::Request,
     _toggle_locked: ws::Request,
     _update_world: ws::Request,
-    _upload_image: ws::Request,
     animation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
     config: Config,
     drag_over: Option<DragOver>,
-    drop_image: Option<DropImage>,
+    dropped_images: Vec<DropImage>,
     images: Images,
     look_at_requests: HashMap<RemoteId, ws::Request>,
     mouse: Option<Vec3>,
@@ -559,9 +562,10 @@ pub(crate) enum Msg {
     DragOver(DragOver),
     CanvasDragOver(DragEvent),
     DropImage(DragEvent),
-    DropImageLoaded(u32, u32),
-    DropImageData(Result<Vec<u8>, gloo::file::FileReadError>),
-    DropImageUploaded(Result<Packet<api::UploadImage>, ws::Error>),
+    DropImageLoaded(NonZeroU32, u32, u32),
+    DropImageData(NonZeroU32, Result<Vec<u8>, gloo::file::FileReadError>),
+    DropImageUploaded(NonZeroU32, Result<Packet<api::UploadImage>, ws::Error>),
+    DropObjectCreated(NonZeroU32, Result<Packet<api::CreateObject>, ws::Error>),
     Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
@@ -622,10 +626,10 @@ impl Component for Map {
         });
 
         Self {
+            ids: AtomicIds::new(0),
             log,
             channel: ws::Channel::default(),
             _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
-            _create_dropped_object: ws::Request::new(),
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
@@ -640,13 +644,12 @@ impl Component for Map {
             _set_sort: ws::Request::new(),
             _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
-            _upload_image: ws::Request::new(),
             action: None,
             animation_interval: None,
             canvas: None,
             config: Config::default(),
             drag_over: None,
-            drop_image: None,
+            dropped_images: Vec::new(),
             images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             look_at_requests: HashMap::new(),
             look_ats: Vec::new(),
@@ -818,7 +821,17 @@ impl Component for Map {
                     <button class="btn square primary" title="Add group" onclick={ctx.link().callback(|_| Msg::CreateGroup)}>
                         <Icon name="folder-plus" title="Add group" />
                     </button>
-                    <div class="fill"></div>
+
+                    if !self.dropped_images.is_empty() {
+                        <button class="btn warning" title="Image upload in progress">
+                            <Icon name="photo" />
+                            {self.dropped_images.len().to_string()}
+                            <span class="loader invert" />
+                        </button>
+                    }
+
+                    <section class="fill"></section>
+
                     <button class={settings_classes} title="Object settings" onclick={settings_click}>
                         <Icon name="cog" />
                     </button>
@@ -987,7 +1000,8 @@ impl Component for Map {
                         </button>
                     }
 
-                    <div class="fill"></div>
+                    <section class="fill"></section>
+
                     {follow}
                     {help}
                 </div>
@@ -1108,11 +1122,6 @@ impl Component for Map {
 
 impl Map {
     fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
-        // Already processing a drop.
-        if self.drop_image.is_some() {
-            return Ok(false);
-        }
-
         let world_pos = self.view.to_world(ev.offset());
 
         let Some(dt) = ev.data_transfer() else {
@@ -1123,75 +1132,87 @@ impl Map {
             return Ok(false);
         };
 
-        let Some(file) = files.get(0) else {
-            return Ok(false);
-        };
+        let mut update = false;
 
-        let content_type = file.type_();
+        for n in 0..files.length() {
+            let Some(file) = files.get(n) else {
+                continue;
+            };
 
-        if !content_type.starts_with("image/") {
-            return Ok(false);
+            let content_type = file.type_();
+
+            if !content_type.starts_with("image/") {
+                continue;
+            }
+
+            let Some(id) = self.ids.next() else {
+                continue;
+            };
+
+            let url = TemporaryUrl::create(&file, ctx.link().callback(Msg::Error))?;
+
+            let img = HtmlImageElement::new()?;
+            let link = ctx.link().clone();
+            let img_clone = img.clone();
+
+            let onload = Closure::<dyn FnMut()>::new(move || {
+                let w = img_clone.natural_width();
+                let h = img_clone.natural_height();
+                link.send_message(Msg::DropImageLoaded(id, w, h));
+            });
+
+            let error_link = ctx.link().clone();
+
+            let onerror = Closure::<dyn FnMut()>::new(move || {
+                error_link.send_message(Msg::DropImageLoaded(id, 0, 0));
+            });
+
+            img.set_onload(Some(onload.as_ref().unchecked_ref()));
+            img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+            img.set_src(&url);
+
+            let gloo_file = gloo::file::File::from(file);
+
+            let link = ctx.link().clone();
+
+            let file_reader = read_as_bytes(&gloo_file, move |result| {
+                link.send_message(Msg::DropImageData(id, result));
+            });
+
+            self.dropped_images.push(DropImage {
+                id,
+                _onerror: onerror,
+                _onload: onload,
+                _img: img,
+                _url: url,
+                bytes: None,
+                content_type,
+                file_reader: Some(file_reader),
+                pixel_size: None,
+                world_pos,
+                world_size: None,
+                _upload_image: ws::Request::new(),
+                _create_dropped_object: ws::Request::new(),
+            });
+
+            update = true;
         }
 
-        let url = TemporaryUrl::create(&file, ctx.link().callback(Msg::Error))?;
-
-        let img = HtmlImageElement::new()?;
-        let link = ctx.link().clone();
-        let img_clone = img.clone();
-
-        let onload = Closure::<dyn FnMut()>::new(move || {
-            let w = img_clone.natural_width();
-            let h = img_clone.natural_height();
-            link.send_message(Msg::DropImageLoaded(w, h));
-        });
-
-        let error_link = ctx.link().clone();
-
-        let onerror = Closure::<dyn FnMut()>::new(move || {
-            tracing::warn!("failed to load dropped image");
-            error_link.send_message(Msg::DropImageLoaded(0, 0));
-        });
-
-        img.set_onload(Some(onload.as_ref().unchecked_ref()));
-        img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-        img.set_src(&url);
-
-        let gloo_file = gloo::file::File::from(file);
-
-        let link = ctx.link().clone();
-
-        let file_reader = read_as_bytes(&gloo_file, move |res| {
-            link.send_message(Msg::DropImageData(res));
-        });
-
-        self.drop_image = Some(DropImage {
-            _onerror: onerror,
-            _onload: onload,
-            _img: img,
-            _url: url,
-            bytes: None,
-            content_type,
-            file_reader: Some(file_reader),
-            pixel_size: None,
-            world_pos,
-            world_size: None,
-        });
-
-        Ok(false)
+        Ok(update)
     }
 
-    fn try_create_dropped_object(&mut self, ctx: &Context<Self>) -> Result<bool, Error> {
-        if !self
-            .drop_image
-            .as_ref()
-            .is_some_and(|image| image.is_ready_for_upload())
-        {
-            return Ok(false);
-        }
-
-        let Some(drop_image) = &mut self.drop_image else {
+    fn try_create_dropped_object(
+        &mut self,
+        ctx: &Context<Self>,
+        id: NonZeroU32,
+    ) -> Result<bool, Error> {
+        let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
             return Ok(false);
         };
+
+        if !drop_image.is_ready_for_upload() {
+            return Ok(false);
+        }
 
         let Some((image_width, image_height)) = drop_image.pixel_size else {
             return Ok(false);
@@ -1201,12 +1222,12 @@ impl Map {
             return Ok(false);
         };
 
-        self._upload_image = self
+        drop_image._upload_image = self
             .channel
             .request()
             .body(api::UploadImageRequestRef {
                 content_type: &drop_image.content_type,
-                role: api::Role::TOKEN,
+                role: Role::STATIC,
                 crop: api::CropRegion {
                     x1: 0,
                     y1: 0,
@@ -1217,7 +1238,10 @@ impl Map {
                 size: 512,
                 data: &data,
             })
-            .on_packet(ctx.link().callback(Msg::DropImageUploaded))
+            .on_packet(
+                ctx.link()
+                    .callback(move |result| Msg::DropImageUploaded(id, result)),
+            )
             .send();
 
         Ok(false)
@@ -1273,6 +1297,7 @@ impl Map {
                 self.channel = channel?;
 
                 if self.channel.id() == ChannelId::NONE {
+                    self.dropped_images.clear();
                     return Ok(false);
                 }
 
@@ -1323,38 +1348,41 @@ impl Map {
                 ev.prevent_default();
                 self.on_drop_image(ctx, ev)
             }
-            Msg::DropImageLoaded(width, height) => {
-                let Some(drop_image) = &mut self.drop_image else {
+            Msg::DropImageLoaded(id, width, height) => {
+                let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
                     return Ok(false);
                 };
 
                 drop_image.world_size = Some(DropImage::compute_world_image_size(width, height));
                 drop_image.pixel_size = Some((width, height));
-                self.try_create_dropped_object(ctx)
+                self.try_create_dropped_object(ctx, id)
             }
-            Msg::DropImageData(result) => match result {
+            Msg::DropImageData(id, result) => match result {
                 Ok(data) => {
-                    let Some(drop_image) = &mut self.drop_image else {
+                    let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id)
+                    else {
                         return Ok(false);
                     };
 
                     drop_image.bytes = Some(data);
                     drop_image.file_reader = None;
-                    self.try_create_dropped_object(ctx)
+                    self.try_create_dropped_object(ctx, id)
                 }
                 Err(err) => {
+                    self.dropped_images.retain(|d| d.id != id);
+
                     self.log.error(
                         "drop image",
                         Error::from(anyhow::anyhow!("file read error: {err}")),
                     );
-                    Ok(false)
+                    Ok(true)
                 }
             },
-            Msg::DropImageUploaded(result) => {
+            Msg::DropImageUploaded(id, result) => {
                 let body = result?;
                 let body = body.decode()?;
 
-                let Some(drop_image) = self.drop_image.take() else {
+                let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
                     return Ok(false);
                 };
 
@@ -1363,19 +1391,34 @@ impl Map {
 
                 let transform = api::Transform::new(world_pos, api::Vec3::FORWARD);
 
-                self._create_dropped_object = self.create_remote_object(
-                    ctx,
-                    Type::STATIC,
-                    [
+                let body = api::CreateObjectRequest {
+                    ty: Type::STATIC,
+                    props: api::Properties::from_iter([
                         (Key::HIDDEN, Value::from(true)),
                         (Key::IMAGE_ID, Value::from(body.image.id.id)),
                         (Key::TRANSFORM, Value::from(transform)),
                         (Key::STATIC_WIDTH, Value::from(width)),
                         (Key::STATIC_HEIGHT, Value::from(height)),
-                    ],
-                );
+                    ]),
+                };
 
-                Ok(false)
+                drop_image._create_dropped_object = self
+                    .channel
+                    .request()
+                    .body(body)
+                    .on_packet(
+                        ctx.link()
+                            .callback(move |packet| Msg::DropObjectCreated(id, packet)),
+                    )
+                    .send();
+
+                Ok(true)
+            }
+            Msg::DropObjectCreated(id, body) => {
+                let body = body?;
+                let _ = body.decode()?;
+                self.dropped_images.retain(|d| d.id != id);
+                Ok(true)
             }
             Msg::PointerDown(ev) => {
                 self.on_pointer_down(ctx, ev)?;
@@ -1830,7 +1873,7 @@ impl Map {
         let key = ev.key();
 
         match key.as_str() {
-            "Shift" => {
+            "Shift" if self.s.modal.is_none() => {
                 let Some(Action::Rotate(r)) = self.action.take() else {
                     return Ok(false);
                 };
@@ -2065,6 +2108,8 @@ impl Map {
         let key = ev.key();
 
         match key.as_str() {
+            "Enter" => Ok(self.accept(ctx)),
+            "Escape" => Ok(self.cancel()),
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
                     |m| matches!(m, Modal::Remove { object } if object.id == self.s.selected),
@@ -2075,7 +2120,6 @@ impl Map {
                 ctx.link().send_message(Msg::ConfirmRemove(self.s.selected));
                 Ok(false)
             }
-            "Enter" => Ok(self.accept(ctx)),
             "F1" | "?" => {
                 self.s.modal = match self.s.modal {
                     Some(Modal::Help) => None,
@@ -2084,12 +2128,11 @@ impl Map {
 
                 Ok(true)
             }
-            "s" | "S" => Ok(self.start_scale()),
-            "t" | "T" => Ok(self.toggle_locked(ctx, self.s.selected)),
-            "r" | "R" => Ok(self.start_rotation()),
-            "g" | "G" => Ok(self.start_translate(self.s.selected)),
-            "Escape" => Ok(self.cancel()),
-            "Shift" => Ok(self.start_rotation()),
+            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
+            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(ctx, self.s.selected)),
+            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
+            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(self.s.selected)),
+            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation()),
             _ => Ok(false),
         }
     }

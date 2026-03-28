@@ -18,6 +18,11 @@ pub use stable_id::StableId;
 mod value;
 pub use self::value::{Value, ValueKind, ValueType};
 
+mod ids;
+pub use self::ids::{AtomicIds, Ids};
+
+mod hash;
+
 use core::fmt;
 use core::ops::{Add, Sub};
 

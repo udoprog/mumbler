@@ -1,7 +1,6 @@
 @import "_reset";
 @import "_mixins";
 @import "_grid";
-@import "_loader";
 
 $margin: 10px;
 $border-radius: 4px;
@@ -32,6 +31,7 @@ $control-gap: 0.5em;
     --link-hover: #eee;
     --input-color: #2e2e2e;
     --border-color: #333;
+    --warning-color: #ffe992;
     --danger-color: #e07f7f;
     --danger-background-color: #2e1e1e;
     --success-color: #6eb671;
@@ -40,7 +40,11 @@ $control-gap: 0.5em;
     --secondary-color: #868686;
     --secondary-color-disabled: #3e3e3e;
     --info-background-color: #1e2a3b;
+    --loader-color: #ddd;
+    --loader-color-invert: #888;
 }
+
+@import "_loader";
 
 body {
     font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -111,8 +115,12 @@ h6 {
 }
 
 .image {
+    background-color: var(--input-color);
     border-radius: $border-radius;
     outline: 2px solid transparent;
+    width: 128px;
+    height: 128px;
+    object-fit: contain;
 
     &.selected {
         outline: 2px solid var(--link-color);
@@ -157,6 +165,11 @@ h6 {
 
     &.primary {
         background-color: var(--primary-color);
+        color: var(--text-color-inverted);
+    }
+
+    &.warning {
+        background-color: var(--warning-color);
         color: var(--text-color-inverted);
     }
 

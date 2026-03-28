@@ -180,7 +180,15 @@ impl ws::Handler for Handler<'_> {
                     .read::<api::UploadImageRequest>()
                     .context("missing request")?;
 
-                tracing::debug!(?id, ?request);
+                tracing::debug! {
+                    ?id,
+                    ?request.content_type,
+                    ?request.role,
+                    ?request.crop,
+                    ?request.sizing,
+                    request.size,
+                    request.data = request.data.len(),
+                };
 
                 let image = super::upload_image(&self.backend, request).await?;
 

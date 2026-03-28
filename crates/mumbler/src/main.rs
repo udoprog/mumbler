@@ -85,7 +85,7 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    let runtime = Builder::new_current_thread().enable_all().build()?;
+    let runtime = Builder::new_multi_thread().enable_all().build()?;
     let c = Database::open(&paths, opts.memory)?;
 
     runtime.block_on(async move {

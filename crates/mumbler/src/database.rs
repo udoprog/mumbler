@@ -479,9 +479,9 @@ fn value_from_blob(ty: ValueType, stmt: &mut SendStatement) -> Result<Value> {
         (ValueType::Extent, sqll::ValueType::BLOB) => {
             Value::from(descriptive::from_slice::<Extent>(stmt.column(COLUMN)?)?)
         }
-        (ValueType::Float, sqll::ValueType::BLOB) => Value::from(stmt.column::<f64>(COLUMN)?),
+        (ValueType::Float, sqll::ValueType::FLOAT) => Value::from(stmt.column::<f64>(COLUMN)?),
         (ValueType::Id, sqll::ValueType::INTEGER) => Value::from(stmt.column::<Id>(COLUMN)?),
-        (ValueType::Integer, sqll::ValueType::BLOB) => Value::from(stmt.column::<i64>(COLUMN)?),
+        (ValueType::Integer, sqll::ValueType::INTEGER) => Value::from(stmt.column::<i64>(COLUMN)?),
         (ValueType::Canvas2, sqll::ValueType::BLOB) => {
             Value::from(descriptive::from_slice::<Canvas2>(stmt.column(COLUMN)?)?)
         }

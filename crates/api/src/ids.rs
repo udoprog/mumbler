@@ -1,3 +1,5 @@
+#![allow(clippy::should_implement_trait)]
+
 use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -18,7 +20,7 @@ pub struct Ids {
 impl Ids {
     /// Construct a new id allocator.
     #[inline]
-    pub(crate) fn new(seed: u32) -> Self {
+    pub fn new(seed: u32) -> Self {
         Self {
             seed,
             last: 0,
@@ -28,7 +30,7 @@ impl Ids {
 
     /// Get the next identifier.
     #[inline]
-    pub(crate) fn next(&mut self) -> Option<NonZeroU32> {
+    pub fn next(&mut self) -> Option<NonZeroU32> {
         if let Some(free) = self.free.pop_front() {
             return Some(free);
         }
@@ -40,7 +42,7 @@ impl Ids {
 
     /// Free the specified identifier.
     #[inline]
-    pub(crate) fn free(&mut self, id: u32) {
+    pub fn free(&mut self, id: u32) {
         if let Some(id) = NonZeroU32::new(id) {
             self.free.push_back(id);
         }
@@ -58,7 +60,7 @@ pub struct AtomicIds {
 impl AtomicIds {
     /// Construct a new id allocator.
     #[inline]
-    pub(crate) fn new(seed: u32) -> Self {
+    pub fn new(seed: u32) -> Self {
         Self {
             seed,
             last: AtomicU32::new(1),
@@ -67,7 +69,7 @@ impl AtomicIds {
 
     /// Get the next identifier.
     #[inline]
-    pub(crate) fn next(&self) -> Option<NonZeroU32> {
+    pub fn next(&self) -> Option<NonZeroU32> {
         let next = NonZeroU32::new(self.last.fetch_add(1, Ordering::Relaxed))?;
         NonZeroU32::new(hash::map(next.get(), self.seed))
     }
