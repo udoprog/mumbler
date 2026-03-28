@@ -2,6 +2,7 @@ use core::pin::pin;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use api::{Id, Key, Value};
@@ -14,34 +15,41 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use musli_web::axum08;
 use musli_web::ws;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
 use crate::backend::{Backend, Broadcast};
 
-struct Handler<'a> {
-    backend: Backend,
-    database_updates: HashMap<(Id, Key), Value>,
-    database_updates_notify: &'a Notify,
+struct HandlerInner {
+    database_updates: Mutex<HashMap<(Id, Key), Value>>,
+    database_updates_notify: Arc<Notify>,
 }
 
-impl<'a> Handler<'a> {
-    fn new(backend: Backend, database_updates_notify: &'a Notify) -> Self {
+#[derive(Clone)]
+struct Handler {
+    backend: Backend,
+    inner: Arc<HandlerInner>,
+}
+
+impl Handler {
+    fn new(backend: Backend, database_updates_notify: Arc<Notify>) -> Self {
         Self {
             backend,
-            database_updates: HashMap::new(),
-            database_updates_notify,
+            inner: Arc::new(HandlerInner {
+                database_updates: Mutex::new(HashMap::new()),
+                database_updates_notify,
+            }),
         }
     }
 }
 
-impl ws::Handler for Handler<'_> {
+impl ws::Handler for Handler {
     type Id = api::Request;
     type Response = Result<(), anyhow::Error>;
 
     async fn handle(
-        &mut self,
+        &self,
         id: Self::Id,
         incoming: &mut ws::Incoming<'_>,
         outgoing: &mut ws::Outgoing<'_>,
@@ -77,11 +85,13 @@ impl ws::Handler for Handler<'_> {
                         .updates(incoming.channel(), &request.values)
                         .await?;
 
+                    let mut database_updates = self.inner.database_updates.lock().await;
+
                     for (key, value) in request.values {
-                        self.database_updates.insert((Id::ZERO, key), value);
+                        database_updates.insert((Id::ZERO, key), value);
                     }
 
-                    self.database_updates_notify.notify_one();
+                    self.inner.database_updates_notify.notify_one();
                 }
 
                 outgoing.write(api::Empty);
@@ -96,10 +106,13 @@ impl ws::Handler for Handler<'_> {
                 super::object_update(&self.backend, request.id, request.key, &request.value)
                     .await?;
 
-                self.database_updates
+                self.inner
+                    .database_updates
+                    .lock()
+                    .await
                     .insert((request.id, request.key), request.value.clone());
 
-                self.database_updates_notify.notify_one();
+                self.inner.database_updates_notify.notify_one();
 
                 self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
                     channel: incoming.channel(),
@@ -255,11 +268,13 @@ pub(super) async fn entry(
         let future = async move {
             tracing::info!("connected");
 
-            let database_updates_notify = Notify::new();
+            let database_updates_notify = Arc::new(Notify::new());
+
             let mut server = axum08::server(
                 socket,
-                Handler::new(backend.clone(), &database_updates_notify),
+                Handler::new(backend.clone(), database_updates_notify.clone()),
             );
+
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
 
@@ -269,12 +284,14 @@ pub(super) async fn entry(
                         (result.context("Error in server"), true)
                     }
                     () = database_updates_notify.notified() => {
-                        let handler = &mut server.handler_mut();
+                        let handler = server.handler();
 
                         let was_empty = local_updates.is_empty();
 
-                        if !handler.database_updates.is_empty() {
-                            for (key, value) in handler.database_updates.drain() {
+                        let mut database_updates = handler.inner.database_updates.lock().await;
+
+                        if !database_updates.is_empty() {
+                            for (key, value) in database_updates.drain() {
                                 local_updates.insert(key, value);
                             }
                         }
