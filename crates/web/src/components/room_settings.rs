@@ -231,6 +231,7 @@ impl RoomSettings {
                     ctx.props().id.id,
                     [(Key::ROOM_BACKGROUND, self.background.id.into())],
                 );
+
                 Ok(true)
             }
             Msg::ShowGridChanged(e) => {
@@ -245,17 +246,20 @@ impl RoomSettings {
                     ctx.props().id.id,
                     [(Key::SHOW_GRID, self.show_grid.value())],
                 );
+
                 Ok(true)
             }
             Msg::ExtentXMinChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
                 self.extent.x.start = v.min(self.extent.x.end);
+
                 self._update_extent = self.channel.object_updates(
                     ctx,
                     ctx.props().id.id,
                     [(Key::ROOM_EXTENT, self.extent.value())],
                 );
+
                 Ok(true)
             }
             Msg::ExtentXMaxChanged(e) => {

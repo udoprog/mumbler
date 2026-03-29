@@ -26,7 +26,7 @@ pub(crate) fn modal(props: &Props) -> Html {
             <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
                 <div class="modal-header">
                     <h2>{&props.title}</h2>
-                    <button class="btn sm square danger" title="Close" onclick={&props.onclose}>
+                    <button class="btn square danger" title="Close" onclick={&props.onclose}>
                         <Icon name="x-mark" />
                     </button>
                 </div>

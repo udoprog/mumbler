@@ -75,6 +75,7 @@ use self::modal::Modal;
 mod icon;
 use self::icon::Icon;
 
+use musli_web::ChannelId;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
 
@@ -110,6 +111,10 @@ impl ChannelExt for ws::Channel {
     where
         T: Component<Message: From<Result<ws::Packet<api::ObjectUpdate>, ws::Error>>>,
     {
+        if self.id() == ChannelId::NONE {
+            return ws::Request::default();
+        }
+
         let mut iter = values.into_iter();
 
         if iter.len() > 1 {
@@ -144,6 +149,10 @@ impl ChannelExt for ws::Channel {
     where
         T: Component<Message: From<Result<ws::Packet<api::Updates>, ws::Error>>>,
     {
+        if self.id() == ChannelId::NONE {
+            return ws::Request::default();
+        }
+
         let mut iter = values.into_iter();
 
         if iter.len() > 1 {

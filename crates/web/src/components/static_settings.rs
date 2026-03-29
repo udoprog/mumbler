@@ -289,22 +289,23 @@ impl StaticSettings {
                 Ok(true)
             }
             Msg::Ratio(ratio) => {
-                if !self.ratio.update(Some(ratio as f32)) {
-                    return Ok(false);
+                let mut update = false;
+
+                update |= self.ratio.update(Some(ratio as f32));
+                update |= self.width.update_epsilon(*self.height * ratio as f32);
+
+                if update {
+                    self._update_dimensions = self.channel.object_updates(
+                        ctx,
+                        ctx.props().id.id,
+                        [
+                            (Key::RATIO, self.ratio.value()),
+                            (Key::STATIC_WIDTH, self.width.value()),
+                        ],
+                    );
                 }
 
-                *self.width = *self.height * ratio as f32;
-
-                self._update_dimensions = self.channel.object_updates(
-                    ctx,
-                    ctx.props().id.id,
-                    [
-                        (Key::RATIO, self.ratio.value()),
-                        (Key::STATIC_WIDTH, self.width.value()),
-                    ],
-                );
-
-                Ok(true)
+                Ok(update)
             }
             Msg::ColorChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -342,6 +343,7 @@ impl StaticSettings {
                     ctx.props().id.id,
                     [(Key::NAME, self.name.deref_value())],
                 );
+
                 Ok(true)
             }
             Msg::WidthChanged(e) => {
@@ -436,6 +438,7 @@ impl StaticSettings {
                     ctx.props().id.id,
                     [(Key::RATIO, (*self.ratio).into())],
                 );
+
                 Ok(true)
             }
             Msg::ObjectUpdate(result) => {
@@ -527,7 +530,7 @@ impl StaticSettings {
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
-        let Some(canvas) = self.canvas.as_ref() else {
+        let Some(canvas) = &self.canvas else {
             return Ok(());
         };
 
@@ -561,8 +564,7 @@ impl StaticSettings {
         let scale = (min - min * 0.2) / self.width.max(*self.height);
         let view = ViewTransform::simple(width, height, scale);
 
-        cx.clear_rect(0.0, 0.0, width as f64, height as f64);
-
+        cx.clear_rect(0.0, 0.0, view.width as f64, view.height as f64);
         render::draw_static(&cx, &view, &base, &render, &self.preview_images)?;
         Ok(())
     }

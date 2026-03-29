@@ -252,6 +252,7 @@ impl TokenSettings {
                     ctx.props().id.id,
                     [(Key::IMAGE_ID, self.image.id.into())],
                 );
+
                 Ok(true)
             }
             Msg::ColorChanged(e) => {
@@ -388,7 +389,7 @@ impl TokenSettings {
     }
 
     fn redraw_preview(&self) -> Result<(), Error> {
-        let Some(canvas) = self.canvas.as_ref() else {
+        let Some(canvas) = &self.canvas else {
             return Ok(());
         };
 
@@ -417,8 +418,7 @@ impl TokenSettings {
 
         let view = ViewTransform::simple(canvas.width(), canvas.height(), 50.0);
 
-        cx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
-
+        cx.clear_rect(0.0, 0.0, view.width as f64, view.height as f64);
         render::draw_token(&cx, &view, &base, &render, &self.preview_images)?;
         Ok(())
     }
