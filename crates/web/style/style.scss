@@ -513,6 +513,10 @@ body {
 .hint {
     font-size: 0.9em;
     color: var(--text-color-muted);
+
+    &.error {
+        color: var(--danger-color);
+    }
 }
 
 .loading {
@@ -631,92 +635,96 @@ body {
     white-space: nowrap;
 }
 
-.crop-area {
-    display: inline-block;
-    user-select: none;
-    max-width: 100%;
-    overflow: hidden;
-    align-self: center;
-    padding: 8px;
-    box-sizing: border-box;
-}
-
-.crop-inner {
-    position: relative;
-    display: inline-block;
-    cursor: crosshair;
-    overflow: hidden;
-}
-
-.crop-source {
-    max-width: 100%;
-    max-height: 55vh;
-    display: block;
-    pointer-events: none;
-}
-
-.crop-selection {
-    position: absolute;
-    border: 2px solid white;
-    box-sizing: border-box;
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
-    cursor: move;
-    overflow: visible;
-}
-
-.crop-handle {
-    position: absolute;
-    width: 10px;
-    height: 10px;
-    background: white;
-    border: 1px solid rgba(0, 0, 0, 0.4);
-
-    &.nw {
-        top: -6px;
-        left: -6px;
-        cursor: nw-resize;
+.crop {
+    &-area {
+        cursor: move;
+        display: inline-block;
+        user-select: none;
+        max-width: 100%;
+        overflow: hidden;
+        align-self: center;
+        padding: 8px;
+        box-sizing: border-box;
     }
 
-    &.n {
-        top: -6px;
-        left: calc(50% - 5px);
-        cursor: n-resize;
+    &-inner {
+        position: relative;
+        display: inline-block;
+        cursor: crosshair;
+        overflow: hidden;
     }
 
-    &.ne {
-        top: -6px;
-        right: -6px;
-        cursor: ne-resize;
+    &-source {
+        max-width: 100%;
+        max-height: 55vh;
+        display: block;
+        pointer-events: none;
     }
 
-    &.w {
-        top: calc(50% - 5px);
-        left: -6px;
-        cursor: w-resize;
+    &-selection {
+        position: absolute;
+        border: 2px solid white;
+        box-sizing: border-box;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        cursor: all-scroll;
+        overflow: visible;
     }
 
-    &.e {
-        top: calc(50% - 5px);
-        right: -6px;
-        cursor: e-resize;
-    }
+    &-handle {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        background: white;
+        border: 1px solid rgba(0, 0, 0, 0.4);
+        box-sizing: border-box;
 
-    &.sw {
-        bottom: -6px;
-        left: -6px;
-        cursor: sw-resize;
-    }
+        &.nw {
+            top: -4px;
+            left: -4px;
+            cursor: nw-resize;
+        }
 
-    &.s {
-        bottom: -6px;
-        left: calc(50% - 5px);
-        cursor: s-resize;
-    }
+        &.n {
+            top: -4px;
+            left: calc(50% - 4px);
+            cursor: n-resize;
+        }
 
-    &.se {
-        bottom: -6px;
-        right: -6px;
-        cursor: se-resize;
+        &.ne {
+            top: -4px;
+            right: -4px;
+            cursor: ne-resize;
+        }
+
+        &.w {
+            top: calc(50% - 4px);
+            left: -4px;
+            cursor: w-resize;
+        }
+
+        &.e {
+            top: calc(50% - 4px);
+            right: -4px;
+            cursor: e-resize;
+        }
+
+        &.sw {
+            bottom: -4px;
+            left: -4px;
+            cursor: sw-resize;
+        }
+
+        &.s {
+            bottom: -4px;
+            left: calc(50% - 4px);
+            cursor: s-resize;
+        }
+
+        &.se {
+            bottom: -4px;
+            right: -4px;
+            cursor: se-resize;
+        }
     }
 }
 

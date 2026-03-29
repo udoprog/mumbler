@@ -99,8 +99,8 @@ impl Component for ImageGallery {
                 let id = image.id;
                 let on_select = ctx.link().callback(move |_| Msg::Select(id));
 
-                let on_delete = ctx.props().ondelete.reform(move |e: MouseEvent| {
-                    e.stop_propagation();
+                let on_delete = ctx.props().ondelete.reform(move |ev: MouseEvent| {
+                    ev.stop_propagation();
                     id
                 });
 

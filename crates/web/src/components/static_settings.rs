@@ -25,7 +25,7 @@ pub(crate) enum Msg {
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     NameChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    Rescale(Option<f64>),
+    Rescale(f64),
     SelectColor(api::Color),
     Update(Result<Packet<api::Update>, ws::Error>),
     UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
@@ -284,11 +284,8 @@ impl StaticSettings {
             Msg::Rescale(ratio) => {
                 self._update_fixed_ratio = object_update(&self.channel, ctx, Key::RATIO, ratio);
 
-                let Some(ratio) = ratio else {
-                    return Ok(false);
-                };
-
                 *self.width = *self.height * ratio as f32;
+
                 self._update_dimensions =
                     object_update(&self.channel, ctx, Key::STATIC_WIDTH, *self.width);
 

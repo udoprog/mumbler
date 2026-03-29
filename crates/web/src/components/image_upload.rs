@@ -38,7 +38,7 @@ pub(crate) struct Props {
     pub(crate) role: Role,
     pub(crate) onselect: Callback<RemoteId>,
     #[prop_or_default]
-    pub(crate) onrescale: Option<Callback<Option<f64>>>,
+    pub(crate) onrescale: Option<Callback<f64>>,
     #[prop_or_default]
     pub(crate) onclear: Callback<()>,
 }
