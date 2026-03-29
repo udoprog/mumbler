@@ -162,6 +162,7 @@ impl Modal {
 /// Long term, most local mutable state will end up here.
 struct MapState {
     window: Window,
+    channel: ws::Channel,
     look_at: HashSet<RemoteId>,
     transforms: HashSet<RemoteId>,
     selected: RemoteId,
@@ -175,6 +176,7 @@ struct MapState {
     move_target: HashMap<RemoteId, Vec3>,
     arrow_target: HashMap<RemoteId, Vec3>,
     animation_frame: Option<AnimationFrame>,
+    object_requests: HashMap<RemoteId, ObjectRequests>,
     zoom: State<f32>,
     pan: State<Vec3>,
     mumble_object: State<RemoteId>,
@@ -187,6 +189,7 @@ impl MapState {
     fn new(window: Window) -> Self {
         Self {
             window,
+            channel: ws::Channel::default(),
             look_at: HashSet::default(),
             transforms: HashSet::default(),
             selected: RemoteId::default(),
@@ -200,6 +203,7 @@ impl MapState {
             move_target: HashMap::default(),
             arrow_target: HashMap::default(),
             animation_frame: Option::default(),
+            object_requests: HashMap::new(),
             zoom: State::new(2.0),
             pan: State::new(Vec3::ZERO),
             mumble_object: State::new(RemoteId::ZERO),
@@ -264,13 +268,7 @@ impl MapState {
         self.transforms.insert(o.id);
     }
 
-    fn select_object(
-        &mut self,
-        channel: &ws::Channel,
-        ctx: &Context<Map>,
-        id: RemoteId,
-        objects: &ObjectsRef,
-    ) -> bool {
+    fn select_object(&mut self, ctx: &Context<Map>, id: RemoteId, objects: &ObjectsRef) -> bool {
         if self.selected == id {
             return false;
         }
@@ -297,8 +295,9 @@ impl MapState {
 
         *self.mumble_object = id;
 
-        self._toggle_mumble_request =
-            channel.updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(id.id))]);
+        self._toggle_mumble_request = self
+            .channel
+            .updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(id.id))]);
         true
     }
 
@@ -360,6 +359,67 @@ impl MapState {
                 }
             }
         }
+    }
+
+    fn finalize_action(
+        &mut self,
+        ctx: &Context<Map>,
+        objects: &mut ObjectsRef,
+        action: Action,
+    ) -> bool {
+        match action {
+            Action::Scale(scale) => self.finalize_scale(ctx, objects, scale),
+            _ => true,
+        }
+    }
+
+    fn finalize_scale(
+        &mut self,
+        ctx: &Context<Map>,
+        objects: &mut ObjectsRef,
+        scale: Scale,
+    ) -> bool {
+        let Some(o) = objects.get_mut(scale.object_id) else {
+            return false;
+        };
+
+        match &mut o.kind {
+            ObjectKind::Static(s) => {
+                if s.width.update_epsilon(*s.width * scale.scale) {
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+
+                    requests._scale_width = self.channel.object_updates(
+                        ctx,
+                        scale.object_id.id,
+                        [(Key::STATIC_WIDTH, s.width.value())],
+                    );
+                }
+
+                if s.height.update_epsilon(*s.height * scale.scale) {
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+
+                    requests._scale_height = self.channel.object_updates(
+                        ctx,
+                        scale.object_id.id,
+                        [(Key::STATIC_HEIGHT, s.height.value())],
+                    );
+                }
+            }
+            ObjectKind::Token(t) => {
+                if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
+                    let requests = self.object_requests.entry(scale.object_id).or_default();
+
+                    requests._scale_radius = self.channel.object_updates(
+                        ctx,
+                        scale.object_id.id,
+                        [(Key::TOKEN_RADIUS, t.token_radius.value())],
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        true
     }
 }
 
@@ -509,7 +569,6 @@ struct ObjectRequests {
 pub(crate) struct Map {
     ids: AtomicIds,
     log: log::Log,
-    channel: ws::Channel,
     s: MapState,
     _setup_channel: SetupChannel,
     _create_group: ws::Request,
@@ -542,7 +601,6 @@ pub(crate) struct Map {
     object_onmumbletoggle: Callback<RemoteId>,
     object_onselect: Callback<RemoteId>,
     object_onopen: Callback<RemoteId>,
-    object_requests: HashMap<RemoteId, ObjectRequests>,
     objects: Objects,
     order: Hierarchy,
     pan_anchor: Option<Canvas2>,
@@ -653,7 +711,6 @@ impl Component for Map {
         Self {
             ids: AtomicIds::new(0),
             log,
-            channel: ws::Channel::default(),
             s: MapState::new(window),
             _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _create_group: ws::Request::new(),
@@ -688,7 +745,6 @@ impl Component for Map {
             object_onmumbletoggle: ctx.link().callback(Msg::ToggleMumbleObject),
             object_onselect: ctx.link().callback(Msg::SelectObject),
             object_onopen: ctx.link().callback(Msg::OpenObject),
-            object_requests: HashMap::new(),
             objects: Objects::default(),
             order: Hierarchy::default(),
             pan_anchor: None,
@@ -723,7 +779,7 @@ impl Component for Map {
         }
 
         if self.s.update_config {
-            self._update_world = self.channel.updates(ctx, self.s.world_values());
+            self._update_world = self.s.channel.updates(ctx, self.s.world_values());
             self.s.update_config = false;
             changed = true;
         }
@@ -1266,6 +1322,7 @@ impl Map {
         };
 
         drop_image._upload_image = self
+            .s
             .channel
             .request()
             .body(api::UploadImageRequestRef {
@@ -1337,24 +1394,27 @@ impl Map {
             Msg::ToggleLocalHidden(id) => Ok(self.toggle_local_hidden(ctx, id)),
             Msg::ToggleExpanded(id) => Ok(self.toggle_expanded(ctx, id)),
             Msg::Channel(channel) => {
-                self.channel = channel?;
+                self.s.channel = channel?;
 
-                if self.channel.id() == ChannelId::NONE {
+                if self.s.channel.id() == ChannelId::NONE {
                     self.dropped_images.clear();
                     return Ok(false);
                 }
 
                 self._config_update = self
+                    .s
                     .channel
                     .handle()
                     .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
 
                 self._remote_update = self
+                    .s
                     .channel
                     .handle()
                     .on_broadcast(ctx.link().callback(Msg::RemoteUpdate));
 
                 self._initialize = self
+                    .s
                     .channel
                     .request()
                     .body(api::InitializeMapRequest)
@@ -1446,6 +1506,7 @@ impl Map {
                 };
 
                 drop_image._create_dropped_object = self
+                    .s
                     .channel
                     .request()
                     .body(body)
@@ -1495,7 +1556,7 @@ impl Map {
 
                 let objects = self.objects.borrow();
 
-                let update = self.s.select_object(&self.channel, ctx, id, &objects);
+                let update = self.s.select_object(ctx, id, &objects);
 
                 Ok(update)
             }
@@ -1520,7 +1581,7 @@ impl Map {
             Msg::ToggleFollowMumbleSelection => {
                 *self.s.mumble_follow = !*self.s.mumble_follow;
 
-                self._set_mumble_follow = self.channel.updates(
+                self._set_mumble_follow = self.s.channel.updates(
                     ctx,
                     [(Key::MUMBLE_FOLLOW, Value::from(*self.s.mumble_follow))],
                 );
@@ -1677,7 +1738,7 @@ impl Map {
                 key,
                 value,
             } => {
-                if self.channel.id() == channel {
+                if self.s.channel.id() == channel {
                     return Ok(false);
                 }
 
@@ -1783,7 +1844,7 @@ impl Map {
             }
             RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
             RemoteUpdateBody::ObjectRemoved { channel, id } => {
-                if self.channel.id() == channel {
+                if self.s.channel.id() == channel {
                     return false;
                 }
 
@@ -1798,7 +1859,7 @@ impl Map {
                 let mut objects = self.objects.borrow_mut();
                 let mut order = self.order.borrow_mut();
 
-                if self.channel.id() == channel {
+                if self.s.channel.id() == channel {
                     return false;
                 }
 
@@ -1853,7 +1914,8 @@ impl Map {
             props: api::Properties::from_iter(props),
         };
 
-        self.channel
+        self.s
+            .channel
             .request()
             .body(body)
             .on_packet(ctx.link().callback(Msg::ObjectCreated))
@@ -1877,6 +1939,7 @@ impl Map {
 
     fn remove_object_remote(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         self._remove_object = self
+            .s
             .channel
             .request()
             .body(api::RemoveObjectRequest { id: id.id })
@@ -1900,12 +1963,11 @@ impl Map {
         order.remove(&o);
 
         if self.s.selected == id {
-            self.s
-                .select_object(&self.channel, ctx, RemoteId::ZERO, &objects);
+            self.s.select_object(ctx, RemoteId::ZERO, &objects);
         }
 
         self.s.modal = None;
-        self.object_requests.remove(&id);
+        self.s.object_requests.remove(&id);
         self.s.update_cache = true;
         self.s.redraw = true;
         true
@@ -1978,18 +2040,18 @@ impl Map {
             start_translate = s_id == h_id || s_is_token || h_is_not_token;
 
             if let Some(id) = new_selected {
-                update = self.s.select_object(&self.channel, ctx, id, &objects);
+                update = self.s.select_object(ctx, id, &objects);
             }
         }
 
         if start_translate {
-            update |= self.start_translate(self.s.selected);
+            update |= self.start_translate(ctx, self.s.selected);
         }
 
         update
     }
 
-    fn start_translate(&mut self, id: RemoteId) -> bool {
+    fn start_translate(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -2026,6 +2088,10 @@ impl Map {
             mouse
         };
 
+        if let Some(action) = self.action.take() {
+            self.s.finalize_action(ctx, &mut objects, action);
+        }
+
         let action = self.action.insert(Action::Translate(Translate {
             object_id: id,
             offset,
@@ -2035,7 +2101,7 @@ impl Map {
         true
     }
 
-    fn start_scale(&mut self) -> bool {
+    fn start_scale(&mut self, ctx: &Context<Self>) -> bool {
         let Some(mouse) = self.mouse else {
             return false;
         };
@@ -2062,6 +2128,10 @@ impl Map {
 
         self.s.move_target.remove(&self.s.selected);
 
+        if let Some(action) = self.action.take() {
+            self.s.finalize_action(ctx, &mut objects, action);
+        }
+
         let action = self.action.insert(Action::Scale(Scale {
             object_id: self.s.selected,
             scale: 1.0,
@@ -2078,56 +2148,8 @@ impl Map {
             return false;
         };
 
-        match action {
-            Action::Scale(scale) => self.finalize_scale(ctx, scale),
-            _ => true,
-        }
-    }
-
-    fn finalize_scale(&mut self, ctx: &Context<Self>, scale: Scale) -> bool {
         let mut objects = self.objects.borrow_mut();
-
-        let Some(o) = objects.get_mut(scale.object_id) else {
-            return false;
-        };
-
-        match &mut o.kind {
-            ObjectKind::Static(s) => {
-                if s.width.update_epsilon(*s.width * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
-
-                    requests._scale_width = self.channel.object_updates(
-                        ctx,
-                        scale.object_id.id,
-                        [(Key::STATIC_WIDTH, s.width.value())],
-                    );
-                }
-
-                if s.height.update_epsilon(*s.height * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
-
-                    requests._scale_height = self.channel.object_updates(
-                        ctx,
-                        scale.object_id.id,
-                        [(Key::STATIC_HEIGHT, s.height.value())],
-                    );
-                }
-            }
-            ObjectKind::Token(t) => {
-                if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
-
-                    requests._scale_radius = self.channel.object_updates(
-                        ctx,
-                        scale.object_id.id,
-                        [(Key::TOKEN_RADIUS, t.token_radius.value())],
-                    );
-                }
-            }
-            _ => {}
-        }
-
-        true
+        self.s.finalize_action(ctx, &mut objects, action)
     }
 
     fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<bool, Error> {
@@ -2154,11 +2176,11 @@ impl Map {
                 Ok(true)
             }
             "Enter" if self.s.modal.is_none() => Ok(self.accept(ctx)),
-            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
+            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale(ctx)),
             "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(ctx, self.s.selected)),
-            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
-            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(self.s.selected)),
-            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation()),
+            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation(ctx)),
+            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(ctx, self.s.selected)),
+            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation(ctx)),
             _ => Ok(false),
         }
     }
@@ -2199,7 +2221,7 @@ impl Map {
         false
     }
 
-    fn start_rotation(&mut self) -> bool {
+    fn start_rotation(&mut self, ctx: &Context<Self>) -> bool {
         if self.s.selected.is_zero() || !self.s.selected.is_local() {
             return false;
         }
@@ -2233,11 +2255,17 @@ impl Map {
             0.0
         };
 
+        let is_static = o.is_static();
+
+        if let Some(action) = self.action.take() {
+            self.s.finalize_action(ctx, &mut objects, action);
+        }
+
         let action = self.action.insert(Action::Rotate(Rotate {
             object_id,
             center,
             rotation_offset,
-            is_static: o.is_static(),
+            is_static,
         }));
 
         self.s.apply(&mut objects, action, mouse);
@@ -2310,7 +2338,7 @@ impl Map {
     }
 
     fn send_transform_updates(&mut self, ctx: &Context<Self>) {
-        if self.channel.id() == ChannelId::NONE {
+        if self.s.channel.id() == ChannelId::NONE {
             self.s.transforms.clear();
             return;
         }
@@ -2327,7 +2355,8 @@ impl Map {
             };
 
             let req =
-                self.channel
+                self.s
+                    .channel
                     .object_updates(ctx, id.id, [(Key::TRANSFORM, (*transform).into())]);
 
             self.transform_requests.insert(id, req);
@@ -2335,7 +2364,7 @@ impl Map {
     }
 
     fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
-        if self.channel.id() == ChannelId::NONE {
+        if self.s.channel.id() == ChannelId::NONE {
             self.s.look_at.clear();
             return;
         }
@@ -2347,7 +2376,7 @@ impl Map {
                 continue;
             };
 
-            let req = self.channel.object_updates(
+            let req = self.s.channel.object_updates(
                 ctx,
                 id.id,
                 [(Key::LOOK_AT, o.look_at().copied().into())],
@@ -2404,7 +2433,7 @@ impl Map {
 
                 self.mouse = Some(e);
 
-                if self.start_rotation() {
+                if self.start_rotation(ctx) {
                     ev.prevent_default();
                     return Ok(());
                 }
@@ -2563,13 +2592,15 @@ impl Map {
 
         if old_group.is_some() {
             self._set_group =
-                self.channel
+                self.s
+                    .channel
                     .object_updates(ctx, id.id, [(Key::GROUP, o_group.id.into())]);
         }
 
         if old_sort.is_some() {
             self._set_sort =
-                self.channel
+                self.s
+                    .channel
                     .object_updates(ctx, id.id, [(Key::SORT, o_sort[..].into())]);
         }
 
@@ -2604,6 +2635,7 @@ impl Map {
         *self.s.mumble_object = update;
 
         self.s._toggle_mumble_request = self
+            .s
             .channel
             .updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(update.id))]);
 
@@ -2628,9 +2660,10 @@ impl Map {
         let new = !**locked;
         **locked = new;
 
-        self._toggle_locked = self
-            .channel
-            .object_updates(ctx, id.id, [(Key::LOCKED, new.into())]);
+        self._toggle_locked =
+            self.s
+                .channel
+                .object_updates(ctx, id.id, [(Key::LOCKED, new.into())]);
 
         self.s.redraw = true;
         true
@@ -2652,9 +2685,10 @@ impl Map {
         let new_hidden = !*object.hidden;
         *object.hidden = new_hidden;
 
-        let requests = self.object_requests.entry(id).or_default();
+        let requests = self.s.object_requests.entry(id).or_default();
         requests._toggle_hidden =
-            self.channel
+            self.s
+                .channel
                 .object_updates(ctx, id.id, [(Key::HIDDEN, new_hidden.into())]);
         self.s.redraw = true;
         true
@@ -2676,11 +2710,13 @@ impl Map {
         let new_local_hidden = !*object.local_hidden;
         *object.local_hidden = new_local_hidden;
 
-        let requests = self.object_requests.entry(id).or_default();
+        let requests = self.s.object_requests.entry(id).or_default();
 
-        requests._toggle_local_hidden =
-            self.channel
-                .object_updates(ctx, id.id, [(Key::LOCAL_HIDDEN, new_local_hidden.into())]);
+        requests._toggle_local_hidden = self.s.channel.object_updates(
+            ctx,
+            id.id,
+            [(Key::LOCAL_HIDDEN, new_local_hidden.into())],
+        );
 
         self.s.redraw = true;
         true
@@ -2706,10 +2742,11 @@ impl Map {
         let new_expanded = !**expanded;
         **expanded = new_expanded;
 
-        let requests = self.object_requests.entry(id).or_default();
+        let requests = self.s.object_requests.entry(id).or_default();
 
         requests._expanded =
-            self.channel
+            self.s
+                .channel
                 .object_updates(ctx, id.id, [(Key::EXPANDED, new_expanded.into())]);
 
         true

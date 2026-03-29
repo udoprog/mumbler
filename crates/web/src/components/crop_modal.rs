@@ -485,13 +485,13 @@ impl CropModal {
                 Ok(true)
             }
             Msg::Rescale => {
-                let Some(rescale) = &ctx.props().onratio else {
+                let Some(onratio) = &ctx.props().onratio else {
                     return Ok(false);
                 };
 
                 let bounds = self.image_bounds();
 
-                rescale.emit(bounds.x / bounds.y);
+                onratio.emit(bounds.x / bounds.y);
 
                 let selection = Selection::max_centered(bounds, ctx.props().ratio);
                 self.drag = Some(selection.to_drag());
