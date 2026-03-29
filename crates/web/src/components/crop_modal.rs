@@ -1,4 +1,5 @@
-use std::ops::{Add, Sub};
+use core::cmp::Ordering;
+use core::ops::{Add, Div, Sub};
 
 use web_sys::{HtmlImageElement, MouseEvent, PointerEvent};
 use yew::prelude::*;
@@ -17,54 +18,6 @@ const HANDLES: &[(&str, Dir)] = &[
     ("s", Dir::S),
     ("se", Dir::SE),
 ];
-
-#[derive(Clone, Copy, PartialEq)]
-struct Vec2 {
-    x: f64,
-    y: f64,
-}
-
-impl Vec2 {
-    const ZERO: Self = Self { x: 0.0, y: 0.0 };
-
-    #[inline]
-    fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
-    }
-
-    #[inline]
-    fn offset(ev: &MouseEvent) -> Self {
-        Self::new(ev.offset_x() as f64, ev.offset_y() as f64)
-    }
-
-    #[inline]
-    fn client(ev: &MouseEvent) -> Self {
-        Self::new(ev.client_x() as f64, ev.client_y() as f64)
-    }
-
-    fn clamp(self, min: Self, max: Self) -> Self {
-        Self {
-            x: self.x.clamp(min.x, max.x),
-            y: self.y.clamp(min.y, max.y),
-        }
-    }
-}
-
-impl Sub for Vec2 {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self {
-        Self::new(self.x - rhs.x, self.y - rhs.y)
-    }
-}
-
-impl Add for Vec2 {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self {
-        Self::new(self.x + rhs.x, self.y + rhs.y)
-    }
-}
 
 const MIN_SIZE: f64 = 2.0;
 
@@ -124,25 +77,23 @@ impl Dir {
 #[derive(Clone, Copy)]
 struct Selection {
     pos: Vec2,
-    w: f64,
-    h: f64,
+    size: Vec2,
 }
 
 impl Selection {
     fn max_centered(bounds: Vec2, ratio: Option<f64>) -> Selection {
-        if let Some(r) = ratio {
-            let h = (bounds.x / r).min(bounds.y);
-            let w = h * r;
+        if let Some(ratio) = ratio {
+            let height = (bounds.x / ratio).min(bounds.y);
+            let width = height * ratio;
+
             Selection {
-                pos: Vec2::new((bounds.x - w) / 2.0, (bounds.y - h) / 2.0),
-                w,
-                h,
+                pos: Vec2::new((bounds.x - width) / 2.0, (bounds.y - height) / 2.0),
+                size: Vec2::new(width, height),
             }
         } else {
             Selection {
                 pos: Vec2::ZERO,
-                w: bounds.x,
-                h: bounds.y,
+                size: bounds,
             }
         }
     }
@@ -150,46 +101,51 @@ impl Selection {
     fn from_drag(a: Vec2, b: Vec2, ratio: Option<f64>) -> Self {
         let d = b - a;
 
-        let (w, h) = if let Some(r) = ratio {
-            let h = (d.x.abs() / r).min(d.y.abs());
-            (h * r, h)
+        let size = if let Some(ratio) = ratio {
+            let height = (d.x.abs() / ratio).min(d.y.abs());
+            let width = height * ratio;
+            Vec2::new(width, height)
         } else {
-            (d.x.abs(), d.y.abs())
+            Vec2::new(d.x.abs(), d.y.abs())
         };
 
-        let w = w.max(0.0);
-        let h = h.max(0.0);
+        let size = size.max(Vec2::ZERO);
 
-        let x = if d.x >= 0.0 { a.x } else { a.x - w };
-        let y = if d.y >= 0.0 { a.y } else { a.y - h };
+        let x = if d.x >= 0.0 { a.x } else { a.x - size.x };
+        let y = if d.y >= 0.0 { a.y } else { a.y - size.y };
 
         Self {
             pos: Vec2::new(x, y),
-            w,
-            h,
+            size,
         }
     }
 
+    #[inline]
     fn center(self) -> Vec2 {
-        Vec2::new(self.pos.x + self.w / 2.0, self.pos.y + self.h / 2.0)
+        self.pos + self.size / 2.0
     }
 
+    #[inline]
     fn bottom_right(self) -> Vec2 {
-        Vec2::new(self.pos.x + self.w, self.pos.y + self.h)
+        self.pos + self.size
     }
 
+    #[inline]
     fn to_drag(self) -> (Vec2, Vec2) {
         (self.pos, self.bottom_right())
     }
 
+    #[inline]
     fn style(self) -> String {
         let Self {
             pos: Vec2 { x, y },
-            w,
-            h,
+            size: Vec2 {
+                x: width,
+                y: height,
+            },
         } = self;
 
-        format!("left:{x:.0}px;top:{y:.0}px;width:{w:.0}px;height:{h:.0}px")
+        format!("left:{x:.0}px; top:{y:.0}px; width:{width:.0}px; height:{height:.0}px;")
     }
 
     fn resized(self, dir: Dir, delta: Vec2, bounds: Vec2, ratio: Option<f64>) -> Self {
@@ -198,22 +154,22 @@ impl Selection {
             let dh_y = dir.y.apply(delta.y);
 
             let new_h = match (dir.x, dir.y) {
-                (Axis::Zero, _) => self.h + dh_y,
-                (_, Axis::Zero) => self.h + dh_x,
-                _ => (self.h + dh_x).min(self.h + dh_y),
+                (Axis::Zero, _) => self.size.y + dh_y,
+                (_, Axis::Zero) => self.size.y + dh_x,
+                _ => (self.size.y + dh_x).min(self.size.y + dh_y),
             };
 
             let new_h = new_h.max(0.0);
             (new_h * r, new_h)
         } else {
             let new_w = match dir.x {
-                Axis::Zero => self.w,
-                _ => (self.w + dir.x.apply(delta.x)).max(0.0),
+                Axis::Zero => self.size.x,
+                _ => (self.size.x + dir.x.apply(delta.x)).max(0.0),
             };
 
             let new_h = match dir.y {
-                Axis::Zero => self.h,
-                _ => (self.h + dir.y.apply(delta.y)).max(0.0),
+                Axis::Zero => self.size.y,
+                _ => (self.size.y + dir.y.apply(delta.y)).max(0.0),
             };
 
             (new_w, new_h)
@@ -223,16 +179,21 @@ impl Selection {
 
         let anchor_x = dir
             .x
-            .anchor(self.pos.x, self.w, new_w, c.x)
+            .anchor(self.pos.x, self.size.x, new_w, c.x)
             .clamp(0.0, bounds.x);
 
         let anchor_y = dir
             .y
-            .anchor(self.pos.y, self.h, new_h, c.y)
+            .anchor(self.pos.y, self.size.y, new_h, c.y)
             .clamp(0.0, bounds.y);
 
-        let max_w = dir.x.max_extent(self.pos.x, self.w, anchor_x, bounds.x);
-        let max_h = dir.y.max_extent(self.pos.y, self.h, anchor_y, bounds.y);
+        let max_w = dir
+            .x
+            .max_extent(self.pos.x, self.size.x, anchor_x, bounds.x);
+
+        let max_h = dir
+            .y
+            .max_extent(self.pos.y, self.size.y, anchor_y, bounds.y);
 
         let (final_w, final_h) = if ratio.is_some() {
             let scale = if new_w > 0.0 && new_h > 0.0 {
@@ -247,37 +208,33 @@ impl Selection {
 
         let final_x = dir
             .x
-            .anchor(self.pos.x, self.w, final_w, c.x)
+            .anchor(self.pos.x, self.size.x, final_w, c.x)
             .clamp(0.0, bounds.x);
 
         let final_y = dir
             .y
-            .anchor(self.pos.y, self.h, final_h, c.y)
+            .anchor(self.pos.y, self.size.y, final_h, c.y)
             .clamp(0.0, bounds.y);
 
         Self {
             pos: Vec2::new(final_x, final_y),
-            w: final_w,
-            h: final_h,
+            size: Vec2::new(final_w, final_h),
         }
     }
 
     fn moved(self, delta: Vec2, bounds: Vec2) -> Self {
         Self {
-            pos: Vec2 {
-                x: (self.pos.x + delta.x).clamp(0.0, (bounds.x - self.w).max(0.0)),
-                y: (self.pos.y + delta.y).clamp(0.0, (bounds.y - self.h).max(0.0)),
-            },
+            pos: (self.pos + delta).clamp(Vec2::ZERO, bounds - self.size),
             ..self
         }
     }
 
     fn to_crop_region(self, client: Vec2, natural: Vec2) -> Option<api::CropRegion> {
-        if !(client.x > 0.0) {
+        if client.x.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return None;
         }
 
-        if !(client.y > 0.0) {
+        if client.y.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return None;
         }
 
@@ -286,8 +243,8 @@ impl Selection {
 
         let x1 = (self.pos.x * scale_x).clamp(0.0, natural.x) as u32;
         let y1 = (self.pos.y * scale_y).clamp(0.0, natural.y) as u32;
-        let x2 = ((self.pos.x + self.w) * scale_x).clamp(0.0, natural.x) as u32;
-        let y2 = ((self.pos.y + self.h) * scale_y).clamp(0.0, natural.y) as u32;
+        let x2 = ((self.pos.x + self.size.x) * scale_x).clamp(0.0, natural.x) as u32;
+        let y2 = ((self.pos.y + self.size.y) * scale_y).clamp(0.0, natural.y) as u32;
 
         if x2 <= x1 || y2 <= y1 {
             return None;
@@ -623,7 +580,7 @@ impl CropModal {
                 .selection
                 .resized(rs.dir, delta, bounds, ctx.props().ratio);
 
-            self.drag = if new.h < MIN_SIZE {
+            self.drag = if new.size.y < MIN_SIZE {
                 None
             } else {
                 Some(new.to_drag())
@@ -674,5 +631,73 @@ impl CropModal {
 
         ctx.props().onconfirm.emit(region);
         Ok(false)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+impl Vec2 {
+    const ZERO: Self = Self { x: 0.0, y: 0.0 };
+
+    #[inline]
+    fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    #[inline]
+    fn offset(ev: &MouseEvent) -> Self {
+        Self::new(ev.offset_x() as f64, ev.offset_y() as f64)
+    }
+
+    #[inline]
+    fn client(ev: &MouseEvent) -> Self {
+        Self::new(ev.client_x() as f64, ev.client_y() as f64)
+    }
+
+    #[inline]
+    fn clamp(self, min: Self, max: Self) -> Self {
+        Self {
+            x: self.x.clamp(min.x, max.x),
+            y: self.y.clamp(min.y, max.y),
+        }
+    }
+
+    #[inline]
+    fn max(self, other: Self) -> Self {
+        Self {
+            x: self.x.max(other.x),
+            y: self.y.max(other.y),
+        }
+    }
+}
+
+impl Sub for Vec2 {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(self.x - rhs.x, self.y - rhs.y)
+    }
+}
+
+impl Add for Vec2 {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl Div<f64> for Vec2 {
+    type Output = Self;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self {
+        Self::new(self.x / rhs, self.y / rhs)
     }
 }
