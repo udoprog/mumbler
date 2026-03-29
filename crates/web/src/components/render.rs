@@ -114,58 +114,56 @@ pub(crate) struct RenderStatic<'a> {
     pub(crate) height: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ViewTransform {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) scale: f64,
-    center_x: f64,
-    center_y: f64,
+    origin: Canvas2,
 }
 
 impl ViewTransform {
-    pub(crate) fn simple(width: u32, height: u32, scale: f64) -> Self {
+    pub(crate) fn simple(width: u32, height: u32, scale: f32) -> Self {
         Self {
             width,
             height,
-            scale,
-            center_x: width as f64 / 2.0,
-            center_y: height as f64 / 2.0,
+            scale: scale as f64,
+            origin: Canvas2::new(width as f64 / 2.0, height as f64 / 2.0),
         }
     }
 
-    pub(crate) fn new(width: u32, height: u32, zoom: f32, pan: &Canvas2, extent: &Extent) -> Self {
-        let canvas_min = width.min(height) as f64;
-        let world_w = (extent.x.end - extent.x.start) as f64;
-        let world_h = (extent.y.end - extent.y.start) as f64;
-        let scale = (canvas_min / world_w.max(world_h)) * zoom as f64;
+    pub(crate) fn new(width: u32, height: u32, zoom: f32, pan: &Vec3, extent: &Extent) -> Self {
+        let scale = {
+            let sx = width as f32 / extent.x.len();
+            let sz = height as f32 / extent.z.len();
+            sx.min(sz) * zoom
+        } as f64;
 
-        let world_mid_x = ((extent.x.start + extent.x.end) / 2.0) as f64;
-        let world_mid_y = ((extent.y.start + extent.y.end) / 2.0) as f64;
-        let center_x = width as f64 / 2.0 + pan.x - world_mid_x * scale;
-        let center_y = height as f64 / 2.0 + pan.y - world_mid_y * scale;
+        let origin = Canvas2::new(
+            width as f64 / 2.0 - pan.x as f64 * scale,
+            height as f64 / 2.0 + pan.z as f64 * scale,
+        );
 
         Self {
             width,
             height,
             scale,
-            center_x,
-            center_y,
+            origin,
         }
     }
 
     #[inline]
     pub(crate) fn to_canvas(&self, w: Vec3) -> Canvas2 {
-        let x = self.center_x + w.x as f64 * self.scale;
-        let y = self.center_y - w.z as f64 * self.scale;
+        let x = self.origin.x + w.x as f64 * self.scale;
+        let y = self.origin.y - w.z as f64 * self.scale;
         Canvas2::new(x, y)
     }
 
     #[inline]
     pub(crate) fn to_world(&self, p: Canvas2) -> Vec3 {
-        let world_x = ((p.x - self.center_x) / self.scale) as f32;
-        let world_z = ((self.center_y - p.y) / self.scale) as f32;
-        Vec3::new(world_x, 0.0, world_z)
+        let x = ((p.x - self.origin.x) / self.scale) as f32;
+        let z = ((self.origin.y - p.y) / self.scale) as f32;
+        Vec3::new(x, 0.0, z)
     }
 }
 
@@ -175,8 +173,8 @@ pub(crate) fn draw_background(
     extent: &api::Extent,
     img: &HtmlImageElement,
 ) -> Result<(), Error> {
-    let top_left = view.to_canvas(Vec3::new(extent.x.start, 0.0, extent.y.end));
-    let bottom_right = view.to_canvas(Vec3::new(extent.x.end, 0.0, extent.y.start));
+    let top_left = view.to_canvas(Vec3::new(extent.x.start, 0.0, extent.z.end));
+    let bottom_right = view.to_canvas(Vec3::new(extent.x.end, 0.0, extent.z.start));
 
     let dest_w = bottom_right.x - top_left.x;
     let dest_h = bottom_right.y - top_left.y;
@@ -229,8 +227,8 @@ pub(crate) fn draw_grid(
 
     while x <= extent.x.end + EPS {
         if x.abs() >= EPS {
-            let c1 = t.to_canvas(Vec3::new(x, 0.0, extent.y.start));
-            let c2 = t.to_canvas(Vec3::new(x, 0.0, extent.y.end));
+            let c1 = t.to_canvas(Vec3::new(x, 0.0, extent.z.start));
+            let c2 = t.to_canvas(Vec3::new(x, 0.0, extent.z.end));
 
             cx.begin_path();
             cx.move_to(c1.x, c1.y);
@@ -241,9 +239,9 @@ pub(crate) fn draw_grid(
         x += GRID_STEP;
     }
 
-    let mut z = (extent.y.start / GRID_STEP).ceil() * GRID_STEP;
+    let mut z = (extent.z.start / GRID_STEP).ceil() * GRID_STEP;
 
-    while z <= extent.y.end + EPS {
+    while z <= extent.z.end + EPS {
         if z.abs() >= EPS {
             let c1 = t.to_canvas(Vec3::new(extent.x.start, 0.0, z));
             let c2 = t.to_canvas(Vec3::new(extent.x.end, 0.0, z));
@@ -261,8 +259,8 @@ pub(crate) fn draw_grid(
     cx.set_line_width(zoom as f64 * 1.5);
 
     if extent.x.contains(0.0) {
-        let c1 = t.to_canvas(Vec3::new(0.0, 0.0, extent.y.start));
-        let c2 = t.to_canvas(Vec3::new(0.0, 0.0, extent.y.end));
+        let c1 = t.to_canvas(Vec3::new(0.0, 0.0, extent.z.start));
+        let c2 = t.to_canvas(Vec3::new(0.0, 0.0, extent.z.end));
 
         cx.begin_path();
         cx.move_to(c1.x, c1.y);
@@ -270,7 +268,7 @@ pub(crate) fn draw_grid(
         cx.stroke();
     }
 
-    if extent.y.contains(0.0) {
+    if extent.z.contains(0.0) {
         let c1 = t.to_canvas(Vec3::new(extent.x.start, 0.0, 0.0));
         let c2 = t.to_canvas(Vec3::new(extent.x.end, 0.0, 0.0));
 

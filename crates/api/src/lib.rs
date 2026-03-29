@@ -24,7 +24,7 @@ pub use self::ids::{AtomicIds, Ids};
 mod hash;
 
 use core::fmt;
-use core::ops::{Add, Sub};
+use core::ops::{Add, AddAssign, Sub};
 
 use std::collections::HashMap;
 use std::collections::hash_map::IntoIter;
@@ -104,7 +104,7 @@ crate::macros::keys! {
         SCALE: Float = 8;
         REMOTE_TLS: Boolean = 11;
         ZOOM: Float = 9;
-        PAN: Canvas2 = 10;
+        PAN: Vec3 = 10;
         ROOM_EXTENT: Extent = 12;
         /// The object which is used for mumble link.
         MUMBLE_OBJECT: Id = 14;
@@ -352,7 +352,60 @@ pub struct Span {
 }
 
 impl Span {
+    /// The length of the span.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use api::Span;
+    ///
+    /// let span = Span { start: 1.0, end: 3.0 };
+    /// assert_eq!(span.len(), 2.0);
+    ///
+    /// let span = Span { start: 3.0, end: 1.0 };
+    /// assert_eq!(span.len(), 2.0);
+    ///
+    /// let span = Span { start: 1.0, end: 1.5 };
+    /// assert_eq!(span.len(), 0.5);
+    /// ```
+    #[inline]
+    pub fn len(&self) -> f32 {
+        (self.end - self.start).abs()
+    }
+
+    /// Get the  midpoint of the span.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use api::Span;
+    ///
+    /// let span = Span { start: 1.0, end: 3.0 };
+    /// assert_eq!(span.mid(), 2.0);
+    ///
+    /// let span = Span { start: 3.0, end: 1.0 };
+    /// assert_eq!(span.mid(), 2.0);
+    ///
+    /// let span = Span { start: 1.0, end: 1.5 };
+    /// assert_eq!(span.mid(), 1.25);
+    /// ```
+    #[inline]
+    pub fn mid(&self) -> f32 {
+        (self.start + self.end) / 2.0
+    }
+
     /// Returns `true` if `value` lies within `[start, end]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use api::Span;
+    ///
+    /// let span = Span { start: 1.0, end: 3.0 };
+    ///
+    /// assert!(span.contains(2.0));
+    /// assert!(!span.contains(0.5));
+    /// ```
     #[inline]
     pub fn contains(self, value: f32) -> bool {
         self.start <= value && value <= self.end
@@ -365,14 +418,14 @@ pub struct Extent {
     /// Extent along the x axis.
     pub x: Span,
     /// Extent along the y axis.
-    pub y: Span,
+    pub z: Span,
 }
 
 impl Extent {
-    /// Returns `true` if the point `(x, y)` lies within the extent.
+    /// Returns `true` if the point `(x, z)` lies within the extent.
     #[inline]
-    pub fn contains(self, x: f32, y: f32) -> bool {
-        self.x.contains(x) && self.y.contains(y)
+    pub fn contains(self, x: f32, z: f32) -> bool {
+        self.x.contains(x) && self.z.contains(z)
     }
 
     /// A zero extent at the origin.
@@ -382,7 +435,7 @@ impl Extent {
                 start: -5.0,
                 end: 5.0,
             },
-            y: Span {
+            z: Span {
                 start: -5.0,
                 end: 5.0,
             },
@@ -621,6 +674,15 @@ impl Add for Vec3 {
     }
 }
 
+impl AddAssign for Vec3 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.x += rhs.x;
+        self.y += rhs.y;
+        self.z += rhs.z;
+    }
+}
+
 impl fmt::Debug for Vec3 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Vec3")
@@ -634,6 +696,7 @@ impl fmt::Debug for Vec3 {
 impl Vec3 {
     /// The zero vector.
     pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);
+
     /// A unit vector pointing forward in the world (negative z direction).
     pub const FORWARD: Self = Self::new(0.0, 0.0, -1.0);
 
@@ -641,6 +704,12 @@ impl Vec3 {
     #[inline]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
+    }
+
+    /// Constuct a zero vector.
+    #[inline]
+    pub const fn zero() -> Self {
+        Self::ZERO
     }
 }
 

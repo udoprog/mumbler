@@ -554,7 +554,7 @@ impl StaticSettings {
         let min = width.min(height) as f32;
 
         let scale = (min - min * 0.2) / self.width.max(*self.height);
-        let view = ViewTransform::simple(width, height, scale as f64);
+        let view = ViewTransform::simple(width, height, scale);
 
         cx.clear_rect(0.0, 0.0, width as f64, height as f64);
 

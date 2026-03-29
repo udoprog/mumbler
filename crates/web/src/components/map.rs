@@ -396,7 +396,7 @@ impl Default for Cache {
 
 pub(crate) struct Config {
     pub(crate) zoom: State<f32>,
-    pub(crate) pan: State<Canvas2>,
+    pub(crate) pan: State<Vec3>,
     pub(crate) mumble_object: State<RemoteId>,
     pub(crate) mumble_follow: State<bool>,
     pub(crate) room: State<StableId>,
@@ -425,9 +425,7 @@ impl Config {
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
-            Key::PAN => self
-                .pan
-                .update(value.as_canvas2().unwrap_or_else(Canvas2::zero)),
+            Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
             Key::ROOM => self.room.update(*value.as_stable_id()),
@@ -448,7 +446,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             zoom: State::new(2.0),
-            pan: State::new(Canvas2::zero()),
+            pan: State::new(Vec3::ZERO),
             mumble_object: State::new(RemoteId::ZERO),
             mumble_follow: State::new(false),
             room: State::new(StableId::ZERO),
@@ -800,16 +798,21 @@ impl Component for Map {
         if let Some(o) = objects.get(self.s.selected)
             && let Some(transform) = o.as_transform()
         {
-            let p = transform.position;
-            let f = transform.front;
+            let position = &transform.position;
+            let front = &transform.front;
+            let position = format!(
+                "POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}",
+                position.x, position.y, position.z
+            );
+            let front = format!(
+                "FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}",
+                front.x, front.y, front.z
+            );
 
             let zoom = *self.config.zoom;
             let pan = *self.config.pan;
-
-            let position = format!("POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}", p.x, p.y, p.z);
-            let front = format!("FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}", f.x, f.y, f.z);
             let zoom = format!("ZOOM:{:.02}", zoom);
-            let pan = format!("PAN: X:{:.02}, Y:{:.02}", pan.x, pan.y);
+            let pan = format!("PAN: X:{:.02}, Y:{:.02}, Z:{:.02}", pan.x, pan.y, pan.z);
 
             footer = html! {
                 <div class="row">
@@ -817,9 +820,14 @@ impl Component for Map {
                 </div>
             };
         } else {
+            let zoom = *self.config.zoom;
+            let pan = *self.config.pan;
+            let zoom = format!("ZOOM:{:.02}", zoom);
+            let pan = format!("PAN: X:{:.02}, Y:{:.02}, Z:{:.02}", pan.x, pan.y, pan.z);
+
             footer = html! {
                 <div class="row">
-                    <div class="col-12 footer">{"No object selected"}</div>
+                    <div class="col-12 footer">{zoom}{" / "}{pan}</div>
                 </div>
             };
         }
@@ -2444,8 +2452,9 @@ impl Map {
         ev.prevent_default();
 
         if let Some(a) = self.pan_anchor {
-            let d = ev.client() - a;
-            *self.config.pan = *self.config.pan + d;
+            let d = self.view.to_world(ev.client()) - self.view.to_world(a);
+
+            *self.config.pan = *self.config.pan - d;
             self.pan_anchor = Some(ev.client());
 
             self.s.update_view = true;
@@ -2513,12 +2522,15 @@ impl Map {
             &self.cache.extent,
         );
 
-        let c1 = ev.offset();
-        let c2 = after.to_canvas(self.view.to_world(c1));
+        let mut update = false;
+        update |= self.config.zoom.update(zoom);
+        update |= self.config.pan.update(
+            *self.config.pan + (self.view.to_world(ev.offset()) - after.to_world(ev.offset())),
+        );
 
-        *self.config.zoom = zoom;
-        self.config.pan.x += c1.x - c2.x;
-        self.config.pan.y += c1.y - c2.y;
+        if !update {
+            return Ok(());
+        }
 
         self.s.update_view = true;
         self.s.update_config = true;

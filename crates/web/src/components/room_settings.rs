@@ -16,8 +16,8 @@ pub(crate) enum Msg {
     Channel(Result<ws::Channel, Error>),
     ExtentXMinChanged(Event),
     ExtentXMaxChanged(Event),
-    ExtentYMinChanged(Event),
-    ExtentYMaxChanged(Event),
+    ExtentZMinChanged(Event),
+    ExtentZMaxChanged(Event),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     ImageSelected(RemoteId),
     NameChanged(Event),
@@ -144,23 +144,23 @@ impl Component for RoomSettings {
                 </section>
 
                 <section class="input-group">
-                    <label for="extent-y-min">{"Y Extents:"}</label>
+                    <label for="extent-z-min">{"Z Extents:"}</label>
                     <input
-                        id="extent-y-min"
+                        id="extent-z-min"
                         type="number"
                         step="1"
-                        value={extent.y.start.to_string()}
-                        onchange={ctx.link().callback(Msg::ExtentYMinChanged)}
+                        value={extent.z.start.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentZMinChanged)}
                     />
 
                     {" - "}
 
                     <input
-                        id="extent-y-max"
+                        id="extent-z-max"
                         type="number"
                         step="1"
-                        value={extent.y.end.to_string()}
-                        onchange={ctx.link().callback(Msg::ExtentYMaxChanged)}
+                        value={extent.z.end.to_string()}
+                        onchange={ctx.link().callback(Msg::ExtentZMaxChanged)}
                     />
                 </section>
 
@@ -269,21 +269,24 @@ impl RoomSettings {
                 );
                 Ok(true)
             }
-            Msg::ExtentYMinChanged(e) => {
+            Msg::ExtentZMinChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
-                self.extent.y.start = v.min(self.extent.y.end);
+                self.extent.z.start = v.min(self.extent.z.end);
+
                 self._update_extent = self.channel.object_updates(
                     ctx,
                     ctx.props().id.id,
                     [(Key::ROOM_EXTENT, self.extent.value())],
                 );
+
                 Ok(true)
             }
-            Msg::ExtentYMaxChanged(e) => {
+            Msg::ExtentZMaxChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
                 let v = input.value().parse::<i32>()? as f32;
-                self.extent.y.end = v.max(self.extent.y.start);
+                self.extent.z.end = v.max(self.extent.z.start);
+
                 self._update_extent = self.channel.object_updates(
                     ctx,
                     ctx.props().id.id,

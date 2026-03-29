@@ -344,8 +344,13 @@ impl Database {
 
                 tracing::debug!(?id, ?key, "loading property");
 
-                let value =
-                    value_from_blob(ty, select).with_context(|| anyhow!("Decoding {key}"))?;
+                let value = match value_from_blob(ty, select) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::error!(?id, ?key, error = ?error, "failed to load property value");
+                        continue;
+                    }
+                };
 
                 props.push((key, value));
             }
