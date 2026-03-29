@@ -1,6 +1,9 @@
 mod macros;
 use self::macros::into_target;
 
+mod animation_frame;
+pub(crate) use self::animation_frame::AnimationFrame;
+
 mod app;
 pub use self::app::App;
 

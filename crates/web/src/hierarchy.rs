@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use api::{PeerId, RemoteId};
 
-use crate::objects::LocalObject;
+use crate::objects::Object;
 
 #[derive(Default)]
 struct Inner {
@@ -120,7 +120,7 @@ impl HierarchyRef {
         }
     }
 
-    pub(crate) fn remove(&mut self, object: &LocalObject) -> bool {
+    pub(crate) fn remove(&mut self, object: &Object) -> bool {
         if object.is_global() {
             return false;
         }
@@ -151,7 +151,7 @@ impl HierarchyRef {
     }
 
     /// Insert an object into the hierarchy. Does nothing if the object has no sort key.
-    pub(crate) fn insert(&mut self, object: &LocalObject) -> bool {
+    pub(crate) fn insert(&mut self, object: &Object) -> bool {
         if object.is_global() {
             return false;
         }
@@ -200,7 +200,7 @@ impl HierarchyRef {
     }
 
     /// Extend the hierarchy with the given objects.
-    pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a LocalObject>) {
+    pub(crate) fn extend<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>) {
         for object in objects {
             self.insert(object);
         }

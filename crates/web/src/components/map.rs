@@ -15,7 +15,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
     CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlImageElement, KeyboardEvent,
-    MouseEvent, WheelEvent,
+    MouseEvent, WheelEvent, Window,
 };
 use yew::prelude::*;
 
@@ -25,14 +25,15 @@ use crate::error::Error;
 use crate::hierarchy::Hierarchy;
 use crate::images::Images;
 use crate::log;
-use crate::objects::{LocalObject, ObjectKind, ObjectRef, Objects, ObjectsRef};
+use crate::objects::{Object, ObjectKind, ObjectRef, Objects, ObjectsRef};
 use crate::peers::Peers;
 use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal, Icon, ObjectList,
-    RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl, TokenSettings, UNKNOWN_ROOM,
+    AnimationFrame, COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal,
+    Icon, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
+    TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -40,7 +41,7 @@ const MIDDLE_MOUSE_BUTTON: i16 = 1;
 
 const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
-const ANIMATION_FPS: u32 = 60;
+const SIMULATION_FPS: u32 = 60;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Modal {
@@ -154,10 +155,12 @@ impl Modal {
     }
 }
 
-/// We keep some interior state separate, since it's needed to borrow certain
-/// fields mutably.
-#[derive(Default)]
-struct Inner {
+/// We keep some interior state here since sometimes we require a split borrow
+/// between it and for example the objects or hierarchy.
+///
+/// Long term, most local mutable state will end up here.
+struct MapState {
+    window: Window,
     look_at: HashSet<RemoteId>,
     transforms: HashSet<RemoteId>,
     selected: RemoteId,
@@ -170,9 +173,29 @@ struct Inner {
     update_view: bool,
     move_target: HashMap<RemoteId, Vec3>,
     arrow_target: HashMap<RemoteId, Vec3>,
+    animation_frame: Option<AnimationFrame>,
 }
 
-impl Inner {
+impl MapState {
+    fn new(window: Window) -> Self {
+        Self {
+            window,
+            look_at: HashSet::default(),
+            transforms: HashSet::default(),
+            selected: RemoteId::default(),
+            context_menu: Option::default(),
+            modal: Option::default(),
+            _toggle_mumble_request: ws::Request::default(),
+            redraw: false,
+            update_cache: false,
+            update_config: false,
+            update_view: false,
+            move_target: HashMap::default(),
+            arrow_target: HashMap::default(),
+            animation_frame: Option::default(),
+        }
+    }
+
     fn look_at(&mut self, objects: &mut ObjectsRef, from: Vec3, to: Vec3) {
         let Some(o) = objects.get_mut(self.selected) else {
             return;
@@ -498,6 +521,7 @@ pub(crate) struct Map {
     ids: AtomicIds,
     log: log::Log,
     channel: ws::Channel,
+    s: MapState,
     _setup_channel: SetupChannel,
     _create_group: ws::Request,
     _create_object: ws::Request,
@@ -513,7 +537,7 @@ pub(crate) struct Map {
     _set_sort: ws::Request,
     _toggle_locked: ws::Request,
     _update_world: ws::Request,
-    animation_interval: Option<Interval>,
+    simulation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
     config: Config,
     drag_over: Option<DragOver>,
@@ -539,7 +563,6 @@ pub(crate) struct Map {
     action: Option<Action>,
     transform_requests: HashMap<RemoteId, ws::Request>,
     look_ats: Vec<(Vec3, Color)>,
-    s: Inner,
     view: ViewTransform,
 }
 
@@ -547,7 +570,8 @@ pub(crate) struct Map {
 pub(crate) enum Msg {
     Error(Error),
     Channel(Result<ws::Channel, Error>),
-    AnimationFrame,
+    AnimationFrame(Result<f64, Error>),
+    SimulationFrame,
     CloseModal,
     CloseContextMenu,
     ConfigResult(Result<Packet<api::Updates>, ws::Error>),
@@ -601,6 +625,8 @@ impl Component for Map {
     type Properties = Props;
 
     fn create(ctx: &Context<Self>) -> Self {
+        let window = web_sys::window().expect("window not found");
+
         let (log, _) = ctx
             .link()
             .context::<log::Log>(Callback::noop())
@@ -629,6 +655,7 @@ impl Component for Map {
             ids: AtomicIds::new(0),
             log,
             channel: ws::Channel::default(),
+            s: MapState::new(window),
             _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
@@ -645,7 +672,7 @@ impl Component for Map {
             _toggle_locked: ws::Request::new(),
             _update_world: ws::Request::new(),
             action: None,
-            animation_interval: None,
+            simulation_interval: None,
             canvas: None,
             config: Config::default(),
             drag_over: None,
@@ -669,7 +696,6 @@ impl Component for Map {
             pan_anchor: None,
             peers: Peers::default(),
             cache: Cache::default(),
-            s: Inner::default(),
             transform_requests: HashMap::new(),
             view: ViewTransform::simple(0, 0, 1.0),
         }
@@ -731,21 +757,24 @@ impl Component for Map {
         }
 
         if self.s.redraw {
-            if let Err(error) = self.redraw() {
-                self.log.error("map::redraw", error);
+            if self.s.animation_frame.is_none() {
+                self.s.animation_frame = Some(AnimationFrame::request(
+                    self.s.window.clone(),
+                    ctx.link().callback(Msg::AnimationFrame),
+                ));
             }
 
             self.s.redraw = false;
         }
 
-        if self.animation_interval.is_none() && !self.s.move_target.is_empty() {
+        if self.simulation_interval.is_none() && !self.s.move_target.is_empty() {
             let link = ctx.link().clone();
 
-            let interval = Interval::new(1000 / ANIMATION_FPS, move || {
-                link.send_message(Msg::AnimationFrame);
+            let interval = Interval::new(1000 / SIMULATION_FPS, move || {
+                link.send_message(Msg::SimulationFrame);
             });
 
-            self.animation_interval = Some(interval);
+            self.simulation_interval = Some(interval);
         }
 
         changed
@@ -1434,8 +1463,14 @@ impl Map {
                 self.on_wheel(e)?;
                 Ok(true)
             }
-            Msg::AnimationFrame => {
-                self.interpolate_movement();
+            Msg::AnimationFrame(result) => {
+                let _ = result?;
+                self.s.animation_frame = None;
+                self.redraw()?;
+                Ok(false)
+            }
+            Msg::SimulationFrame => {
+                self.simulation_frame();
                 self.s.redraw = true;
                 Ok(true)
             }
@@ -1586,7 +1621,7 @@ impl Map {
         self.objects = body
             .objects
             .iter()
-            .filter_map(|object| LocalObject::new(PeerId::ZERO, object))
+            .filter_map(|object| Object::new(PeerId::ZERO, object))
             .collect();
 
         let mut order = self.order.borrow_mut();
@@ -1601,7 +1636,7 @@ impl Map {
         }
 
         for (peer_id, object) in body.peer_objects {
-            let Some(object) = LocalObject::new(peer_id, &object) else {
+            let Some(object) = Object::new(peer_id, &object) else {
                 continue;
             };
 
@@ -1686,7 +1721,7 @@ impl Map {
                 let mut order = self.order.borrow_mut();
 
                 for object in objs {
-                    let Some(object) = LocalObject::new(peer_id, &object) else {
+                    let Some(object) = Object::new(peer_id, &object) else {
                         continue;
                     };
 
@@ -1817,7 +1852,7 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 
-        let Some(object) = LocalObject::new(id.peer_id, &object) else {
+        let Some(object) = Object::new(id.peer_id, &object) else {
             return false;
         };
 
@@ -1934,7 +1969,9 @@ impl Map {
                     break 'done hit.id;
                 }
 
-                if self.s.selected.is_zero() || hit.is_token() {
+                let selected = objects.get(self.s.selected);
+
+                if selected.is_none() || selected.is_some_and(|o| !o.is_token()) || hit.is_token() {
                     update = self.s.select_object(
                         &self.channel,
                         ctx,
@@ -2108,7 +2145,6 @@ impl Map {
         let key = ev.key();
 
         match key.as_str() {
-            "Enter" => Ok(self.accept(ctx)),
             "Escape" => Ok(self.cancel()),
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
@@ -2128,6 +2164,7 @@ impl Map {
 
                 Ok(true)
             }
+            "Enter" if self.s.modal.is_none() => Ok(self.accept(ctx)),
             "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
             "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(ctx, self.s.selected)),
             "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
@@ -2218,7 +2255,10 @@ impl Map {
         true
     }
 
-    fn interpolate_movement(&mut self) {
+    /// Routine responsible for simulating objects that are in motion.
+    ///
+    /// This is called at a rate of [`SIMULATION_FPS`].
+    fn simulation_frame(&mut self) {
         let mut objects = self.objects.borrow_mut();
 
         for o in objects.values_mut() {
@@ -2247,7 +2287,7 @@ impl Map {
                     break 'move_done;
                 }
 
-                let step = speed / ANIMATION_FPS as f32;
+                let step = speed / SIMULATION_FPS as f32;
                 let move_distance = step.min(distance);
                 let ratio = move_distance / distance;
 
@@ -2276,7 +2316,7 @@ impl Map {
         }
 
         if self.s.move_target.is_empty() {
-            self.animation_interval = None;
+            self.simulation_interval = None;
         }
     }
 
@@ -2546,6 +2586,7 @@ impl Map {
             order.reorder(old_group, old_sort, **o_group, &o_sort[..], id);
         }
 
+        self.s.redraw = true;
         Ok(true)
     }
 

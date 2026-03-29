@@ -121,7 +121,7 @@ impl GroupSettings {
                 self.channel = channel?;
 
                 if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+                    return Ok(false);
                 }
 
                 self._list_settings = self

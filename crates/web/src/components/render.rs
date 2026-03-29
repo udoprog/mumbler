@@ -5,7 +5,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::error::Error;
 use crate::images::{Icon, Images};
-use crate::objects::{LocalObject, ObjectKind};
+use crate::objects::{Object, ObjectKind};
 
 const HALF_SPAN: f64 = FRAC_PI_6;
 
@@ -51,7 +51,7 @@ pub(crate) enum RenderObjectKind<'a> {
 
 impl<'a> RenderObject<'a> {
     pub(crate) fn from_data(
-        data: &'a LocalObject,
+        data: &'a Object,
         arrow_target: Option<&'a Vec3>,
         visibility: impl FnOnce(RemoteId) -> Visibility,
     ) -> Option<Self> {

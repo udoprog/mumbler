@@ -94,17 +94,17 @@ impl Objects {
 
 #[derive(Default)]
 pub(crate) struct ObjectsRef {
-    values: HashMap<RemoteId, LocalObject>,
+    values: HashMap<RemoteId, Object>,
 }
 
 impl ObjectsRef {
     #[inline]
-    pub(crate) fn get(&self, id: RemoteId) -> Option<&LocalObject> {
+    pub(crate) fn get(&self, id: RemoteId) -> Option<&Object> {
         self.values.get(&id)
     }
 
     #[inline]
-    pub(crate) fn values(&self) -> impl Iterator<Item = &LocalObject> {
+    pub(crate) fn values(&self) -> impl Iterator<Item = &Object> {
         self.values.values()
     }
 
@@ -129,22 +129,22 @@ impl ObjectsRef {
     }
 
     #[inline]
-    pub(crate) fn remove(&mut self, id: RemoteId) -> Option<LocalObject> {
+    pub(crate) fn remove(&mut self, id: RemoteId) -> Option<Object> {
         self.values.remove(&id)
     }
 
     #[inline]
-    pub(crate) fn insert(&mut self, object: LocalObject) -> Option<LocalObject> {
+    pub(crate) fn insert(&mut self, object: Object) -> Option<Object> {
         self.values.insert(object.id, object)
     }
 
     #[inline]
-    pub(crate) fn get_mut(&mut self, id: RemoteId) -> Option<&mut LocalObject> {
+    pub(crate) fn get_mut(&mut self, id: RemoteId) -> Option<&mut Object> {
         self.values.get_mut(&id)
     }
 
     #[inline]
-    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut LocalObject> {
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut Object> {
         self.values.values_mut()
     }
 
@@ -187,11 +187,11 @@ impl ObjectsRef {
     }
 }
 
-impl FromIterator<LocalObject> for Objects {
+impl FromIterator<Object> for Objects {
     #[inline]
     fn from_iter<I>(iter: I) -> Self
     where
-        I: IntoIterator<Item = LocalObject>,
+        I: IntoIterator<Item = Object>,
     {
         let mutable = ObjectsRef {
             values: iter.into_iter().map(|o| (o.id, o)).collect(),
@@ -405,7 +405,7 @@ pub(crate) enum ObjectKind {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct LocalObject {
+pub(crate) struct Object {
     pub(crate) id: RemoteId,
     pub(crate) group: State<RemoteId>,
     pub(crate) name: State<String>,
@@ -414,7 +414,7 @@ pub(crate) struct LocalObject {
     pub(crate) kind: ObjectKind,
 }
 
-impl LocalObject {
+impl Object {
     #[inline]
     pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
         let kind = match o.ty {
