@@ -175,6 +175,12 @@ struct MapState {
     move_target: HashMap<RemoteId, Vec3>,
     arrow_target: HashMap<RemoteId, Vec3>,
     animation_frame: Option<AnimationFrame>,
+    zoom: State<f32>,
+    pan: State<Vec3>,
+    mumble_object: State<RemoteId>,
+    mumble_follow: State<bool>,
+    room: State<StableId>,
+    name: State<String>,
 }
 
 impl MapState {
@@ -194,7 +200,53 @@ impl MapState {
             move_target: HashMap::default(),
             arrow_target: HashMap::default(),
             animation_frame: Option::default(),
+            zoom: State::new(2.0),
+            pan: State::new(Vec3::ZERO),
+            mumble_object: State::new(RemoteId::ZERO),
+            mumble_follow: State::new(false),
+            room: State::new(StableId::ZERO),
+            name: State::new(String::new()),
         }
+    }
+
+    fn display(&self) -> &str {
+        if self.name.is_empty() {
+            "You"
+        } else {
+            &self.name
+        }
+    }
+
+    fn initialize(&mut self, props: api::Properties) {
+        *self.zoom = 2.0;
+        *self.pan = Vec3::ZERO;
+        *self.mumble_object = RemoteId::ZERO;
+        *self.mumble_follow = false;
+        *self.room = StableId::ZERO;
+        *self.name = String::new();
+
+        for (key, value) in props {
+            self.update(key, value);
+        }
+    }
+
+    fn update(&mut self, key: Key, value: Value) -> bool {
+        match key {
+            Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
+            Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
+            Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
+            Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
+            Key::ROOM => self.room.update(*value.as_stable_id()),
+            Key::PEER_NAME => self.name.update(value.as_str().to_owned()),
+            _ => false,
+        }
+    }
+
+    fn world_values(&self) -> Vec<(Key, Value)> {
+        let mut values = Vec::new();
+        values.push((Key::SCALE, Value::from(*self.zoom)));
+        values.push((Key::PAN, Value::from(*self.pan)));
+        values
     }
 
     fn look_at(&mut self, objects: &mut ObjectsRef, from: Vec3, to: Vec3) {
@@ -217,7 +269,6 @@ impl MapState {
         channel: &ws::Channel,
         ctx: &Context<Map>,
         id: RemoteId,
-        config: &mut Config,
         objects: &ObjectsRef,
     ) -> bool {
         if self.selected == id {
@@ -236,7 +287,7 @@ impl MapState {
             self.modal = None;
         }
 
-        if !*config.mumble_follow || *config.mumble_object == id {
+        if !*self.mumble_follow || *self.mumble_object == id {
             return true;
         }
 
@@ -244,7 +295,7 @@ impl MapState {
             return true;
         }
 
-        *config.mumble_object = id;
+        *self.mumble_object = id;
 
         self._toggle_mumble_request =
             channel.updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(id.id))]);
@@ -394,67 +445,6 @@ impl Default for Cache {
     }
 }
 
-pub(crate) struct Config {
-    pub(crate) zoom: State<f32>,
-    pub(crate) pan: State<Vec3>,
-    pub(crate) mumble_object: State<RemoteId>,
-    pub(crate) mumble_follow: State<bool>,
-    pub(crate) room: State<StableId>,
-    pub(crate) name: State<String>,
-}
-
-impl Config {
-    fn display(&self) -> &str {
-        if self.name.is_empty() {
-            "You"
-        } else {
-            &self.name
-        }
-    }
-
-    fn from_config(props: api::Properties) -> Self {
-        let mut this = Self::default();
-
-        for (key, value) in props {
-            this.update(key, value);
-        }
-
-        this
-    }
-
-    fn update(&mut self, key: Key, value: Value) -> bool {
-        match key {
-            Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
-            Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
-            Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
-            Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
-            Key::ROOM => self.room.update(*value.as_stable_id()),
-            Key::PEER_NAME => self.name.update(value.as_str().to_owned()),
-            _ => false,
-        }
-    }
-
-    fn world_values(&self) -> Vec<(Key, Value)> {
-        let mut values = Vec::new();
-        values.push((Key::SCALE, Value::from(*self.zoom)));
-        values.push((Key::PAN, Value::from(*self.pan)));
-        values
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            zoom: State::new(2.0),
-            pan: State::new(Vec3::ZERO),
-            mumble_object: State::new(RemoteId::ZERO),
-            mumble_follow: State::new(false),
-            room: State::new(StableId::ZERO),
-            name: State::new(String::new()),
-        }
-    }
-}
-
 struct DropImage {
     id: NonZeroU32,
     _onerror: Closure<dyn FnMut()>,
@@ -538,7 +528,6 @@ pub(crate) struct Map {
     _update_world: ws::Request,
     simulation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
-    config: Config,
     drag_over: Option<DragOver>,
     dropped_images: Vec<DropImage>,
     images: Images,
@@ -684,7 +673,6 @@ impl Component for Map {
             action: None,
             simulation_interval: None,
             canvas: None,
-            config: Config::default(),
             drag_over: None,
             dropped_images: Vec::new(),
             images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
@@ -735,13 +723,13 @@ impl Component for Map {
         }
 
         if self.s.update_config {
-            self._update_world = self.channel.updates(ctx, self.config.world_values());
+            self._update_world = self.channel.updates(ctx, self.s.world_values());
             self.s.update_config = false;
             changed = true;
         }
 
         if self.s.update_cache {
-            let room_id = self.peers.to_remote_id(&self.config.room);
+            let room_id = self.peers.to_remote_id(&self.s.room);
             let objects = self.objects.borrow();
             self.cache.update(room_id, &objects);
 
@@ -756,8 +744,8 @@ impl Component for Map {
             self.view = ViewTransform::new(
                 self.view.width,
                 self.view.height,
-                *self.config.zoom,
-                &self.config.pan,
+                *self.s.zoom,
+                &self.s.pan,
                 &self.cache.extent,
             );
 
@@ -792,45 +780,7 @@ impl Component for Map {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let objects = self.objects.borrow();
-
-        let footer;
-
-        if let Some(o) = objects.get(self.s.selected)
-            && let Some(transform) = o.as_transform()
-        {
-            let position = &transform.position;
-            let front = &transform.front;
-            let position = format!(
-                "POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}",
-                position.x, position.y, position.z
-            );
-            let front = format!(
-                "FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}",
-                front.x, front.y, front.z
-            );
-
-            let zoom = *self.config.zoom;
-            let pan = *self.config.pan;
-            let zoom = format!("ZOOM:{:.02}", zoom);
-            let pan = format!("PAN: X:{:.02}, Y:{:.02}, Z:{:.02}", pan.x, pan.y, pan.z);
-
-            footer = html! {
-                <div class="row">
-                    <div class="col-12 footer">{position}{" / "}{front}{" / "}{zoom}{" / "}{pan}</div>
-                </div>
-            };
-        } else {
-            let zoom = *self.config.zoom;
-            let pan = *self.config.pan;
-            let zoom = format!("ZOOM:{:.02}", zoom);
-            let pan = format!("PAN: X:{:.02}, Y:{:.02}, Z:{:.02}", pan.x, pan.y, pan.z);
-
-            footer = html! {
-                <div class="row">
-                    <div class="col-12 footer">{zoom}{" / "}{pan}</div>
-                </div>
-            };
-        }
+        let footer = self.footer(&objects);
 
         let object_list_header = {
             let o = objects.get(self.s.selected);
@@ -895,9 +845,7 @@ impl Component for Map {
             let o = objects.get(self.s.selected);
 
             let mumble = {
-                let is_mumble = o
-                    .map(|o| *self.config.mumble_object == o.id)
-                    .unwrap_or_default();
+                let is_mumble = o.map(|o| *self.s.mumble_object == o.id).unwrap_or_default();
 
                 let onclick = o.filter(|o| o.is_interactive()).map(|o| {
                     let id = o.id;
@@ -1001,10 +949,10 @@ impl Component for Map {
             let follow = {
                 let class = classes! {
                     "btn", "square",
-                    self.config.mumble_follow.then_some("success"),
+                    self.s.mumble_follow.then_some("success"),
                 };
 
-                let title = if *self.config.mumble_follow {
+                let title = if *self.s.mumble_follow {
                     "Disable MumbleLink selection following"
                 } else {
                     "Enable MumbleLink selection following"
@@ -1067,7 +1015,7 @@ impl Component for Map {
                 <div class="list" key="players">
                     <section class="list-content">
                         <Icon name="user" invert={true} small={true} />
-                        <span class="list-label">{self.config.display()}</span>
+                        <span class="list-label">{self.s.display()}</span>
                     </section>
 
                     {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
@@ -1112,7 +1060,7 @@ impl Component for Map {
                                     key={format!("{}", RemoteId::ZERO)}
                                     group={RemoteId::ZERO}
                                     drag_over={self.drag_over}
-                                    mumble_object={*self.config.mumble_object}
+                                    mumble_object={*self.s.mumble_object}
                                     selected={self.s.selected}
                                     onselect={self.object_onselect.clone()}
                                     onopen={self.object_onopen.clone()}
@@ -1138,7 +1086,7 @@ impl Component for Map {
                         position={menu.position}
                         object_id={menu.object_id}
                         is_hidden={objects.get(menu.object_id).map(|o| o.is_hidden()).unwrap_or_default()}
-                        mumble_object={*self.config.mumble_object}
+                        mumble_object={*self.s.mumble_object}
                         onclose={menu.onclose.clone()}
                         onsettings={menu.onsettings.clone()}
                         onhidden={menu.onhidden.clone()}
@@ -1160,6 +1108,62 @@ impl Component for Map {
 }
 
 impl Map {
+    fn footer(&self, objects: &ObjectsRef) -> Html {
+        let mut parts = Vec::with_capacity(5);
+
+        if let Some(mouse) = self.mouse {
+            parts.push(format!(
+                "MOUSE: X:{:.02}, Y:{:.02}, Z:{:.02}",
+                mouse.x, mouse.y, mouse.z
+            ));
+        }
+
+        let zoom = *self.s.zoom;
+        parts.push(format!("ZOOM:{:.02}", zoom));
+
+        let pan = *self.s.pan;
+        parts.push(format!(
+            "PAN: X:{:.02}, Y:{:.02}, Z:{:.02}",
+            pan.x, pan.y, pan.z
+        ));
+
+        if let Some(o) = objects.get(self.s.selected)
+            && let Some(transform) = o.as_transform()
+        {
+            let position = &transform.position;
+            parts.push(format!(
+                "POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}",
+                position.x, position.y, position.z
+            ));
+
+            let front = &transform.front;
+            parts.push(format!(
+                "FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}",
+                front.x, front.y, front.z
+            ));
+        }
+
+        let mut html_parts = Vec::new();
+
+        let iter = parts.into_iter();
+        let mut first = true;
+
+        for part in iter {
+            if !first {
+                html_parts.push(html!(<span class="separator">{" | "}</span>));
+            }
+
+            html_parts.push(html!({ part }));
+            first = false;
+        }
+
+        html! {
+            <div class="row">
+                <div class="col-12 footer">{ for html_parts }</div>
+            </div>
+        }
+    }
+
     fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
         let world_pos = self.view.to_world(ev.offset());
 
@@ -1491,9 +1495,7 @@ impl Map {
 
                 let objects = self.objects.borrow();
 
-                let update =
-                    self.s
-                        .select_object(&self.channel, ctx, id, &mut self.config, &objects);
+                let update = self.s.select_object(&self.channel, ctx, id, &objects);
 
                 Ok(update)
             }
@@ -1516,11 +1518,11 @@ impl Map {
                 }
             }
             Msg::ToggleFollowMumbleSelection => {
-                *self.config.mumble_follow = !*self.config.mumble_follow;
+                *self.s.mumble_follow = !*self.s.mumble_follow;
 
                 self._set_mumble_follow = self.channel.updates(
                     ctx,
-                    [(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
+                    [(Key::MUMBLE_FOLLOW, Value::from(*self.s.mumble_follow))],
                 );
                 Ok(true)
             }
@@ -1611,8 +1613,8 @@ impl Map {
                 self.view = ViewTransform::new(
                     width,
                     height,
-                    *self.config.zoom,
-                    &self.config.pan,
+                    *self.s.zoom,
+                    &self.s.pan,
                     &self.cache.extent,
                 );
 
@@ -1626,7 +1628,7 @@ impl Map {
         tracing::debug!(?body, "Initialize");
 
         self.peers.public_key = body.public_key;
-        self.config = Config::from_config(body.props);
+        self.s.initialize(body.props);
 
         self.objects = body
             .objects
@@ -1642,7 +1644,7 @@ impl Map {
         self.peers.clear();
 
         for peer in body.peers {
-            self.peers.insert(peer, &self.config.room);
+            self.peers.insert(peer, &self.s.room);
         }
 
         for (peer_id, object) in body.peer_objects {
@@ -1679,12 +1681,12 @@ impl Map {
                     return Ok(false);
                 }
 
-                let changed = self.config.update(key, value);
+                let changed = self.s.update(key, value);
 
                 if changed {
                     if matches!(key, Key::ROOM) {
                         for peer in self.peers.iter_mut() {
-                            peer.update_config(&self.config.room);
+                            peer.update_config(&self.s.room);
                         }
 
                         self.s.update_cache = true;
@@ -1720,7 +1722,7 @@ impl Map {
                 true
             }
             RemoteUpdateBody::PeerConnected { peer } => {
-                self.peers.insert(peer, &self.config.room);
+                self.peers.insert(peer, &self.s.room);
                 true
             }
             RemoteUpdateBody::PeerJoin {
@@ -1776,7 +1778,7 @@ impl Map {
                     return false;
                 };
 
-                peer.update(key, value, &self.config.room);
+                peer.update(key, value, &self.s.room);
                 true
             }
             RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
@@ -1898,13 +1900,8 @@ impl Map {
         order.remove(&o);
 
         if self.s.selected == id {
-            self.s.select_object(
-                &self.channel,
-                ctx,
-                RemoteId::ZERO,
-                &mut self.config,
-                &objects,
-            );
+            self.s
+                .select_object(&self.channel, ctx, RemoteId::ZERO, &objects);
         }
 
         self.s.modal = None;
@@ -1957,9 +1954,11 @@ impl Map {
             return false;
         };
 
+        let new_selected;
+        let start_translate;
         let mut update = false;
 
-        let id = {
+        {
             let order = self.order.borrow();
             let objects = self.objects.borrow();
 
@@ -1968,42 +1967,25 @@ impl Map {
                 .flat_map(|id| objects.get(id))
                 .find(|o| o.as_click_geometry().intersects(mouse));
 
-            self.s.redraw = hit.is_some();
+            let selected = objects.get(self.s.selected);
 
-            'done: {
-                let Some(hit) = hit else {
-                    break 'done self.s.selected;
-                };
+            let s_is_token = selected.is_some_and(|o| o.is_token());
+            let s_id = selected.map(|o| o.id);
+            let h_id = hit.map(|o| o.id);
+            let h_is_not_token = hit.is_some_and(|o| !o.is_token());
 
-                if hit.id == self.s.selected {
-                    break 'done hit.id;
-                }
+            new_selected = (s_id != h_id && !s_is_token).then_some(h_id.unwrap_or(RemoteId::ZERO));
+            start_translate = s_id == h_id || s_is_token || h_is_not_token;
 
-                let selected = objects.get(self.s.selected);
-
-                if selected.is_none() || selected.is_some_and(|o| !o.is_token()) || hit.is_token() {
-                    update = self.s.select_object(
-                        &self.channel,
-                        ctx,
-                        hit.id,
-                        &mut self.config,
-                        &objects,
-                    );
-
-                    // For token selection, we want to avoid "stutter", so we
-                    // don't immediately start translating.
-                    if hit.is_token() {
-                        return update;
-                    }
-
-                    break 'done hit.id;
-                }
-
-                self.s.selected
+            if let Some(id) = new_selected {
+                update = self.s.select_object(&self.channel, ctx, id, &objects);
             }
-        };
+        }
 
-        update |= self.start_translate(id);
+        if start_translate {
+            update |= self.start_translate(self.s.selected);
+        }
+
         update
     }
 
@@ -2454,7 +2436,7 @@ impl Map {
         if let Some(a) = self.pan_anchor {
             let d = self.view.to_world(ev.client()) - self.view.to_world(a);
 
-            *self.config.pan = *self.config.pan - d;
+            *self.s.pan = *self.s.pan - d;
             self.pan_anchor = Some(ev.client());
 
             self.s.update_view = true;
@@ -2512,21 +2494,22 @@ impl Map {
             1.0 / ZOOM_FACTOR
         };
 
-        let zoom = (*self.config.zoom * delta).clamp(0.1, 20.0);
+        let zoom = (*self.s.zoom * delta).clamp(0.1, 20.0);
 
         let after = ViewTransform::new(
             self.view.width,
             self.view.height,
             zoom,
-            &self.config.pan,
+            &self.s.pan,
             &self.cache.extent,
         );
 
         let mut update = false;
-        update |= self.config.zoom.update(zoom);
-        update |= self.config.pan.update(
-            *self.config.pan + (self.view.to_world(ev.offset()) - after.to_world(ev.offset())),
-        );
+        update |= self.s.zoom.update(zoom);
+        update |= self
+            .s
+            .pan
+            .update(*self.s.pan + (self.view.to_world(ev.offset()) - after.to_world(ev.offset())));
 
         if !update {
             return Ok(());
@@ -2612,13 +2595,13 @@ impl Map {
 
         self.s.context_menu = None;
 
-        let update = if *self.config.mumble_object == id {
+        let update = if *self.s.mumble_object == id {
             RemoteId::ZERO
         } else {
             id
         };
 
-        *self.config.mumble_object = update;
+        *self.s.mumble_object = update;
 
         self.s._toggle_mumble_request = self
             .channel
@@ -2756,7 +2739,7 @@ impl Map {
         }
 
         if self.cache.show_grid {
-            render::draw_grid(&cx, &self.view, &self.cache.extent, *self.config.zoom);
+            render::draw_grid(&cx, &self.view, &self.cache.extent, *self.s.zoom);
         }
 
         let selected = self.s.selected;
