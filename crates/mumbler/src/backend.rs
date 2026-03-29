@@ -13,6 +13,7 @@ use api::{
     RemoteUpdateBody, Role, StableId, Transform, Type, UpdateBody, Value,
 };
 use musli_web::api::ChannelId;
+use musli_web::ws::Channels;
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -160,6 +161,7 @@ pub(crate) struct MumblelinkState {
 }
 
 struct Inner {
+    channels: Channels,
     ids: AtomicIds,
     database: Database,
     #[allow(unused)]
@@ -290,6 +292,7 @@ impl Backend {
 
         Ok(Self {
             inner: Arc::new(Inner {
+                channels: Channels::default(),
                 ids: AtomicIds::new(rand::random()),
                 database,
                 paths,
@@ -318,6 +321,11 @@ impl Backend {
                 hidden: BlockingRwLock::new(hidden),
             }),
         })
+    }
+
+    #[inline]
+    pub(crate) fn channels(&self) -> &Channels {
+        &self.inner.channels
     }
 
     /// Generate a new unique identifier.

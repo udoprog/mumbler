@@ -275,10 +275,12 @@ pub(super) async fn entry(
 
             let database_updates_notify = Arc::new(Notify::new());
 
-            let mut server = axum08::server(
+            let server = axum08::server(
                 socket,
                 Handler::new(backend.clone(), database_updates_notify.clone()),
             );
+
+            let mut server = server.with_channel_allocator(backend.channels().clone());
 
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
