@@ -9,7 +9,7 @@ use yew::{Html, html};
 use crate::components::render::Visibility;
 use crate::state::State;
 
-const DEFAULT_SPEED: f32 = 5.0;
+const DEFAULT_SPEED: f32 = 2.5;
 const DEFAULT_STATIC_WIDTH: f32 = 1.0;
 const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
 const DEFAULT_TOKEN_RADIUS: f32 = 0.25;

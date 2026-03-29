@@ -480,17 +480,20 @@ fn draw_image(
     let iw = img.natural_width() as f64;
     let ih = img.natural_height() as f64;
 
-    let sx = (hw * 2.0) / iw;
-    let sy = (hh * 2.0) / ih;
-    let scale = sx.max(sy);
-    let dw = iw * scale;
-    let dh = ih * scale;
+    // Destination width / height in canvas units which already includes zoom.
+    let dw = hw * 2.0;
+    let dh = hh * 2.0;
 
-    cx.save();
-    cx.rect(-hw, -hh, hw * 2.0, hh * 2.0);
-    cx.clip();
+    // Compute scale to cover the destination rect (center-crop)
+    let scale = (dw / iw).max(dh / ih);
+    let sw = dw / scale;
+    let sh = dh / scale;
+    let sx0 = (iw - sw) / 2.0;
+    let sy0 = (ih - sh) / 2.0;
 
-    cx.draw_image_with_html_image_element_and_dw_and_dh(img, -dw / 2.0, -dh / 2.0, dw, dh)?;
-    cx.restore();
+    cx.draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        img, sx0, sy0, sw, sh, -hw, -hh, dw, dh,
+    )?;
+
     Ok(())
 }
