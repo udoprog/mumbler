@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use api::{Color, Key, PublicKey, RemoteId, RemoteUpdateBody, Value};
 use musli_web::api::ChannelId;
 use musli_web::web::Packet;
@@ -23,7 +24,6 @@ pub(crate) enum Msg {
     NameChanged(Event),
     RadiusChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
-    SelectColor(api::Color),
     SpeedChanged(Event),
     ObjectUpdate(Result<Packet<api::ObjectUpdate>, ws::Error>),
     ImageLoaded(Result<(), Error>),
@@ -53,7 +53,7 @@ pub(crate) struct TokenSettings {
     _select_image: ws::Request,
     _update_name: ws::Request,
     _update_radius: ws::Request,
-    color: State<Option<api::Color>>,
+    color: State<Option<Color>>,
     image: State<RemoteId>,
     public_key: PublicKey,
     name: State<String>,
@@ -256,21 +256,18 @@ impl TokenSettings {
             }
             Msg::ColorChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
+                let color = input.value();
+                let color = Color::from_hex(&color).context("invalid color hex string")?;
 
-                let hex_string = input.value();
-                if let Some(color) = api::Color::from_hex(&hex_string) {
-                    ctx.link().send_message(Msg::SelectColor(color));
+                if !self.color.update(Some(color)) {
+                    return Ok(false);
                 }
-                Ok(false)
-            }
-            Msg::SelectColor(color) => {
-                if self.color.update(Some(color)) {
-                    self._select_color = self.channel.object_updates(
-                        ctx,
-                        ctx.props().id.id,
-                        [(Key::COLOR, self.color.value())],
-                    );
-                }
+
+                self._select_color = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::COLOR, self.color.value())],
+                );
 
                 Ok(true)
             }
@@ -278,14 +275,16 @@ impl TokenSettings {
                 let input = into_target!(e, HtmlInputElement);
 
                 if !self.name.update(input.value()) {
-                    self._update_name = self.channel.object_updates(
-                        ctx,
-                        ctx.props().id.id,
-                        [(Key::NAME, self.name.deref_value())],
-                    );
+                    return Ok(false);
                 }
 
-                Ok(false)
+                self._update_name = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::NAME, self.name.deref_value())],
+                );
+
+                Ok(true)
             }
             Msg::RadiusChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);

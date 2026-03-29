@@ -220,14 +220,17 @@ impl Selection {
         };
 
         let c = self.center();
+
         let anchor_x = dir
             .x
             .anchor(self.pos.x, self.w, new_w, c.x)
             .clamp(0.0, bounds.x);
+
         let anchor_y = dir
             .y
             .anchor(self.pos.y, self.h, new_h, c.y)
             .clamp(0.0, bounds.y);
+
         let max_w = dir.x.max_extent(self.pos.x, self.w, anchor_x, bounds.x);
         let max_h = dir.y.max_extent(self.pos.y, self.h, anchor_y, bounds.y);
 
@@ -246,6 +249,7 @@ impl Selection {
             .x
             .anchor(self.pos.x, self.w, final_w, c.x)
             .clamp(0.0, bounds.x);
+
         let final_y = dir
             .y
             .anchor(self.pos.y, self.h, final_h, c.y)
@@ -269,16 +273,16 @@ impl Selection {
     }
 
     fn to_crop_region(self, client: Vec2, natural: Vec2) -> Option<api::CropRegion> {
-        let scale_x = if client.x > 0.0 {
-            natural.x / client.x
-        } else {
-            1.0
-        };
-        let scale_y = if client.y > 0.0 {
-            natural.y / client.y
-        } else {
-            1.0
-        };
+        if !(client.x > 0.0) {
+            return None;
+        }
+
+        if !(client.y > 0.0) {
+            return None;
+        }
+
+        let scale_x = natural.x / client.x;
+        let scale_y = natural.y / client.y;
 
         let x1 = (self.pos.x * scale_x).clamp(0.0, natural.x) as u32;
         let y1 = (self.pos.y * scale_y).clamp(0.0, natural.y) as u32;
@@ -485,13 +489,13 @@ impl CropModal {
                 Ok(true)
             }
             Msg::Rescale => {
-                let Some(onratio) = &ctx.props().onratio else {
+                let Some(rescale) = &ctx.props().onratio else {
                     return Ok(false);
                 };
 
                 let bounds = self.image_bounds();
 
-                onratio.emit(bounds.x / bounds.y);
+                rescale.emit(bounds.x / bounds.y);
 
                 let selection = Selection::max_centered(bounds, ctx.props().ratio);
                 self.drag = Some(selection.to_drag());

@@ -318,26 +318,31 @@ impl StaticSettings {
                 Ok(false)
             }
             Msg::SelectColor(color) => {
-                *self.color = Some(color);
+                if !self.color.update(Some(color)) {
+                    return Ok(false);
+                }
+
                 self._select_color = self.channel.object_updates(
                     ctx,
                     ctx.props().id.id,
                     [(Key::COLOR, self.color.value())],
                 );
+
                 Ok(true)
             }
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
 
-                if self.name.update(input.value()) {
-                    self._update_name = self.channel.object_updates(
-                        ctx,
-                        ctx.props().id.id,
-                        [(Key::NAME, self.name.deref_value())],
-                    );
+                if !self.name.update(input.value()) {
+                    return Ok(false);
                 }
 
-                Ok(false)
+                self._update_name = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::NAME, self.name.deref_value())],
+                );
+                Ok(true)
             }
             Msg::WidthChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
