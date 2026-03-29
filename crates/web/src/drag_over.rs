@@ -1,6 +1,6 @@
 use api::RemoteId;
 
-use crate::hierarchy::HierarchyRef;
+use crate::hierarchy::OrderRef;
 use crate::objects::ObjectsRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +53,7 @@ impl DragOver {
         }
     }
 
-    pub(crate) fn new_sort(self, objects: &ObjectsRef, order: &HierarchyRef) -> Option<Vec<u8>> {
+    pub(crate) fn new_sort(self, objects: &ObjectsRef, order: &OrderRef) -> Option<Vec<u8>> {
         let target = objects.get(self.target)?;
 
         let new_sort = match self.drag {

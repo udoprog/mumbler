@@ -68,6 +68,19 @@ where
     }
 }
 
+impl State<String> {
+    /// Update a string in-place.
+    pub(crate) fn update_str(&mut self, new: &str) -> bool {
+        if self.0 == new {
+            return false;
+        }
+
+        self.0.clear();
+        self.0.push_str(new);
+        true
+    }
+}
+
 pub(crate) trait FloatState: Copy + Sub<Output = Self> + PartialEq + PartialOrd {
     const EPSILON: Self;
 

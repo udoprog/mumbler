@@ -3,7 +3,7 @@ use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
 use crate::drag_over::DragOver;
-use crate::hierarchy::Hierarchy;
+use crate::hierarchy::Order;
 use crate::objects::{ObjectKind, Objects};
 
 use super::Icon;
@@ -28,13 +28,13 @@ pub(crate) struct Props {
 }
 
 pub(crate) enum Msg {
-    SetHierarchy(Hierarchy),
+    SetHierarchy(Order),
     SetObjects(Objects),
 }
 
 pub(crate) struct ObjectList {
-    order: Hierarchy,
-    _order_handle: ContextHandle<Hierarchy>,
+    order: Order,
+    _order_handle: ContextHandle<Order>,
     objects: Objects,
     _objects_handle: ContextHandle<Objects>,
 }
@@ -46,7 +46,7 @@ impl Component for ObjectList {
     fn create(ctx: &Context<Self>) -> Self {
         let (order, _order_handle) = ctx
             .link()
-            .context::<Hierarchy>(ctx.link().callback(Msg::SetHierarchy))
+            .context::<Order>(ctx.link().callback(Msg::SetHierarchy))
             .expect("hirearchy context not found");
 
         let (objects, _objects_handle) = ctx

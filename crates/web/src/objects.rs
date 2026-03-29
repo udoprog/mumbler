@@ -243,7 +243,7 @@ impl TokenObject {
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
             Key::TRANSFORM => self
                 .transform
@@ -302,7 +302,7 @@ impl StaticObject {
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, v: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, v: &Value) -> bool {
         match key {
             Key::TRANSFORM => self
                 .transform
@@ -310,7 +310,7 @@ impl StaticObject {
             Key::LOCKED => self.locked.update(v.as_bool()),
             Key::IMAGE_ID => self.image.update(v.as_id()),
             Key::COLOR => self.color.update(v.as_color()),
-            Key::NAME => self.name.update(v.into_string()),
+            Key::NAME => self.name.update(v.as_str().to_owned()),
             Key::HIDDEN => self.hidden.update(v.as_bool()),
             Key::STATIC_WIDTH => self
                 .width
@@ -337,7 +337,7 @@ impl GroupObject {
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
             Key::LOCKED => self.locked.update(value.as_bool()),
             Key::EXPANDED => self.expanded.update(value.as_bool()),
@@ -374,7 +374,7 @@ impl RoomObject {
         }
     }
 
-    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
             Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
@@ -450,9 +450,9 @@ impl Object {
     }
 
     #[inline]
-    pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
+    pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
-            Key::NAME => self.name.update(value.into_string()),
+            Key::NAME => self.name.update_str(value.as_str()),
             Key::HIDDEN => self.hidden.update(value.as_bool()),
             Key::LOCAL_HIDDEN => self.local_hidden.update(value.as_bool()),
             Key::GROUP => self

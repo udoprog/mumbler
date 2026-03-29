@@ -23,7 +23,7 @@ use crate::components as c;
 use crate::components::render::{RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
-use crate::hierarchy::Hierarchy;
+use crate::hierarchy::Order;
 use crate::images::Images;
 use crate::log;
 use crate::objects::{Object, ObjectKind, ObjectRef, Objects, ObjectsRef};
@@ -617,7 +617,7 @@ pub(crate) struct Map {
     object_onselect: Callback<RemoteId>,
     object_onopen: Callback<RemoteId>,
     objects: Objects,
-    order: Hierarchy,
+    order: Order,
     pan_anchor: Option<Canvas2>,
     peers: Peers,
     cache: Cache,
@@ -761,7 +761,7 @@ impl Component for Map {
             object_onselect: ctx.link().callback(Msg::SelectObject),
             object_onopen: ctx.link().callback(Msg::OpenObject),
             objects: Objects::default(),
-            order: Hierarchy::default(),
+            order: Order::default(),
             pan_anchor: None,
             peers: Peers::default(),
             cache: Cache::default(),
@@ -1126,7 +1126,7 @@ impl Component for Map {
                     <div class="col-3 rows">
                         {object_list_header}
                         <ContextProvider<Objects> context={self.objects.clone()}>
-                            <ContextProvider<Hierarchy> context={self.order.clone()}>
+                            <ContextProvider<Order> context={self.order.clone()}>
                                 <ObjectList
                                     key={format!("{}", RemoteId::ZERO)}
                                     group={RemoteId::ZERO}
@@ -1143,7 +1143,7 @@ impl Component for Map {
                                     onlockedtoggle={self.object_onlockedtoggle.clone()}
                                     onmumbletoggle={self.object_onmumbletoggle.clone()}
                                     />
-                            </ContextProvider<Hierarchy>>
+                            </ContextProvider<Order>>
                         </ContextProvider<Objects>>
 
                         {players}
@@ -1882,30 +1882,12 @@ impl Map {
                     return false;
                 };
 
-                let mut update = match key {
-                    Key::SORT => 'done: {
-                        let new = value.as_bytes().to_vec();
+                let mut update = false;
 
-                        let Some(old_sort) = o.sort.replace(new) else {
-                            break 'done false;
-                        };
-
-                        order.reorder(*o.group, &old_sort, *o.group, &o.sort, o.id)
-                    }
-                    Key::GROUP => 'done: {
-                        let new = RemoteId::new(o.id.peer_id, value.as_id());
-
-                        let Some(old_group) = o.group.replace(new) else {
-                            break 'done false;
-                        };
-
-                        order.reorder(old_group, &o.sort, *o.group, &o.sort, o.id)
-                    }
-                    _ => false,
-                };
+                update |= o.update(key, &value);
+                update |= order.update(o.id, key, &value);
 
                 self.s.update_cache = o.ty() == Type::ROOM;
-                update |= o.update(key, value);
                 self.s.redraw |= update;
 
                 if update {
@@ -1983,11 +1965,8 @@ impl Map {
         self.s.arrow_target.remove(&id);
         self.s.move_target.remove(&id);
 
-        let Some(o) = objects.remove(id) else {
-            return false;
-        };
-
-        order.remove(&o);
+        objects.remove(id);
+        order.remove(id);
 
         if self.s.selected == id {
             self.s.select_object(ctx, RemoteId::ZERO, &objects);
@@ -2613,33 +2592,22 @@ impl Map {
             return Ok(true);
         };
 
-        let old_group = o.group.replace(new_group);
-        let old_sort = o.sort.replace(new_sort);
-
-        if old_group.is_some() {
+        if o.group.update(new_group) {
             self._set_group =
                 self.s
                     .channel
                     .object_updates(ctx, id.id, [(Key::GROUP, o.group.id.into())]);
         }
 
-        if old_sort.is_some() {
+        if o.sort.update(new_sort) {
             self._set_sort =
                 self.s
                     .channel
                     .object_updates(ctx, id.id, [(Key::SORT, o.sort[..].into())]);
         }
 
-        if old_sort.is_some() || old_group.is_some() {
-            let old_group = old_group.unwrap_or(*o.group);
-
-            let old_sort = match &old_sort {
-                Some(old) => old,
-                None => &o.sort[..],
-            };
-
-            order.reorder(old_group, old_sort, *o.group, &o.sort[..], id);
-        }
+        tracing::warn!("reorder");
+        order.reorder(*o.group, &o.sort[..], id);
 
         self.s.redraw = true;
         Ok(true)
