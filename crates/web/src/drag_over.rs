@@ -1,7 +1,7 @@
 use api::RemoteId;
 
-use crate::hierarchy::OrderRef;
 use crate::objects::ObjectsRef;
+use crate::order::OrderRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Drag {

@@ -3,8 +3,8 @@ use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
 use crate::drag_over::DragOver;
-use crate::hierarchy::Order;
 use crate::objects::{ObjectKind, Objects};
+use crate::order::Order;
 
 use super::Icon;
 

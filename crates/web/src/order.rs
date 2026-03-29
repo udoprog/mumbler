@@ -186,14 +186,13 @@ impl OrderRef {
             return false;
         };
 
-        let old_group = o.group.replace(new_group);
-        let old_sort = o.sort.replace(new_sort.to_vec());
+        let group = o.group.replace(new_group);
+        let sort = o.sort.replace(new_sort.to_vec());
 
-        let old_group = old_group.unwrap_or(*o.group);
-        let old_sort = old_sort.as_deref().unwrap_or(&o.sort[..]);
+        let group = group.unwrap_or(*o.group);
+        let sort = sort.as_deref().unwrap_or(&o.sort[..]);
 
-        self.data
-            .reorder(old_group, &old_sort, *o.group, &o.sort[..], id)
+        self.data.reorder(group, sort, *o.group, &o.sort[..], id)
     }
 
     /// Test if the given group is empty.

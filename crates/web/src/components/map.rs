@@ -23,10 +23,10 @@ use crate::components as c;
 use crate::components::render::{RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
-use crate::hierarchy::Order;
 use crate::images::Images;
 use crate::log;
 use crate::objects::{Object, ObjectKind, ObjectRef, Objects, ObjectsRef};
+use crate::order::Order;
 use crate::peers::Peers;
 use crate::state::State;
 
@@ -1712,8 +1712,8 @@ impl Map {
             .filter_map(|object| Object::new(PeerId::ZERO, object))
             .collect();
 
-        let mut order = self.order.borrow_mut();
         let mut objects = self.objects.borrow_mut();
+        let mut order = self.order.borrow_mut();
 
         order.extend(objects.values());
 
@@ -1890,10 +1890,8 @@ impl Map {
                 self.s.update_cache = o.ty() == Type::ROOM;
                 self.s.redraw |= update;
 
-                if update {
-                    if let Some(modal) = &mut self.s.modal {
-                        modal.update(&mut objects);
-                    }
+                if update && let Some(modal) = &mut self.s.modal {
+                    modal.update(&mut objects);
                 }
 
                 update

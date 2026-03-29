@@ -5,10 +5,10 @@
 mod components;
 mod drag_over;
 mod error;
-mod hierarchy;
 mod images;
 mod log;
 mod objects;
+mod order;
 mod peers;
 mod state;
 
