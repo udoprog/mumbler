@@ -1869,17 +1869,22 @@ impl Map {
 
                 let mut update = match key {
                     Key::SORT => 'done: {
-                        let Some((_, sort)) = o.sort_mut() else {
-                            break 'done false;
-                        };
-
                         let new = value.as_bytes().to_vec();
 
-                        let Some(old) = sort.replace(new) else {
+                        let Some(old_sort) = o.sort.replace(new) else {
                             break 'done false;
                         };
 
-                        order.reorder(*o.group, &old, *o.group, o.sort(), o.id)
+                        order.reorder(*o.group, &old_sort, *o.group, &o.sort, o.id)
+                    }
+                    Key::GROUP => 'done: {
+                        let new = RemoteId::new(o.id.peer_id, value.as_id());
+
+                        let Some(old_group) = o.group.replace(new) else {
+                            break 'done false;
+                        };
+
+                        order.reorder(old_group, &o.sort, *o.group, &o.sort, o.id)
                     }
                     _ => false,
                 };
@@ -2567,7 +2572,6 @@ impl Map {
             && let Some(o) = objects.get(id)
         {
             self.s.modal = Some(Modal::Unlock { object: o.as_ref() });
-
             return Ok(true);
         }
 
@@ -2583,36 +2587,36 @@ impl Map {
             return Ok(true);
         };
 
-        let Some((o_group, o_sort)) = objects.get_mut(id).and_then(|o| o.sort_mut()) else {
+        let Some(o) = objects.get_mut(id) else {
             return Ok(true);
         };
 
-        let old_group = o_group.replace(new_group);
-        let old_sort = o_sort.replace(new_sort);
+        let old_group = o.group.replace(new_group);
+        let old_sort = o.sort.replace(new_sort);
 
         if old_group.is_some() {
             self._set_group =
                 self.s
                     .channel
-                    .object_updates(ctx, id.id, [(Key::GROUP, o_group.id.into())]);
+                    .object_updates(ctx, id.id, [(Key::GROUP, o.group.id.into())]);
         }
 
         if old_sort.is_some() {
             self._set_sort =
                 self.s
                     .channel
-                    .object_updates(ctx, id.id, [(Key::SORT, o_sort[..].into())]);
+                    .object_updates(ctx, id.id, [(Key::SORT, o.sort[..].into())]);
         }
 
         if old_sort.is_some() || old_group.is_some() {
-            let old_group = old_group.unwrap_or(**o_group);
+            let old_group = old_group.unwrap_or(*o.group);
 
             let old_sort = match &old_sort {
                 Some(old) => old,
-                None => &o_sort[..],
+                None => &o.sort[..],
             };
 
-            order.reorder(old_group, old_sort, **o_group, &o_sort[..], id);
+            order.reorder(old_group, old_sort, *o.group, &o.sort[..], id);
         }
 
         self.s.redraw = true;

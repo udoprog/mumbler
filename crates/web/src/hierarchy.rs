@@ -125,7 +125,7 @@ impl HierarchyRef {
             return false;
         }
 
-        self._remove(*object.group, object.sort(), object.id)
+        self._remove(*object.group, &object.sort, object.id)
     }
 
     /// Remove the given id from all groups.
@@ -159,7 +159,7 @@ impl HierarchyRef {
         let group = as_group(*object.group);
 
         let key = Key {
-            sort: object.sort().to_vec(),
+            sort: object.sort.to_vec(),
             id: object.id,
         };
 

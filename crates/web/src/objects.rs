@@ -218,7 +218,6 @@ pub(crate) struct TokenObject {
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
-    pub(crate) sort: State<Vec<u8>>,
 }
 
 impl TokenObject {
@@ -241,7 +240,6 @@ impl TokenObject {
                     .unwrap_or(DEFAULT_TOKEN_RADIUS),
             ),
             speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
-            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
         }
     }
 
@@ -258,7 +256,6 @@ impl TokenObject {
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
-            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             _ => false,
         }
     }
@@ -274,7 +271,6 @@ pub(crate) struct StaticObject {
     pub(crate) hidden: State<bool>,
     pub(crate) width: State<f32>,
     pub(crate) height: State<f32>,
-    pub(crate) sort: State<Vec<u8>>,
 }
 
 impl StaticObject {
@@ -303,7 +299,6 @@ impl StaticObject {
                     .as_f32()
                     .unwrap_or(DEFAULT_STATIC_HEIGHT),
             ),
-            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
         }
     }
 
@@ -323,7 +318,6 @@ impl StaticObject {
             Key::STATIC_HEIGHT => self
                 .height
                 .update(v.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
-            Key::SORT => self.sort.update(v.as_bytes().to_vec()),
             _ => false,
         }
     }
@@ -332,7 +326,6 @@ impl StaticObject {
 #[derive(Debug, PartialEq)]
 pub(crate) struct GroupObject {
     pub(crate) locked: State<bool>,
-    pub(crate) sort: State<Vec<u8>>,
     pub(crate) expanded: State<bool>,
 }
 
@@ -340,7 +333,6 @@ impl GroupObject {
     pub(crate) fn from_remote(o: &RemoteObject) -> Self {
         Self {
             locked: State::new(o.props.get(Key::LOCKED).as_bool()),
-            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             expanded: State::new(o.props.get(Key::EXPANDED).as_bool()),
         }
     }
@@ -348,7 +340,6 @@ impl GroupObject {
     pub(crate) fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
             Key::LOCKED => self.locked.update(value.as_bool()),
-            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             Key::EXPANDED => self.expanded.update(value.as_bool()),
             _ => false,
         }
@@ -411,6 +402,7 @@ pub(crate) struct Object {
     pub(crate) name: State<String>,
     pub(crate) hidden: State<bool>,
     pub(crate) local_hidden: State<bool>,
+    pub(crate) sort: State<Vec<u8>>,
     pub(crate) kind: ObjectKind,
 }
 
@@ -431,6 +423,7 @@ impl Object {
             name: State::new(o.props.get(Key::NAME).as_str().to_owned()),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
             local_hidden: State::new(o.props.get(Key::LOCAL_HIDDEN).as_bool()),
+            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             kind,
         })
     }
@@ -465,6 +458,7 @@ impl Object {
             Key::GROUP => self
                 .group
                 .update(RemoteId::new(self.id.peer_id, value.as_id())),
+            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             _ => match &mut self.kind {
                 ObjectKind::Token(this) => this.update(key, value),
                 ObjectKind::Static(this) => this.update(key, value),
@@ -512,26 +506,6 @@ impl Object {
                 }
             }
             ObjectKind::Room(..) => "home",
-        }
-    }
-
-    #[inline]
-    pub(crate) fn sort_mut(&mut self) -> Option<(&mut State<RemoteId>, &mut State<Vec<u8>>)> {
-        match &mut self.kind {
-            ObjectKind::Token(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Static(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Group(this) => Some((&mut self.group, &mut this.sort)),
-            ObjectKind::Room(this) => Some((&mut self.group, &mut this.sort)),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn sort(&self) -> &[u8] {
-        match &self.kind {
-            ObjectKind::Token(this) => &this.sort,
-            ObjectKind::Static(this) => &this.sort,
-            ObjectKind::Group(this) => &this.sort,
-            ObjectKind::Room(this) => &this.sort,
         }
     }
 

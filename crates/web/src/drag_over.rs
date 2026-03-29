@@ -62,7 +62,7 @@ impl DragOver {
                 let last = order
                     .iter(self.target)
                     .last()
-                    .and_then(|id| Some(objects.get(id)?.sort()));
+                    .and_then(|id| Some(objects.get(id)?.sort.as_slice()));
 
                 if let Some(last) = last {
                     sorting::after(last)
@@ -77,12 +77,12 @@ impl DragOver {
                     .skip_while(|id| *id != self.target)
                     .nth(1);
 
-                let prev = prev.and_then(|id| Some(objects.get(id)?.sort()));
+                let prev = prev.and_then(|id| Some(objects.get(id)?.sort.as_slice()));
 
                 if let Some(prev) = prev {
-                    sorting::midpoint(prev, target.sort())
+                    sorting::midpoint(prev, &target.sort)
                 } else {
-                    sorting::before(target.sort())
+                    sorting::before(&target.sort)
                 }
             }
             Drag::Below => {
@@ -91,12 +91,12 @@ impl DragOver {
                     .skip_while(|id| *id != self.target)
                     .nth(1);
 
-                let next = next.and_then(|id| Some(objects.get(id)?.sort()));
+                let next = next.and_then(|id| Some(objects.get(id)?.sort.as_slice()));
 
                 if let Some(next) = next {
-                    sorting::midpoint(target.sort(), next)
+                    sorting::midpoint(&target.sort, next)
                 } else {
-                    sorting::after(target.sort())
+                    sorting::after(&target.sort)
                 }
             }
         };
