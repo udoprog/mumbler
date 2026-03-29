@@ -221,7 +221,7 @@ pub(crate) struct TokenObject {
 }
 
 impl TokenObject {
-    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+    pub(crate) fn new(o: &RemoteObject) -> Self {
         Self {
             transform: State::new(
                 o.props
@@ -274,7 +274,7 @@ pub(crate) struct StaticObject {
 }
 
 impl StaticObject {
-    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+    pub(crate) fn new(o: &RemoteObject) -> Self {
         Self {
             transform: State::new(
                 o.props
@@ -330,7 +330,7 @@ pub(crate) struct GroupObject {
 }
 
 impl GroupObject {
-    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+    pub(crate) fn new(o: &RemoteObject) -> Self {
         Self {
             locked: State::new(o.props.get(Key::LOCKED).as_bool()),
             expanded: State::new(o.props.get(Key::EXPANDED).as_bool()),
@@ -360,7 +360,7 @@ pub(crate) struct RoomObject {
 }
 
 impl RoomObject {
-    pub(crate) fn from_remote(o: &RemoteObject) -> Self {
+    pub(crate) fn new(o: &RemoteObject) -> Self {
         Self {
             sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             background: State::new(o.props.get(Key::ROOM_BACKGROUND).as_id()),
@@ -410,10 +410,10 @@ impl Object {
     #[inline]
     pub(crate) fn new(peer_id: PeerId, o: &RemoteObject) -> Option<Self> {
         let kind = match o.ty {
-            Type::TOKEN => ObjectKind::Token(TokenObject::from_remote(o)),
-            Type::STATIC => ObjectKind::Static(StaticObject::from_remote(o)),
-            Type::GROUP => ObjectKind::Group(GroupObject::from_remote(o)),
-            Type::ROOM => ObjectKind::Room(RoomObject::from_remote(o)),
+            Type::TOKEN => ObjectKind::Token(TokenObject::new(o)),
+            Type::STATIC => ObjectKind::Static(StaticObject::new(o)),
+            Type::GROUP => ObjectKind::Group(GroupObject::new(o)),
+            Type::ROOM => ObjectKind::Room(RoomObject::new(o)),
             _ => return None,
         };
 

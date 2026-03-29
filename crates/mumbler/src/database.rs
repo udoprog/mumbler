@@ -344,7 +344,7 @@ impl Database {
 
                 tracing::debug!(?id, ?key, "loading property");
 
-                let value = match value_from_blob(ty, select) {
+                let value = match value_from_blob(ty, select, 1) {
                     Ok(value) => value,
                     Err(error) => {
                         tracing::error!(?id, ?key, error = ?error, "failed to load property value");
@@ -470,40 +470,38 @@ fn to_outcome<'a>(key: Key, value: &'a Value, scratch: &'a mut Vec<u8>) -> Resul
     }
 }
 
-fn value_from_blob(ty: ValueType, stmt: &mut SendStatement) -> Result<Value> {
-    const COLUMN: c_int = 1;
-
-    let value = match (ty, stmt.column_type(COLUMN)) {
+fn value_from_blob(ty: ValueType, stmt: &mut SendStatement, column: c_int) -> Result<Value> {
+    let value = match (ty, stmt.column_type(column)) {
         (ValueType::Boolean, sqll::ValueType::INTEGER) => {
-            Value::from(stmt.column::<i64>(COLUMN)? != 0)
+            Value::from(stmt.column::<i64>(column)? != 0)
         }
-        (ValueType::Bytes, sqll::ValueType::BLOB) => Value::from(stmt.column::<Vec<u8>>(COLUMN)?),
+        (ValueType::Bytes, sqll::ValueType::BLOB) => Value::from(stmt.column::<Vec<u8>>(column)?),
         (ValueType::Color, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<Color>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<Color>(stmt.column(column)?)?)
         }
         (ValueType::Extent, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<Extent>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<Extent>(stmt.column(column)?)?)
         }
-        (ValueType::Float, sqll::ValueType::FLOAT) => Value::from(stmt.column::<f64>(COLUMN)?),
-        (ValueType::Id, sqll::ValueType::INTEGER) => Value::from(stmt.column::<Id>(COLUMN)?),
-        (ValueType::Integer, sqll::ValueType::INTEGER) => Value::from(stmt.column::<i64>(COLUMN)?),
+        (ValueType::Float, sqll::ValueType::FLOAT) => Value::from(stmt.column::<f64>(column)?),
+        (ValueType::Id, sqll::ValueType::INTEGER) => Value::from(stmt.column::<Id>(column)?),
+        (ValueType::Integer, sqll::ValueType::INTEGER) => Value::from(stmt.column::<i64>(column)?),
         (ValueType::Canvas2, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<Canvas2>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<Canvas2>(stmt.column(column)?)?)
         }
         (ValueType::PeerId, sqll::ValueType::INTEGER) => {
-            Value::from(stmt.column::<PeerId>(COLUMN)?)
+            Value::from(stmt.column::<PeerId>(column)?)
         }
         (ValueType::StableId, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<StableId>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<StableId>(stmt.column(column)?)?)
         }
         (ValueType::String, sqll::ValueType::TEXT) => {
-            Value::from(stmt.unsized_column::<str>(COLUMN)?)
+            Value::from(stmt.unsized_column::<str>(column)?)
         }
         (ValueType::Transform, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<Transform>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<Transform>(stmt.column(column)?)?)
         }
         (ValueType::Vec3, sqll::ValueType::BLOB) => {
-            Value::from(descriptive::from_slice::<Vec3>(stmt.column(COLUMN)?)?)
+            Value::from(descriptive::from_slice::<Vec3>(stmt.column(column)?)?)
         }
         (ty, found) => {
             return Err(anyhow!(
