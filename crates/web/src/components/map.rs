@@ -19,6 +19,7 @@ use web_sys::{
 };
 use yew::prelude::*;
 
+use crate::components as c;
 use crate::components::render::{RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
@@ -627,15 +628,12 @@ impl Component for Map {
     fn create(ctx: &Context<Self>) -> Self {
         let window = web_sys::window().expect("window not found");
 
+        let document = window.document().expect("document");
+
         let (log, _) = ctx
             .link()
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
-
-        let document = web_sys::window()
-            .expect("window")
-            .document()
-            .expect("document");
 
         let link = ctx.link().clone();
         let _keydown_listener = EventListener::new(&document, "keydown", move |e| {
@@ -1129,19 +1127,9 @@ impl Component for Map {
                 }
 
                 if let Some(modal) = &self.s.modal {
-                    <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
-                        <div class="modal" onclick={|ev: MouseEvent| ev.stop_propagation()}>
-                            <div class="modal-header">
-                                <h2>{modal.title()}</h2>
-                                <button class="btn square danger" title="Cancel" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
-                                    <Icon name="x-mark" />
-                                </button>
-                            </div>
-                            <div class="modal-body rows">
-                                {modal.view(ctx)}
-                            </div>
-                        </div>
-                    </div>
+                    <c::Modal title={modal.title()} class="rows" onclose={ctx.link().callback(|_| Msg::CloseModal)}>
+                        {modal.view(ctx)}
+                    </c::Modal>
                 }
 
             </>

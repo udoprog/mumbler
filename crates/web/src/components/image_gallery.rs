@@ -7,7 +7,7 @@ use yew::prelude::*;
 use crate::error::Error;
 use crate::log::Log;
 
-use super::{Icon, SetupChannel};
+use super::SetupChannel;
 
 static FILTER_BUTTONS: &[(&str, Role)] = &[
     ("All", Role::NONE),
@@ -21,7 +21,6 @@ pub(crate) enum Msg {
     Select(RemoteId),
     Role(Role),
     Log(Log),
-    Close,
     Initialize(Result<ws::Packet<api::InitializeImageUpload>, ws::Error>),
     RemoteUpdate(Result<ws::Packet<api::RemoteUpdate>, ws::Error>),
 }
@@ -35,14 +34,12 @@ pub(crate) struct Props {
     pub(crate) onselect: Callback<RemoteId>,
     /// Callback fired when an image should be deleted.
     pub(crate) ondelete: Callback<RemoteId>,
-    /// Callback fired to close the modal.
-    pub(crate) onclose: Callback<()>,
     /// The role to pre-select in the filter. Defaults to Role::NONE (show all).
     #[prop_or_default]
     pub(crate) default_role: Role,
 }
 
-pub(crate) struct ImageGalleryModal {
+pub(crate) struct ImageGallery {
     channel: ws::Channel,
     _setup_channel: SetupChannel,
     log: Log,
@@ -52,7 +49,7 @@ pub(crate) struct ImageGalleryModal {
     images: Vec<Image>,
 }
 
-impl Component for ImageGalleryModal {
+impl Component for ImageGallery {
     type Message = Msg;
     type Properties = Props;
 
@@ -122,42 +119,28 @@ impl Component for ImageGalleryModal {
             });
 
         html! {
-            <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::Close)}>
-                <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
-                    <div class="modal-header">
-                        <h2>{"Select Image"}</h2>
-
-                        <button class="btn sm square danger" title="Close"
-                            onclick={ctx.link().callback(|_| Msg::Close)}>
-                            <Icon name="x-mark" />
-                        </button>
-                    </div>
-
-                    <div class="modal-body rows">
-                        <div class="control-group btn-group">
-                            {for filter_buttons}
-                        </div>
-
-                        if self.images.is_empty() {
-                            <p class="hint">{"No images."}</p>
-                        } else {
-                            <div class="gallery">
-                                {for images}
-                            </div>
-                        }
-                    </div>
+            <>
+                <div class="control-group btn-group">
+                    {for filter_buttons}
                 </div>
-            </div>
+
+                if self.images.is_empty() {
+                    <p class="hint">{"No images."}</p>
+                } else {
+                    <div class="gallery">
+                        {for images}
+                    </div>
+                }
+            </>
         }
     }
 }
 
-impl ImageGalleryModal {
+impl ImageGallery {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Select(id) => {
                 ctx.props().onselect.emit(id);
-                ctx.props().onclose.emit(());
                 Ok(false)
             }
             Msg::Role(role) => {
@@ -179,10 +162,6 @@ impl ImageGalleryModal {
             Msg::Log(log) => {
                 self.log = log;
                 Ok(true)
-            }
-            Msg::Close => {
-                ctx.props().onclose.emit(());
-                Ok(false)
             }
             Msg::Channel(channel) => {
                 self.channel = channel?;

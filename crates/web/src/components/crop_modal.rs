@@ -5,7 +5,18 @@ use yew::prelude::*;
 
 use crate::error::Error;
 
-use super::Icon;
+use super::Modal;
+
+const HANDLES: &[(&str, Dir)] = &[
+    ("nw", Dir::NW),
+    ("n", Dir::N),
+    ("ne", Dir::NE),
+    ("w", Dir::W),
+    ("e", Dir::E),
+    ("sw", Dir::SW),
+    ("s", Dir::S),
+    ("se", Dir::SE),
+];
 
 #[derive(Clone, Copy)]
 struct Vec2 {
@@ -18,12 +29,12 @@ impl Vec2 {
         Self { x, y }
     }
 
-    fn from_offset(e: &PointerEvent) -> Self {
-        Self::new(e.offset_x() as f64, e.offset_y() as f64)
+    fn from_offset(ev: &PointerEvent) -> Self {
+        Self::new(ev.offset_x() as f64, ev.offset_y() as f64)
     }
 
-    fn from_client(e: &PointerEvent) -> Self {
-        Self::new(e.client_x() as f64, e.client_y() as f64)
+    fn from_client(ev: &PointerEvent) -> Self {
+        Self::new(ev.client_x() as f64, ev.client_y() as f64)
     }
 
     fn clamp(self, min: Self, max: Self) -> Self {
@@ -280,7 +291,7 @@ impl Selection {
 
 struct MoveState {
     start: Vec2,
-    sel: Selection,
+    selection: Selection,
 }
 
 struct ResizeState {
@@ -314,7 +325,6 @@ pub(crate) enum Msg {
 }
 
 pub(crate) struct CropModal {
-    ratio: Option<f64>,
     drag: Option<(Vec2, Vec2)>,
     dragging: bool,
     move_state: Option<MoveState>,
@@ -327,9 +337,8 @@ impl Component for CropModal {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(ctx: &Context<Self>) -> Self {
+    fn create(_: &Context<Self>) -> Self {
         Self {
-            ratio: ctx.props().ratio,
             drag: None,
             dragging: false,
             move_state: None,
@@ -350,8 +359,9 @@ impl Component for CropModal {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let sel = self.selection();
-        let confirm_disabled = sel.is_none();
+        let selection = self.selection(ctx);
+
+        let confirm_disabled = selection.is_none();
 
         let confirm_class = classes! {
             "btn",
@@ -366,82 +376,67 @@ impl Component for CropModal {
                 .callback(move |e: PointerEvent| Msg::ResizeStart(e, dir))
         };
 
+        let stop_propagation = |ev: MouseEvent| ev.stop_propagation();
+
         html! {
-            <div class="modal-backdrop" onclick={ctx.link().callback(|_| Msg::Cancel)}>
-                <div class="modal" onclick={|e: MouseEvent| e.stop_propagation()}>
-                    <div class="modal-header">
-                        <h2>{"Crop Image"}</h2>
-                        <button class="btn sm square danger" title="Close"
-                            onclick={ctx.link().callback(|_| Msg::Cancel)}>
-                            <Icon name="x-mark" />
-                        </button>
-                    </div>
-                    <div class="modal-body rows"
-                        onclick={ctx.link().callback(|_| Msg::ClearSelection)}>
-                        <p class="hint">{"Drag on the image to select a crop region."}</p>
-                        <div class="crop-area"
-                            onclick={|e: MouseEvent| e.stop_propagation()}>
-                            <div class="crop-inner"
-                                ref={self.div_ref.clone()}
-                                onpointerdown={ctx.link().callback(Msg::DragStart)}
-                                onpointermove={ctx.link().callback(Msg::DragMove)}
-                                onpointerup={ctx.link().callback(Msg::DragEnd)}>
-                                <img src={ctx.props().source_url.clone()}
-                                    ref={self.img_ref.clone()}
-                                    class="crop-source"
-                                    draggable="false" />
-                                if let Some(sel) = sel {
-                                    <div class="crop-selection"
-                                        onpointerdown={ctx.link().callback(Msg::MoveStart)}
-                                        style={sel.style()}>
-                                        <div class="crop-handle nw" onpointerdown={rs(Dir::NW)} />
-                                        <div class="crop-handle n"  onpointerdown={rs(Dir::N)} />
-                                        <div class="crop-handle ne" onpointerdown={rs(Dir::NE)} />
-                                        <div class="crop-handle w"  onpointerdown={rs(Dir::W)} />
-                                        <div class="crop-handle e"  onpointerdown={rs(Dir::E)} />
-                                        <div class="crop-handle sw" onpointerdown={rs(Dir::SW)} />
-                                        <div class="crop-handle s"  onpointerdown={rs(Dir::S)} />
-                                        <div class="crop-handle se" onpointerdown={rs(Dir::SE)} />
-                                    </div>
+            <Modal title="Crop Image" onclose={ctx.link().callback(|_| Msg::Cancel)} onclick={ctx.link().callback(|_| Msg::ClearSelection)} class="rows">
+                <p class="hint">{"Drag on the image to select a crop region."}</p>
+
+                <div class="crop-area" onclick={stop_propagation}>
+                    <div
+                        class="crop-inner"
+                        ref={self.div_ref.clone()}
+                        onpointerdown={ctx.link().callback(Msg::DragStart)}
+                        onpointermove={ctx.link().callback(Msg::DragMove)}
+                        onpointerup={ctx.link().callback(Msg::DragEnd)}
+                    >
+                        <img src={ctx.props().source_url.clone()} ref={self.img_ref.clone()} class="crop-source" draggable="false" />
+
+                        if let Some(selection) = selection {
+                            <div class="crop-selection" onpointerdown={ctx.link().callback(Msg::MoveStart)} style={selection.style()}>
+                                for &(handle, dir) in HANDLES {
+                                    <div class={classes!("crop-handle", handle)} onpointerdown={rs(dir)} />
                                 }
                             </div>
-                        </div>
-
-                        <div class="control-group" onclick={|e: MouseEvent| e.stop_propagation()}>
-                            <button class={confirm_class} onclick={confirm_onclick}>
-                                {"Upload"}
-                            </button>
-                            {if ctx.props().rescale.is_some() {
-                                html! {
-                                    <button class="btn secondary" title="Rescale to original aspect ratio"
-                                        onclick={ctx.link().callback(|_| Msg::Rescale)}>
-                                        {"Select All"}
-                                    </button>
-                                }
-                            } else {
-                                html! {
-                                    <button class="btn secondary" title="Select the largest region"
-                                        onclick={ctx.link().callback(|_| Msg::SelectAll)}>
-                                        {"Select All"}
-                                    </button>
-                                }
-                            }}
-                            <section class="fill" />
-                            <button class="btn danger right" onclick={ctx.link().callback(|_| Msg::Cancel)}>
-                                {"Cancel"}
-                            </button>
-                        </div>
+                        }
                     </div>
                 </div>
-            </div>
+
+                <div class="control-group" onclick={stop_propagation}>
+                    <button class={confirm_class} onclick={confirm_onclick}>
+                        {"Upload"}
+                    </button>
+
+                    {if ctx.props().rescale.is_some() {
+                        html! {
+                            <button class="btn secondary" title="Rescale to original aspect ratio" onclick={ctx.link().callback(|_| Msg::Rescale)}>
+                                {"Select All"}
+                            </button>
+                        }
+                    } else {
+                        html! {
+                            <button class="btn secondary" title="Select the largest region"
+                                onclick={ctx.link().callback(|_| Msg::SelectAll)}>
+                                {"Select All"}
+                            </button>
+                        }
+                    }}
+
+                    <section class="fill" />
+
+                    <button class="btn danger right" onclick={ctx.link().callback(|_| Msg::Cancel)}>
+                        {"Cancel"}
+                    </button>
+                </div>
+            </Modal>
         }
     }
 }
 
 impl CropModal {
-    fn selection(&self) -> Option<Selection> {
+    fn selection(&self, ctx: &Context<Self>) -> Option<Selection> {
         let (a, b) = self.drag?;
-        Some(Selection::from_drag(a, b, self.ratio))
+        Some(Selection::from_drag(a, b, ctx.props().ratio))
     }
 
     fn image_bounds(&self) -> Vec2 {
@@ -461,35 +456,35 @@ impl CropModal {
         match msg {
             Msg::DragStart(e) => Ok(self.on_drag_start(e)),
             Msg::MoveStart(e) => {
-                self.on_move_start(e);
+                self.on_move_start(ctx, e);
                 Ok(false)
             }
             Msg::ResizeStart(e, dir) => {
-                self.on_resize_start(e, dir);
+                self.on_resize_start(ctx, e, dir);
                 Ok(false)
             }
-            Msg::DragMove(e) => Ok(self.on_drag_move(e)),
-            Msg::DragEnd(e) => Ok(self.on_drag_end(e)),
+            Msg::DragMove(e) => Ok(self.on_drag_move(ctx, e)),
+            Msg::DragEnd(e) => Ok(self.on_drag_end(ctx, e)),
             Msg::ClearSelection => {
                 self.drag = None;
                 Ok(true)
             }
             Msg::SelectAll => {
-                let sel = Selection::max_centered(self.image_bounds(), self.ratio);
+                let sel = Selection::max_centered(self.image_bounds(), ctx.props().ratio);
                 self.drag = Some(sel.to_drag());
                 Ok(true)
             }
             Msg::Rescale => {
+                let Some(rescale) = &ctx.props().rescale else {
+                    return Ok(false);
+                };
+
                 let bounds = self.image_bounds();
-                self.ratio = Some(bounds.x / bounds.y);
-
-                if let Some(rescale) = ctx.props().rescale.as_ref() {
-                    rescale.emit(self.ratio);
-                }
-
-                let sel = Selection::max_centered(bounds, self.ratio);
-                self.drag = Some(sel.to_drag());
-                Ok(false)
+                let ratio = Some(bounds.x / bounds.y);
+                rescale.emit(ratio);
+                let selection = Selection::max_centered(bounds, ctx.props().ratio);
+                self.drag = Some(selection.to_drag());
+                Ok(true)
             }
             Msg::Confirm => {
                 self.on_confirm(ctx)?;
@@ -515,46 +510,50 @@ impl CropModal {
         true
     }
 
-    fn on_move_start(&mut self, e: PointerEvent) {
-        if e.button() != 0 || self.dragging {
+    fn on_move_start(&mut self, ctx: &Context<Self>, ev: PointerEvent) {
+        if ev.button() != 0 || self.dragging {
             return;
         }
 
-        let Some(sel) = self.selection() else {
+        ev.stop_propagation();
+
+        let Some(selection) = self.selection(ctx) else {
             return;
         };
 
-        e.stop_propagation();
-        self.capture_pointer(&e);
+        self.capture_pointer(&ev);
+
         self.move_state = Some(MoveState {
-            start: Vec2::from_client(&e),
-            sel,
+            start: Vec2::from_client(&ev),
+            selection,
         });
+
         self.resize_state = None;
         self.dragging = true;
     }
 
-    fn on_resize_start(&mut self, e: PointerEvent, dir: Dir) {
-        if e.button() != 0 {
+    fn on_resize_start(&mut self, ctx: &Context<Self>, ev: PointerEvent, dir: Dir) {
+        if ev.button() != 0 {
             return;
         }
 
-        let Some(sel) = self.selection() else {
+        ev.stop_propagation();
+
+        let Some(sel) = self.selection(ctx) else {
             return;
         };
 
-        e.stop_propagation();
-        self.capture_pointer(&e);
+        self.capture_pointer(&ev);
         self.resize_state = Some(ResizeState {
             dir,
-            start: Vec2::from_client(&e),
+            start: Vec2::from_client(&ev),
             sel,
         });
         self.move_state = None;
         self.dragging = true;
     }
 
-    fn on_drag_move(&mut self, e: PointerEvent) -> bool {
+    fn on_drag_move(&mut self, ctx: &Context<Self>, e: PointerEvent) -> bool {
         if !self.dragging {
             return false;
         }
@@ -563,13 +562,17 @@ impl CropModal {
 
         if let Some(rs) = &self.resize_state {
             let delta = Vec2::from_client(&e) - rs.start;
-            self.drag = Some(rs.sel.resized(rs.dir, delta, bounds, self.ratio).to_drag());
+            self.drag = Some(
+                rs.sel
+                    .resized(rs.dir, delta, bounds, ctx.props().ratio)
+                    .to_drag(),
+            );
             return true;
         }
 
         if let Some(ms) = &self.move_state {
             let delta = Vec2::from_client(&e) - ms.start;
-            self.drag = Some(ms.sel.moved(delta, bounds).to_drag());
+            self.drag = Some(ms.selection.moved(delta, bounds).to_drag());
             return true;
         }
 
@@ -581,7 +584,7 @@ impl CropModal {
         true
     }
 
-    fn on_drag_end(&mut self, e: PointerEvent) -> bool {
+    fn on_drag_end(&mut self, ctx: &Context<Self>, e: PointerEvent) -> bool {
         if !self.dragging {
             return false;
         }
@@ -590,7 +593,8 @@ impl CropModal {
 
         if let Some(rs) = self.resize_state.take() {
             let delta = Vec2::from_client(&e) - rs.start;
-            let new = rs.sel.resized(rs.dir, delta, bounds, self.ratio);
+            let new = rs.sel.resized(rs.dir, delta, bounds, ctx.props().ratio);
+
             self.drag = if new.h < MIN_SIZE {
                 None
             } else {
@@ -598,13 +602,10 @@ impl CropModal {
             };
         } else if let Some(ms) = self.move_state.take() {
             let delta = Vec2::from_client(&e) - ms.start;
-            self.drag = Some(ms.sel.moved(delta, bounds).to_drag());
+            self.drag = Some(ms.selection.moved(delta, bounds).to_drag());
         } else if let Some((anchor, _)) = self.drag {
             let cursor = Vec2::from_offset(&e).clamp(ZERO, bounds);
             self.drag = Some((anchor, cursor));
-            if self.selection().is_none() {
-                self.drag = None;
-            }
         }
 
         self.dragging = false;
@@ -617,12 +618,14 @@ impl CropModal {
             .cast::<HtmlImageElement>()
             .ok_or("no crop image")?;
 
-        let sel = self.selection().ok_or("no crop selection")?;
+        let Some(selection) = self.selection(ctx) else {
+            return Ok(());
+        };
 
         let client = Vec2::new(img.client_width() as f64, img.client_height() as f64);
         let natural = Vec2::new(img.natural_width() as f64, img.natural_height() as f64);
 
-        let region = sel
+        let region = selection
             .to_crop_region(client, natural)
             .ok_or("crop region empty")?;
 

@@ -10,7 +10,7 @@ use yew::prelude::*;
 use crate::error::Error;
 use crate::log;
 
-use super::{CropModal, Icon, ImageGalleryModal, SetupChannel, TemporaryUrl, into_target};
+use super::{CropModal, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
     Error(Error),
@@ -129,13 +129,14 @@ impl Component for ImageUpload {
             </section>
 
             if self.gallery_open {
-                <ImageGalleryModal
-                    selected={ctx.props().selected}
-                    default_role={ctx.props().role}
-                    onselect={ctx.link().callback(Msg::SelectImage)}
-                    ondelete={ctx.link().callback(Msg::RemoveImage)}
-                    onclose={ctx.link().callback(|_| Msg::CloseGallery)}
-                />
+                <Modal title="Images" class="rows" onclose={ctx.link().callback(|_| Msg::CloseGallery)}>
+                    <ImageGallery
+                        selected={ctx.props().selected}
+                        default_role={ctx.props().role}
+                        onselect={ctx.link().callback(Msg::SelectImage)}
+                        ondelete={ctx.link().callback(Msg::RemoveImage)}
+                    />
+                </Modal>
             }
 
             if let Some(source_url) = &self.crop_source_url {
