@@ -54,6 +54,21 @@ pub(crate) enum Modal {
 }
 
 impl Modal {
+    fn update(&mut self, objects: &mut ObjectsRef) -> bool {
+        let mut update = false;
+
+        match self {
+            Modal::Remove { object } | Modal::Settings { object } | Modal::Unlock { object } => {
+                if let Some(o) = objects.get(object.id) {
+                    update |= object.update(o);
+                }
+            }
+            _ => {}
+        }
+
+        update
+    }
+
     fn title(&self) -> Html {
         match self {
             Modal::Help => html! {
@@ -1892,6 +1907,13 @@ impl Map {
                 self.s.update_cache = o.ty() == Type::ROOM;
                 update |= o.update(key, value);
                 self.s.redraw |= update;
+
+                if update {
+                    if let Some(modal) = &mut self.s.modal {
+                        modal.update(&mut objects);
+                    }
+                }
+
                 update
             }
             RemoteUpdateBody::ImageCreated { image } => {

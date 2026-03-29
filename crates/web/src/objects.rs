@@ -433,7 +433,7 @@ impl Object {
     pub(crate) fn as_ref(&self) -> ObjectRef {
         ObjectRef {
             ty: self.ty(),
-            name: (*self.name).clone(),
+            name: self.name.clone(),
             id: self.id,
         }
     }
@@ -659,18 +659,23 @@ impl Object {
 #[derive(Debug, PartialEq)]
 pub(crate) struct ObjectRef {
     pub(crate) ty: Type,
-    pub(crate) name: String,
+    pub(crate) name: State<String>,
     pub(crate) id: RemoteId,
 }
 
 impl ObjectRef {
+    #[inline]
+    pub(crate) fn update(&mut self, object: &Object) -> bool {
+        self.name.update(object.name.as_str().to_owned())
+    }
+
     /// Get a view for this object.
     #[inline]
     pub(crate) fn name(&self) -> Html {
         if !self.name.is_empty() {
             return html! {
                 <span class="object">
-                    <span class="object-name">{self.name.to_string()}</span>
+                    <span class="object-name">{self.name.as_str()}</span>
                 </span>
             };
         }
