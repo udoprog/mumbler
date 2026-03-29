@@ -152,19 +152,21 @@ impl MumbleStatus {
             Msg::Channel(channel) => {
                 self.channel = channel?;
 
-                if self.channel.id() != ChannelId::NONE {
-                    self._config_update_listener = self
-                        .channel
-                        .handle()
-                        .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
-
-                    self._get_status = self
-                        .channel
-                        .request()
-                        .body(api::GetConfigRequest)
-                        .on_packet(ctx.link().callback(Msg::GetConfig))
-                        .send();
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
                 }
+
+                self._config_update_listener = self
+                    .channel
+                    .handle()
+                    .on_broadcast(ctx.link().callback(Msg::ConfigUpdate));
+
+                self._get_status = self
+                    .channel
+                    .request()
+                    .body(api::GetConfigRequest)
+                    .on_packet(ctx.link().callback(Msg::GetConfig))
+                    .send();
 
                 Ok(true)
             }

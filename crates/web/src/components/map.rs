@@ -32,8 +32,8 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    AnimationFrame, COMMON_ROOM, ContextMenuDropdown, DynamicCanvas, GroupSettings, HelpModal,
-    Icon, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
+    AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DynamicCanvas, GroupSettings,
+    HelpModal, Icon, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
     TokenSettings, UNKNOWN_ROOM,
 };
 
@@ -247,7 +247,7 @@ impl MapState {
         *config.mumble_object = id;
 
         self._toggle_mumble_request =
-            channel.updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(id.id))]);
+            channel.updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(id.id))]);
         true
     }
 
@@ -575,7 +575,7 @@ pub(crate) enum Msg {
     SimulationFrame,
     CloseModal,
     CloseContextMenu,
-    ConfigResult(Result<Packet<api::Updates>, ws::Error>),
+    Update(Result<Packet<api::Updates>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     ConfirmRemove(RemoteId),
     ContextMenu(MouseEvent),
@@ -610,12 +610,26 @@ pub(crate) enum Msg {
     ToggleExpanded(RemoteId),
     ToggleLocked(RemoteId),
     ToggleMumbleObject(RemoteId),
-    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
+    ObjectUpdate(Result<Packet<api::ObjectUpdate>, ws::Error>),
     OpenModal(Modal),
     Wheel(WheelEvent),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
     CanvasResized((u32, u32)),
+}
+
+impl From<Result<Packet<api::ObjectUpdate>, ws::Error>> for Msg {
+    #[inline]
+    fn from(value: Result<Packet<api::ObjectUpdate>, ws::Error>) -> Self {
+        Msg::ObjectUpdate(value)
+    }
+}
+
+impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
+    #[inline]
+    fn from(value: Result<Packet<api::Updates>, ws::Error>) -> Self {
+        Msg::Update(value)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -1301,7 +1315,7 @@ impl Map {
                     Ok(false)
                 }
             }
-            Msg::ConfigResult(result) => {
+            Msg::Update(result) => {
                 result?;
                 Ok(false)
             }
@@ -1352,7 +1366,7 @@ impl Map {
                 let body = body.decode()?;
                 Ok(self.remote_update(ctx, body))
             }
-            Msg::UpdateResult(body) => {
+            Msg::ObjectUpdate(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(false)
@@ -1498,7 +1512,7 @@ impl Map {
 
                 self._set_mumble_follow = self.channel.updates(
                     ctx,
-                    vec![(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
+                    [(Key::MUMBLE_FOLLOW, Value::from(*self.config.mumble_follow))],
                 );
                 Ok(true)
             }
@@ -2092,22 +2106,20 @@ impl Map {
                 if s.width.update_epsilon(*s.width * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
 
-                    requests._scale_width = self.channel.object_update(
+                    requests._scale_width = self.channel.object_updates(
                         ctx,
-                        scale.object_id,
-                        Key::STATIC_WIDTH,
-                        *s.width,
+                        scale.object_id.id,
+                        [(Key::STATIC_WIDTH, s.width.value())],
                     );
                 }
 
                 if s.height.update_epsilon(*s.height * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
 
-                    requests._scale_height = self.channel.object_update(
+                    requests._scale_height = self.channel.object_updates(
                         ctx,
-                        scale.object_id,
-                        Key::STATIC_HEIGHT,
-                        *s.height,
+                        scale.object_id.id,
+                        [(Key::STATIC_HEIGHT, s.height.value())],
                     );
                 }
             }
@@ -2115,11 +2127,10 @@ impl Map {
                 if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
                     let requests = self.object_requests.entry(scale.object_id).or_default();
 
-                    requests._scale_radius = self.channel.object_update(
+                    requests._scale_radius = self.channel.object_updates(
                         ctx,
-                        scale.object_id,
-                        Key::TOKEN_RADIUS,
-                        *t.token_radius,
+                        scale.object_id.id,
+                        [(Key::TOKEN_RADIUS, t.token_radius.value())],
                     );
                 }
             }
@@ -2325,9 +2336,10 @@ impl Map {
                 continue;
             };
 
-            let req = self
-                .channel
-                .object_update(ctx, id, Key::TRANSFORM, *transform);
+            let req =
+                self.channel
+                    .object_updates(ctx, id.id, [(Key::TRANSFORM, (*transform).into())]);
+
             self.transform_requests.insert(id, req);
         }
     }
@@ -2345,9 +2357,12 @@ impl Map {
                 continue;
             };
 
-            let req = self
-                .channel
-                .object_update(ctx, id, Key::LOOK_AT, o.look_at().copied());
+            let req = self.channel.object_updates(
+                ctx,
+                id.id,
+                [(Key::LOOK_AT, o.look_at().copied().into())],
+            );
+
             self.look_at_requests.insert(id, req);
         }
     }
@@ -2554,13 +2569,13 @@ impl Map {
         if old_group.is_some() {
             self._set_group =
                 self.channel
-                    .object_update(ctx, id, Key::GROUP, Value::from(o_group.id));
+                    .object_updates(ctx, id.id, [(Key::GROUP, o_group.id.into())]);
         }
 
         if old_sort.is_some() {
             self._set_sort =
                 self.channel
-                    .object_update(ctx, id, Key::SORT, Value::from(&o_sort[..]));
+                    .object_updates(ctx, id.id, [(Key::SORT, o_sort[..].into())]);
         }
 
         if old_sort.is_some() || old_group.is_some() {
@@ -2595,7 +2610,7 @@ impl Map {
 
         self.s._toggle_mumble_request = self
             .channel
-            .updates(ctx, vec![(Key::MUMBLE_OBJECT, Value::from(update.id))]);
+            .updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(update.id))]);
 
         true
     }
@@ -2617,9 +2632,11 @@ impl Map {
 
         let new = !**locked;
         **locked = new;
+
         self._toggle_locked = self
             .channel
-            .object_update(ctx, id, Key::LOCKED, Value::from(new));
+            .object_updates(ctx, id.id, [(Key::LOCKED, new.into())]);
+
         self.s.redraw = true;
         true
     }
@@ -2641,7 +2658,9 @@ impl Map {
         *object.hidden = new_hidden;
 
         let requests = self.object_requests.entry(id).or_default();
-        requests._toggle_hidden = self.channel.object_update(ctx, id, Key::HIDDEN, new_hidden);
+        requests._toggle_hidden =
+            self.channel
+                .object_updates(ctx, id.id, [(Key::HIDDEN, new_hidden.into())]);
         self.s.redraw = true;
         true
     }
@@ -2666,7 +2685,7 @@ impl Map {
 
         requests._toggle_local_hidden =
             self.channel
-                .object_update(ctx, id, Key::LOCAL_HIDDEN, new_local_hidden);
+                .object_updates(ctx, id.id, [(Key::LOCAL_HIDDEN, new_local_hidden.into())]);
 
         self.s.redraw = true;
         true
@@ -2693,9 +2712,11 @@ impl Map {
         **expanded = new_expanded;
 
         let requests = self.object_requests.entry(id).or_default();
-        requests._expanded = self
-            .channel
-            .object_update(ctx, id, Key::EXPANDED, new_expanded);
+
+        requests._expanded =
+            self.channel
+                .object_updates(ctx, id.id, [(Key::EXPANDED, new_expanded.into())]);
+
         true
     }
 
@@ -2799,43 +2820,5 @@ impl MouseEventExt for MouseEvent {
     #[inline]
     fn client(&self) -> Canvas2 {
         Canvas2::new(self.client_x() as f64, self.client_y() as f64)
-    }
-}
-
-trait ChannelExt {
-    fn object_update(
-        &self,
-        ctx: &Context<Map>,
-        id: RemoteId,
-        key: Key,
-        value: impl Into<Value>,
-    ) -> ws::Request;
-
-    fn updates(&self, ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request;
-}
-
-impl ChannelExt for ws::Channel {
-    fn object_update(
-        &self,
-        ctx: &Context<Map>,
-        id: RemoteId,
-        key: Key,
-        value: impl Into<Value>,
-    ) -> ws::Request {
-        self.request()
-            .body(api::ObjectUpdateBody {
-                id: id.id,
-                key,
-                value: value.into(),
-            })
-            .on_packet(ctx.link().callback(Msg::UpdateResult))
-            .send()
-    }
-
-    fn updates(&self, ctx: &Context<Map>, values: Vec<(Key, Value)>) -> ws::Request {
-        self.request()
-            .body(api::UpdatesRequest { values })
-            .on_packet(ctx.link().callback(Msg::ConfigResult))
-            .send()
     }
 }

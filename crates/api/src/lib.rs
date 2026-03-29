@@ -249,8 +249,14 @@ impl fmt::Debug for Color {
 #[musli(crate = musli_core)]
 pub struct ObjectUpdateBody {
     pub id: Id,
-    pub key: Key,
-    pub value: Value,
+    pub values: Vec<(Key, Value)>,
+}
+
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct ObjectUpdateBodyRef<'a> {
+    pub id: Id,
+    pub values: &'a [(Key, Value)],
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -825,6 +831,13 @@ pub struct UpdatesRequest {
     pub values: Vec<(Key, Value)>,
 }
 
+/// Request to update config.
+#[derive(Debug, Encode)]
+#[musli(crate = musli_core)]
+pub struct UpdatesRequestRef<'a> {
+    pub values: &'a [(Key, Value)],
+}
+
 /// Information about a single room on the remote server.
 #[derive(Debug, Clone, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -952,6 +965,7 @@ api::define! {
 
     impl Endpoint for ObjectUpdate {
         impl Request for ObjectUpdateBody;
+        impl Request for ObjectUpdateBodyRef<'_>;
         type Response<'de> = Empty;
     }
 
@@ -1023,6 +1037,7 @@ api::define! {
 
     impl Endpoint for Updates {
         impl Request for UpdatesRequest;
+        impl Request for UpdatesRequestRef<'_>;
         type Response<'de> = Empty;
     }
 

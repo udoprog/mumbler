@@ -310,7 +310,7 @@ pub(crate) struct Props {
     pub(crate) onconfirm: Callback<api::CropRegion>,
     pub(crate) oncancel: Callback<()>,
     #[prop_or_default]
-    pub(crate) rescale: Option<Callback<f64>>,
+    pub(crate) onratio: Option<Callback<f64>>,
     #[prop_or_default]
     pub(crate) ratio: Option<f64>,
 }
@@ -418,7 +418,7 @@ impl Component for CropModal {
                         {"Upload"}
                     </button>
 
-                    {if ctx.props().rescale.is_some() {
+                    {if ctx.props().onratio.is_some() {
                         html! {
                             <button class="btn secondary" title="Rescale to original aspect ratio" onclick={ctx.link().callback(|_| Msg::Rescale)}>
                                 {"Select All"}
@@ -485,7 +485,7 @@ impl CropModal {
                 Ok(true)
             }
             Msg::Rescale => {
-                let Some(rescale) = &ctx.props().rescale else {
+                let Some(rescale) = &ctx.props().onratio else {
                     return Ok(false);
                 };
 

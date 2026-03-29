@@ -1,4 +1,4 @@
-use api::{Color, Id, Key, PublicKey, RemoteId, RemoteUpdateBody, Value};
+use api::{Color, Key, PublicKey, RemoteId, RemoteUpdateBody, Value};
 use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
@@ -12,24 +12,30 @@ use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
-use super::{DynamicCanvas, ImageUpload, SetupChannel, into_target, render};
+use super::{ChannelExt, DynamicCanvas, ImageUpload, SetupChannel, into_target, render};
 
 pub(crate) enum Msg {
     Error(Error),
     Channel(Result<ws::Channel, Error>),
     ColorChanged(Event),
     ImageSelected(RemoteId),
-    ImageClear,
     Initialize(Result<Packet<api::GetObjectSettings>, ws::Error>),
     NameChanged(Event),
     RadiusChanged(Event),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     SelectColor(api::Color),
     SpeedChanged(Event),
-    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
+    ObjectUpdate(Result<Packet<api::ObjectUpdate>, ws::Error>),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
     CanvasResized((u32, u32)),
+}
+
+impl From<Result<Packet<api::ObjectUpdate>, ws::Error>> for Msg {
+    #[inline]
+    fn from(value: Result<Packet<api::ObjectUpdate>, ws::Error>) -> Self {
+        Msg::ObjectUpdate(value)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -174,7 +180,7 @@ impl Component for TokenSettings {
                         role={api::Role::TOKEN}
                         input_id="image"
                         onselect={ctx.link().callback(Msg::ImageSelected)}
-                        onclear={ctx.link().callback(|_| Msg::ImageClear)}
+                        onclear={ctx.link().callback(|_| Msg::ImageSelected(RemoteId::ZERO))}
                     />
                 </div>
 
@@ -235,14 +241,17 @@ impl TokenSettings {
                 Ok(true)
             }
             Msg::ImageSelected(id) => {
-                *self.image = id;
+                if !self.image.update(id) {
+                    return Ok(false);
+                }
+
                 self.load_preview_image(ctx);
-                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, id.id);
-                Ok(true)
-            }
-            Msg::ImageClear => {
-                *self.image = RemoteId::ZERO;
-                self._select_image = object_update(&self.channel, ctx, Key::IMAGE_ID, Id::ZERO);
+
+                self._select_image = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::IMAGE_ID, self.image.id.into())],
+                );
                 Ok(true)
             }
             Msg::ColorChanged(e) => {
@@ -255,34 +264,47 @@ impl TokenSettings {
                 Ok(false)
             }
             Msg::SelectColor(color) => {
-                *self.color = Some(color);
-                self._select_color = object_update(&self.channel, ctx, Key::COLOR, color);
+                if self.color.update(Some(color)) {
+                    self._select_color = self.channel.object_updates(
+                        ctx,
+                        ctx.props().id.id,
+                        [(Key::COLOR, self.color.value())],
+                    );
+                }
+
                 Ok(true)
             }
             Msg::NameChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
-                let name = input.value();
 
-                *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
+                if !self.name.update(input.value()) {
+                    self._update_name = self.channel.object_updates(
+                        ctx,
+                        ctx.props().id.id,
+                        [(Key::NAME, self.name.deref_value())],
+                    );
+                }
+
                 Ok(false)
             }
             Msg::RadiusChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
 
-                let value = 'done: {
-                    let Ok(radius) = input.value().parse::<f32>() else {
-                        break 'done false;
-                    };
-
-                    let radius = radius.clamp(0.05, 10.0);
-                    *self.token_radius = radius;
-                    self._update_radius =
-                        object_update(&self.channel, ctx, Key::TOKEN_RADIUS, radius);
-                    true
+                let Ok(radius) = input.value().parse::<f32>() else {
+                    return Ok(false);
                 };
 
-                Ok(value)
+                if !self.token_radius.update(radius.clamp(0.05, 10.0)) {
+                    return Ok(false);
+                }
+
+                self._update_radius = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::TOKEN_RADIUS, self.token_radius.value())],
+                );
+
+                Ok(true)
             }
             Msg::SpeedChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
@@ -292,15 +314,18 @@ impl TokenSettings {
                         break 'done false;
                     };
 
-                    let speed = speed.clamp(0.5, 100.0);
-                    *self.speed = speed;
-                    self._update_radius = object_update(&self.channel, ctx, Key::SPEED, speed);
+                    *self.speed = speed.clamp(0.5, 100.0);
+                    self._update_radius = self.channel.object_updates(
+                        ctx,
+                        ctx.props().id.id,
+                        [(Key::SPEED, self.speed.value())],
+                    );
                     true
                 };
 
                 Ok(value)
             }
-            Msg::UpdateResult(result) => {
+            Msg::ObjectUpdate(result) => {
                 let result = result?;
                 _ = result.decode()?;
                 Ok(false)
@@ -342,12 +367,12 @@ impl TokenSettings {
     fn update_property(&mut self, ctx: &Context<Self>, key: Key, value: Value) -> bool {
         match key {
             Key::IMAGE_ID => {
-                if self.image.update(RemoteId::local(value.as_id())) {
-                    self.load_preview_image(ctx);
-                    true
-                } else {
-                    false
+                if !self.image.update(RemoteId::local(value.as_id())) {
+                    return false;
                 }
+
+                self.load_preview_image(ctx);
+                true
             }
             Key::COLOR => self.color.update(value.as_color()),
             Key::NAME => self.name.update(value.as_str().to_owned()),
@@ -398,21 +423,4 @@ impl TokenSettings {
         render::draw_token(&cx, &view, &base, &render, &self.preview_images)?;
         Ok(())
     }
-}
-
-fn object_update(
-    channel: &ws::Channel,
-    ctx: &Context<TokenSettings>,
-    key: Key,
-    value: impl Into<Value>,
-) -> ws::Request {
-    channel
-        .request()
-        .body(api::ObjectUpdateBody {
-            id: ctx.props().id.id,
-            key,
-            value: value.into(),
-        })
-        .on_packet(ctx.link().callback(Msg::UpdateResult))
-        .send()
 }

@@ -418,18 +418,22 @@ impl Backend {
     }
 
     /// Update position and front.
-    pub(crate) async fn object_update(&self, id: Id, key: Key, value: Value) {
+    pub(crate) async fn object_update(&self, id: Id, values: &[(Key, Value)]) {
         let mut state = self.inner.client_state.lock().await;
 
         let Some(object) = state.objects.get_mut(&id) else {
             return;
         };
 
-        object.props.insert(key, value);
-        object.changed.insert(key);
-        state.objects_changed.insert(id);
+        for (key, value) in values {
+            object.props.insert(*key, value.clone());
+            object.changed.insert(*key);
+        }
 
-        self.inner.client_notify.notify_one();
+        if !values.is_empty() {
+            state.objects_changed.insert(id);
+            self.inner.client_notify.notify_one();
+        }
     }
 
     /// Get the transform.

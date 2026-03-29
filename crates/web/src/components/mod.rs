@@ -75,5 +75,96 @@ use self::modal::Modal;
 mod icon;
 use self::icon::Icon;
 
+use musli_web::web03::prelude::*;
+use yew::prelude::*;
+
 const UNKNOWN_ROOM: &str = "Unknown Room";
 const COMMON_ROOM: &str = "Foyer";
+
+trait ChannelExt {
+    fn object_updates<T>(
+        &self,
+        ctx: &Context<T>,
+        id: api::Id,
+        values: impl IntoIterator<Item = (api::Key, api::Value), IntoIter: ExactSizeIterator>,
+    ) -> ws::Request
+    where
+        T: Component<Message: From<Result<ws::Packet<api::ObjectUpdate>, ws::Error>>>;
+
+    fn updates<T>(
+        &self,
+        ctx: &Context<T>,
+        values: impl IntoIterator<Item = (api::Key, api::Value), IntoIter: ExactSizeIterator>,
+    ) -> ws::Request
+    where
+        T: Component<Message: From<Result<ws::Packet<api::Updates>, ws::Error>>>;
+}
+
+impl ChannelExt for ws::Channel {
+    fn object_updates<T>(
+        &self,
+        ctx: &Context<T>,
+        id: api::Id,
+        values: impl IntoIterator<Item = (api::Key, api::Value), IntoIter: ExactSizeIterator>,
+    ) -> ws::Request
+    where
+        T: Component<Message: From<Result<ws::Packet<api::ObjectUpdate>, ws::Error>>>,
+    {
+        let mut iter = values.into_iter();
+
+        if iter.len() > 1 {
+            return self
+                .request()
+                .body(api::ObjectUpdateBody {
+                    id,
+                    values: iter.collect(),
+                })
+                .on_packet(ctx.link().callback(T::Message::from))
+                .send();
+        }
+
+        let Some(value) = iter.next() else {
+            return ws::Request::default();
+        };
+
+        self.request()
+            .body(api::ObjectUpdateBodyRef {
+                id,
+                values: core::slice::from_ref(&value),
+            })
+            .on_packet(ctx.link().callback(T::Message::from))
+            .send()
+    }
+
+    fn updates<T>(
+        &self,
+        ctx: &Context<T>,
+        values: impl IntoIterator<Item = (api::Key, api::Value), IntoIter: ExactSizeIterator>,
+    ) -> ws::Request
+    where
+        T: Component<Message: From<Result<ws::Packet<api::Updates>, ws::Error>>>,
+    {
+        let mut iter = values.into_iter();
+
+        if iter.len() > 1 {
+            return self
+                .request()
+                .body(api::UpdatesRequest {
+                    values: iter.collect(),
+                })
+                .on_packet(ctx.link().callback(T::Message::from))
+                .send();
+        }
+
+        let Some(value) = iter.next() else {
+            return ws::Request::default();
+        };
+
+        self.request()
+            .body(api::UpdatesRequestRef {
+                values: core::slice::from_ref(&value),
+            })
+            .on_packet(ctx.link().callback(T::Message::from))
+            .send()
+    }
+}

@@ -101,26 +101,31 @@ impl ws::Handler for Handler {
                     .read::<api::ObjectUpdateBody>()
                     .context("missing request")?;
 
+                if request.values.is_empty() {
+                    outgoing.write(api::Empty);
+                    return Ok(());
+                }
+
                 tracing::debug!(?id, ?request);
 
-                super::object_update(&self.backend, request.id, request.key, &request.value)
-                    .await?;
+                super::object_update(&self.backend, request.id, &request.values).await?;
 
-                self.inner
-                    .database_updates
-                    .lock()
-                    .await
-                    .insert((request.id, request.key), request.value.clone());
+                for (key, value) in request.values {
+                    self.inner
+                        .database_updates
+                        .lock()
+                        .await
+                        .insert((request.id, key), value.clone());
+
+                    self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
+                        channel: incoming.channel(),
+                        id: RemoteId::local(request.id),
+                        key,
+                        value,
+                    });
+                }
 
                 self.inner.database_updates_notify.notify_one();
-
-                self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
-                    channel: incoming.channel(),
-                    id: RemoteId::local(request.id),
-                    key: request.key,
-                    value: request.value,
-                });
-
                 outgoing.write(api::Empty);
             }
             api::Request::GetConfig => {

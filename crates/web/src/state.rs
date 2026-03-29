@@ -3,6 +3,8 @@ use core::mem;
 use core::ops::Sub;
 use core::ops::{Deref, DerefMut};
 
+use api::Value;
+
 /// A wrapper around a value that tracks whether it has changed.
 ///
 /// The [`update`] method assigns a new value and returns `true` if the value
@@ -35,6 +37,24 @@ where
 
         self.0 = new;
         true
+    }
+
+    #[inline]
+    pub(crate) fn value(&self) -> Value
+    where
+        T: Copy,
+        Value: From<T>,
+    {
+        self.0.into()
+    }
+
+    #[inline]
+    pub(crate) fn deref_value(&self) -> Value
+    where
+        T: Deref,
+        Value: for<'a> From<&'a T::Target>,
+    {
+        self.0.deref().into()
     }
 
     /// Replace the inner value and return the old one.

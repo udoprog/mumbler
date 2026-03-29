@@ -38,7 +38,7 @@ pub(crate) struct Props {
     pub(crate) role: Role,
     pub(crate) onselect: Callback<RemoteId>,
     #[prop_or_default]
-    pub(crate) onrescale: Option<Callback<f64>>,
+    pub(crate) onratio: Option<Callback<f64>>,
     #[prop_or_default]
     pub(crate) onclear: Callback<()>,
 }
@@ -145,7 +145,7 @@ impl Component for ImageUpload {
                     ratio={ctx.props().ratio}
                     onconfirm={ctx.link().callback(Msg::CropConfirmed)}
                     oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
-                    rescale={ctx.props().onrescale.clone()}
+                    onratio={ctx.props().onratio.clone()}
                 />
             }
             </>

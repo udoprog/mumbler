@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{SetupChannel, into_target};
+use super::{ChannelExt, SetupChannel, into_target};
 
 pub(crate) enum Msg {
     Channel(Result<ws::Channel, Error>),
@@ -19,7 +19,14 @@ pub(crate) enum Msg {
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     NameChanged(Event),
     SelectColor(api::Color),
-    UpdateResult(Result<Packet<api::ObjectUpdate>, ws::Error>),
+    ObjectUpdate(Result<Packet<api::ObjectUpdate>, ws::Error>),
+}
+
+impl From<Result<Packet<api::ObjectUpdate>, ws::Error>> for Msg {
+    #[inline]
+    fn from(value: Result<Packet<api::ObjectUpdate>, ws::Error>) -> Self {
+        Msg::ObjectUpdate(value)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -163,7 +170,13 @@ impl GroupSettings {
             }
             Msg::SelectColor(color) => {
                 *self.color = Some(color);
-                self._select_color = object_update(&self.channel, ctx, Key::COLOR, color);
+
+                self._select_color = self.channel.object_updates(
+                    ctx,
+                    ctx.props().id.id,
+                    [(Key::COLOR, color.into())],
+                );
+
                 Ok(true)
             }
             Msg::NameChanged(e) => {
@@ -171,10 +184,12 @@ impl GroupSettings {
                 let name = input.value();
 
                 *self.name = name.clone();
-                self._update_name = object_update(&self.channel, ctx, Key::NAME, name);
+                self._update_name =
+                    self.channel
+                        .object_updates(ctx, ctx.props().id.id, [(Key::NAME, name.into())]);
                 Ok(false)
             }
-            Msg::UpdateResult(result) => {
+            Msg::ObjectUpdate(result) => {
                 let result = result?;
                 _ = result.decode()?;
                 Ok(false)
@@ -206,21 +221,4 @@ impl GroupSettings {
             _ => false,
         }
     }
-}
-
-fn object_update(
-    channel: &ws::Channel,
-    ctx: &Context<GroupSettings>,
-    key: Key,
-    value: impl Into<Value>,
-) -> ws::Request {
-    channel
-        .request()
-        .body(api::ObjectUpdateBody {
-            id: ctx.props().id.id,
-            key,
-            value: value.into(),
-        })
-        .on_packet(ctx.link().callback(Msg::UpdateResult))
-        .send()
 }
