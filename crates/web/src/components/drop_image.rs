@@ -212,8 +212,8 @@ impl Inner {
             (Key::HIDDEN, Value::from(true)),
             (Key::IMAGE_ID, Value::from(id.id)),
             (Key::TRANSFORM, Value::from(transform)),
-            (Key::STATIC_WIDTH, Value::from(width)),
-            (Key::STATIC_HEIGHT, Value::from(height)),
+            (Key::WIDTH, Value::from(width)),
+            (Key::HEIGHT, Value::from(height)),
         ]);
 
         let body = api::CreateObjectRequest {

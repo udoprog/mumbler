@@ -216,11 +216,25 @@ pub(crate) fn draw_grid(
     t: &ViewTransform,
     extent: &Extent,
     zoom: f32,
+    color: Color,
 ) {
     const GRID_STEP: f32 = 1.0;
     const EPS: f32 = GRID_STEP * 0.01;
 
-    cx.set_stroke_style_str("#2a2a2a");
+    let stroke_color;
+    let thick_stroke_color;
+
+    tracing::warn!(factor = color.factor());
+
+    if color.is_light() {
+        stroke_color = color.darken(0.2).to_css_string();
+        thick_stroke_color = color.darken(0.4).to_css_string();
+    } else {
+        stroke_color = color.lighten(0.2).to_css_string();
+        thick_stroke_color = color.lighten(0.4).to_css_string();
+    }
+
+    cx.set_stroke_style_str(&stroke_color);
     cx.set_line_width(zoom as f64 * 0.5);
 
     let mut x = (extent.x.start / GRID_STEP).ceil() * GRID_STEP;
@@ -255,7 +269,7 @@ pub(crate) fn draw_grid(
         z += GRID_STEP;
     }
 
-    cx.set_stroke_style_str("#888888");
+    cx.set_stroke_style_str(&thick_stroke_color);
     cx.set_line_width(zoom as f64 * 1.5);
 
     if extent.x.contains(0.0) {

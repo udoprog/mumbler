@@ -48,15 +48,6 @@ where
         self.0.into()
     }
 
-    #[inline]
-    pub(crate) fn deref_value(&self) -> Value
-    where
-        T: Deref,
-        Value: for<'a> From<&'a T::Target>,
-    {
-        self.0.deref().into()
-    }
-
     /// Replace the inner value and return the old one.
     #[inline]
     pub(crate) fn replace(&mut self, new: T) -> Option<T> {

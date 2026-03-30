@@ -249,6 +249,7 @@ impl ImageUpload {
             }
             Msg::SelectImage(id) => {
                 ctx.props().onselect.emit(id);
+                self.gallery_open = false;
                 Ok(true)
             }
             Msg::RemoveImage(id) => {

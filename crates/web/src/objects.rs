@@ -235,7 +235,7 @@ impl TokenObject {
             color: State::new(o.props.get(Key::COLOR).as_color()),
             token_radius: State::new(
                 o.props
-                    .get(Key::TOKEN_RADIUS)
+                    .get(Key::RADIUS)
                     .as_f32()
                     .unwrap_or(DEFAULT_TOKEN_RADIUS),
             ),
@@ -252,7 +252,7 @@ impl TokenObject {
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
-            Key::TOKEN_RADIUS => self
+            Key::RADIUS => self
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
@@ -289,13 +289,13 @@ impl StaticObject {
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
             width: State::new(
                 o.props
-                    .get(Key::STATIC_WIDTH)
+                    .get(Key::WIDTH)
                     .as_f32()
                     .unwrap_or(DEFAULT_STATIC_WIDTH),
             ),
             height: State::new(
                 o.props
-                    .get(Key::STATIC_HEIGHT)
+                    .get(Key::HEIGHT)
                     .as_f32()
                     .unwrap_or(DEFAULT_STATIC_HEIGHT),
             ),
@@ -312,10 +312,10 @@ impl StaticObject {
             Key::COLOR => self.color.update(v.as_color()),
             Key::NAME => self.name.update(v.as_str().to_owned()),
             Key::HIDDEN => self.hidden.update(v.as_bool()),
-            Key::STATIC_WIDTH => self
+            Key::WIDTH => self
                 .width
                 .update(v.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
-            Key::STATIC_HEIGHT => self
+            Key::HEIGHT => self
                 .height
                 .update(v.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
             _ => false,
@@ -353,16 +353,15 @@ impl GroupObject {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct RoomObject {
-    pub(crate) sort: State<Vec<u8>>,
     pub(crate) background: State<Id>,
     pub(crate) extent: State<Extent>,
     pub(crate) show_grid: State<bool>,
+    pub(crate) color: State<Color>,
 }
 
 impl RoomObject {
     pub(crate) fn new(o: &RemoteObject) -> Self {
         Self {
-            sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             background: State::new(o.props.get(Key::ROOM_BACKGROUND).as_id()),
             extent: State::new(
                 o.props
@@ -371,17 +370,25 @@ impl RoomObject {
                     .unwrap_or_else(Extent::arena),
             ),
             show_grid: State::new(o.props.get(Key::SHOW_GRID).as_bool()),
+            color: State::new(
+                o.props
+                    .get(Key::COLOR)
+                    .as_color()
+                    .unwrap_or_else(Color::neutral_background),
+            ),
         }
     }
 
     pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
         match key {
-            Key::SORT => self.sort.update(value.as_bytes().to_vec()),
             Key::ROOM_BACKGROUND => self.background.update(value.as_id()),
             Key::ROOM_EXTENT => self
                 .extent
                 .update(value.as_extent().unwrap_or_else(Extent::arena)),
             Key::SHOW_GRID => self.show_grid.update(value.as_bool()),
+            Key::COLOR => self
+                .color
+                .update(value.as_color().unwrap_or_else(Color::neutral_background)),
             _ => false,
         }
     }
@@ -628,11 +635,6 @@ impl Object {
     #[inline]
     pub(crate) fn is_local_hidden(&self) -> bool {
         *self.local_hidden
-    }
-
-    #[inline]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
     }
 
     #[inline]

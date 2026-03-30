@@ -17,6 +17,7 @@ use web_sys::{
 };
 use yew::prelude::*;
 
+use crate::components::object_settings::ObjectRender;
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::images::Images;
@@ -29,8 +30,8 @@ use crate::state::State;
 use super::render::{self, ViewTransform};
 use super::{
     AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult,
-    DynamicCanvas, GroupSettings, Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject,
-    RenderObjectKind, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
+    DynamicCanvas, Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject, RenderObjectKind,
+    Rooms, SetupChannel, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -40,11 +41,31 @@ const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const SIMULATION_FPS: u32 = 60;
 
+const GROUP_SETTINGS: &[Key] = &[Key::NAME, Key::COLOR];
+
 const ROOM_SETTINGS: &[Key] = &[
     Key::NAME,
+    Key::COLOR,
     Key::SHOW_GRID,
     Key::ROOM_EXTENT,
     Key::ROOM_BACKGROUND,
+];
+
+const STATIC_SETTINGS: &[Key] = &[
+    Key::NAME,
+    Key::COLOR,
+    Key::WIDTH,
+    Key::HEIGHT,
+    Key::RATIO,
+    Key::IMAGE_ID,
+];
+
+const TOKEN_SETTINGS: &[Key] = &[
+    Key::NAME,
+    Key::COLOR,
+    Key::RADIUS,
+    Key::SPEED,
+    Key::IMAGE_ID,
 ];
 
 #[derive(Debug, PartialEq)]
@@ -142,18 +163,45 @@ impl MapModal {
             } => html! {
                  {match object.ty {
                     Type::STATIC => {
-                        html! { <StaticSettings {id} /> }
+                        html! {
+                            <ObjectSettings
+                                {id}
+                                keys={STATIC_SETTINGS}
+                                height_ratio={true}
+                                render={ObjectRender::Static}
+                                />
+                        }
                     }
                     Type::GROUP => {
-                        html! { <GroupSettings {id} /> }
+                        html! {
+                            <ObjectSettings
+                                {id}
+                                keys={GROUP_SETTINGS}
+                                />
+                        }
                     }
                     Type::TOKEN => {
-                        html! { <TokenSettings {id} /> }
+                        html! {
+                            <ObjectSettings
+                                {id}
+                                keys={TOKEN_SETTINGS}
+                                height_ratio={true}
+                                render={ObjectRender::Token}
+                                />
+                        }
                     }
                     Type::ROOM => {
-                        html! { <ObjectSettings {id} keys={ROOM_SETTINGS} /> }
+                        html! {
+                            <ObjectSettings
+                                {id}
+                                keys={ROOM_SETTINGS}
+                                default_color={Color::neutral_background()}
+                                />
+                        }
                     }
-                    _ => html! { <p class="hint">{"Unknown object type"}</p> },
+                    _ => html! {
+                        <p class="hint">{"Unknown object type"}</p>
+                    },
                 }}
             },
             MapModal::Unlock {
@@ -411,7 +459,7 @@ impl MapState {
                     requests._scale_width = self.channel.object_updates(
                         ctx,
                         scale.object_id.id,
-                        [(Key::STATIC_WIDTH, s.width.value())],
+                        [(Key::WIDTH, s.width.value())],
                     );
                 }
 
@@ -421,7 +469,7 @@ impl MapState {
                     requests._scale_height = self.channel.object_updates(
                         ctx,
                         scale.object_id.id,
-                        [(Key::STATIC_HEIGHT, s.height.value())],
+                        [(Key::HEIGHT, s.height.value())],
                     );
                 }
             }
@@ -432,7 +480,7 @@ impl MapState {
                     requests._scale_radius = self.channel.object_updates(
                         ctx,
                         scale.object_id.id,
-                        [(Key::TOKEN_RADIUS, t.token_radius.value())],
+                        [(Key::RADIUS, t.token_radius.value())],
                     );
                 }
             }
@@ -475,6 +523,7 @@ struct Cache {
     background: RemoteId,
     room_icon: &'static str,
     room_name: String,
+    room_color: Color,
 }
 
 impl Cache {
@@ -504,10 +553,11 @@ impl Cache {
             show_grid: *room.show_grid,
             background: RemoteId::new(room_id.peer_id, *room.background),
             room_icon,
-            room_name: match o.name() {
+            room_name: match o.name.as_str() {
                 "" => UNKNOWN_ROOM.to_string(),
                 name => name.to_string(),
             },
+            room_color: *room.color,
         };
     }
 }
@@ -521,6 +571,7 @@ impl Default for Cache {
             background: RemoteId::ZERO,
             room_icon: "question-mark-circle",
             room_name: String::from(COMMON_ROOM),
+            room_color: Color::neutral(),
         }
     }
 }
@@ -778,6 +829,7 @@ impl Component for Map {
             // extent might be modified.
             self.s.update_view = true;
             self.s.update_cache = false;
+
             changed = true;
         }
 
@@ -792,6 +844,7 @@ impl Component for Map {
 
             self.s.update_view = false;
             self.s.redraw = true;
+
             changed = true;
         }
 
@@ -1442,8 +1495,8 @@ impl Map {
                     Type::STATIC,
                     [
                         (Key::HIDDEN, Value::from(true)),
-                        (Key::STATIC_WIDTH, Value::from(1.0_f32)),
-                        (Key::STATIC_HEIGHT, Value::from(1.0_f32)),
+                        (Key::WIDTH, Value::from(1.0_f32)),
+                        (Key::HEIGHT, Value::from(1.0_f32)),
                     ],
                 );
 
@@ -2593,10 +2646,32 @@ impl Map {
 
         if let Some(image) = self.images.get_id(&self.cache.background) {
             render::draw_background(&cx, &self.view, &self.cache.extent, &image)?;
+        } else {
+            let color = self.cache.room_color.to_css_string();
+            cx.set_fill_style_str(&color);
+
+            let start = self.view.to_canvas(Vec3::new(
+                self.cache.extent.x.start,
+                0.0,
+                self.cache.extent.z.start,
+            ));
+            let end = self.view.to_canvas(Vec3::new(
+                self.cache.extent.x.end,
+                0.0,
+                self.cache.extent.z.end,
+            ));
+
+            cx.fill_rect(start.x, start.y, end.x - start.x, end.y - start.y);
         }
 
         if self.cache.show_grid {
-            render::draw_grid(&cx, &self.view, &self.cache.extent, *self.s.zoom);
+            render::draw_grid(
+                &cx,
+                &self.view,
+                &self.cache.extent,
+                *self.s.zoom,
+                self.cache.room_color,
+            );
         }
 
         let selected = self.s.selected;

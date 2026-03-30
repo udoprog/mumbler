@@ -116,13 +116,13 @@ crate::macros::keys! {
         /// source.
         MUMBLE_FOLLOW: Boolean = 16;
         /// Per-object token radius.
-        TOKEN_RADIUS: Float = 17;
+        RADIUS: Float = 17;
         /// Per-object movement speed.
         SPEED: Float = 18;
         /// Width of a static object in world units.
-        STATIC_WIDTH: Float = 19;
+        WIDTH: Float = 19;
         /// Height of a static object in world units.
-        STATIC_HEIGHT: Float = 20;
+        HEIGHT: Float = 20;
         /// Whether to maintain a fixed aspect ratio when resizing a static object.
         RATIO: Float = 23;
         /// An object is locked from further interaction. This prevents clicking on
@@ -172,10 +172,10 @@ impl Key {
             Self::HIDDEN => "hidden",
             Self::LOCAL_HIDDEN => "local-hidden",
             Self::MUMBLE_FOLLOW => "mumble-follow",
-            Self::TOKEN_RADIUS => "token-radius",
+            Self::RADIUS => "radius",
             Self::SPEED => "speed",
-            Self::STATIC_WIDTH => "static-width",
-            Self::STATIC_HEIGHT => "static-height",
+            Self::WIDTH => "static-width",
+            Self::HEIGHT => "static-height",
             Self::RATIO => "ratio",
             Self::LOCKED => "locked",
             Self::SORT => "sort",
@@ -209,10 +209,10 @@ impl Key {
             Self::HIDDEN => "Hidden",
             Self::LOCAL_HIDDEN => "Local Hidden",
             Self::MUMBLE_FOLLOW => "Mumble Follow",
-            Self::TOKEN_RADIUS => "Token Radius",
+            Self::RADIUS => "Radius",
             Self::SPEED => "Speed",
-            Self::STATIC_WIDTH => "Static Width",
-            Self::STATIC_HEIGHT => "Static Height",
+            Self::WIDTH => "Static Width",
+            Self::HEIGHT => "Static Height",
             Self::RATIO => "Ratio",
             Self::LOCKED => "Locked",
             Self::SORT => "Sort",
@@ -246,10 +246,10 @@ impl Key {
             Self::HIDDEN => "Enter Hidden",
             Self::LOCAL_HIDDEN => "Enter Local Hidden",
             Self::MUMBLE_FOLLOW => "Enter Mumble Follow",
-            Self::TOKEN_RADIUS => "Enter Token Radius",
+            Self::RADIUS => "Enter Token Radius",
             Self::SPEED => "Enter Speed",
-            Self::STATIC_WIDTH => "Enter Static Width",
-            Self::STATIC_HEIGHT => "Enter Static Height",
+            Self::WIDTH => "Enter Static Width",
+            Self::HEIGHT => "Enter Static Height",
             Self::RATIO => "Enter Ratio",
             Self::LOCKED => "Enter Locked",
             Self::SORT => "Enter Sort",
@@ -291,9 +291,42 @@ impl Color {
         Self { r, g, b, a }
     }
 
-    /// A nice neutral gray color (default).
+    /// A neutral gray-blue color.
     pub const fn neutral() -> Self {
-        Self::new(0x66, 0xc5, 0xe5, 255)
+        Self::new(0x66, 0xc5, 0xe5, 0xff)
+    }
+
+    /// A neutral background.
+    pub const fn neutral_background() -> Self {
+        Self::new(0x20, 0x20, 0x20, 0xff)
+    }
+
+    /// Get the average color value.
+    pub const fn factor(self) -> u32 {
+        (self.r as u32 + self.g as u32 + self.b as u32) / 3
+    }
+
+    /// Test if the color is considered light.
+    pub const fn is_light(self) -> bool {
+        self.factor() >= 0x80
+    }
+
+    /// Darken the current color with the given factor.
+    pub const fn darken(self, darkness: f32) -> Self {
+        let factor = 1.0 - darkness.clamp(0.0, 1.0);
+        let r = ((self.r as f32) * factor) as u8;
+        let g = ((self.g as f32) * factor) as u8;
+        let b = ((self.b as f32) * factor) as u8;
+        Self::new(r, g, b, self.a)
+    }
+
+    /// Darken the current color with the given factor.
+    pub const fn lighten(self, darkness: f32) -> Self {
+        let factor = darkness.clamp(0.0, 1.0);
+        let r = self.r + (((u8::MAX - self.r) as f32) * factor) as u8;
+        let g = self.g + (((u8::MAX - self.g) as f32) * factor) as u8;
+        let b = self.b + (((u8::MAX - self.b) as f32) * factor) as u8;
+        Self::new(r, g, b, self.a)
     }
 
     /// Convert to a CSS color string.
@@ -613,17 +646,20 @@ impl Properties {
     }
 
     /// Get the value of a property by key.
+    #[inline]
     pub fn get(&self, key: Key) -> &Value {
         static DEFAULT: Value = Value::empty();
         self.values.get(&key).unwrap_or(&DEFAULT)
     }
 
     /// Get the mutable value of a property by key.
+    #[inline]
     pub fn into_mut(&mut self, key: Key) -> &mut Value {
         self.values.entry(key).or_default()
     }
 
     /// Test if the set of properties contains the given key.
+    #[inline]
     pub fn contains(&self, key: Key) -> bool {
         self.values.contains_key(&key)
     }
@@ -631,6 +667,7 @@ impl Properties {
     /// Insert or update a property value by key.
     ///
     /// Inserting an [`Value::empty`] value is the equivalent of removing it.
+    #[inline]
     pub fn insert(&mut self, key: Key, value: Value) -> Value {
         if value.is_empty() {
             return self.remove(key);
@@ -644,6 +681,7 @@ impl Properties {
     }
 
     /// Remove a property by key.
+    #[inline]
     pub fn remove(&mut self, key: Key) -> Value {
         let Some(value) = self.values.remove(&key) else {
             return Value::empty();

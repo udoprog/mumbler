@@ -12,7 +12,7 @@ use self::map::Map;
 
 mod render;
 pub(crate) use self::render::Visibility;
-use self::render::{RenderObject, RenderObjectKind, ViewTransform};
+use self::render::{RenderObject, RenderObjectKind};
 
 mod crop;
 use self::crop::{Crop, Extent};
@@ -32,17 +32,8 @@ use self::rooms::Rooms;
 mod object_settings;
 use self::object_settings::ObjectSettings;
 
-mod token_settings;
-use self::token_settings::TokenSettings;
-
-mod static_settings;
-use self::static_settings::StaticSettings;
-
 mod image_upload;
 use self::image_upload::ImageUpload;
-
-mod group_settings;
-use self::group_settings::GroupSettings;
 
 mod mumble_status;
 use self::mumble_status::MumbleStatus;
