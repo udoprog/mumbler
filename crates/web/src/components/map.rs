@@ -33,7 +33,7 @@ use crate::state::State;
 use super::render::{self, ViewTransform};
 use super::{
     AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DynamicCanvas, GroupSettings,
-    HelpModal, Icon, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
+    Help, Icon, Modal, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
     TokenSettings, UNKNOWN_ROOM,
 };
 
@@ -45,7 +45,7 @@ const ARROW_THRESHOLD: f32 = 0.1;
 const SIMULATION_FPS: u32 = 60;
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Modal {
+pub(crate) enum MapModal {
     Help,
     Rooms,
     Remove { object: ObjectRef },
@@ -53,12 +53,14 @@ pub(crate) enum Modal {
     Unlock { object: ObjectRef },
 }
 
-impl Modal {
+impl MapModal {
     fn update(&mut self, objects: &mut ObjectsRef) -> bool {
         let mut update = false;
 
         match self {
-            Modal::Remove { object } | Modal::Settings { object } | Modal::Unlock { object } => {
+            MapModal::Remove { object }
+            | MapModal::Settings { object }
+            | MapModal::Unlock { object } => {
                 if let Some(o) = objects.get(object.id) {
                     update |= object.update(o);
                 }
@@ -71,25 +73,25 @@ impl Modal {
 
     fn title(&self) -> Html {
         match self {
-            Modal::Help => html! {
+            MapModal::Help => html! {
                 {"Shortcuts"}
             },
-            Modal::Rooms => html! {
+            MapModal::Rooms => html! {
                 {"Rooms"}
             },
-            Modal::Remove { object, .. } => html! {
+            MapModal::Remove { object, .. } => html! {
                 <>
                     {"Remove "}
                     {object.name()}
                     {"?"}
                 </>
             },
-            Modal::Settings { object, .. } => html! {
+            MapModal::Settings { object, .. } => html! {
                 <>
                     {object.title()}
                 </>
             },
-            Modal::Unlock { object, .. } => html! {
+            MapModal::Unlock { object, .. } => html! {
                 <>
                     {"Object "}
                     <span class="object-bullet">{object.name()}</span>
@@ -101,16 +103,16 @@ impl Modal {
 
     fn view(&self, ctx: &Context<Map>) -> Html {
         match *self {
-            Modal::Help => html! {
-                <HelpModal />
+            MapModal::Help => html! {
+                <Help />
             },
-            Modal::Rooms => html! {
+            MapModal::Rooms => html! {
                 <Rooms
                     onopensettings={ctx.link().callback(Msg::OpenSettings)}
                     onrequestdelete={ctx.link().callback(Msg::ConfirmRemove)}
                     />
             },
-            Modal::Remove {
+            MapModal::Remove {
                 object: ref object @ ObjectRef { id, .. },
                 ..
             } => html! {
@@ -132,7 +134,7 @@ impl Modal {
                     </div>
                 </>
             },
-            Modal::Settings {
+            MapModal::Settings {
                 object: ref object @ ObjectRef { id, .. },
             } => html! {
                  {match object.ty {
@@ -151,7 +153,7 @@ impl Modal {
                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
                 }}
             },
-            Modal::Unlock {
+            MapModal::Unlock {
                 object: ObjectRef { id, .. },
                 ..
             } => html! {
@@ -182,7 +184,7 @@ struct MapState {
     transforms: HashSet<RemoteId>,
     selected: RemoteId,
     context_menu: Option<ContextMenu>,
-    modal: Option<Modal>,
+    modal: Option<MapModal>,
     _toggle_mumble_request: ws::Request,
     redraw: bool,
     update_cache: bool,
@@ -295,7 +297,7 @@ impl MapState {
         if self
             .modal
             .as_ref()
-            .is_some_and(|m| matches!(m, Modal::Remove { object } if object.id == id))
+            .is_some_and(|m| matches!(m, MapModal::Remove { object } if object.id == id))
         {
             self.modal = None;
         }
@@ -671,7 +673,7 @@ pub(crate) enum Msg {
     ToggleLocked(RemoteId),
     ToggleMumbleObject(RemoteId),
     ObjectUpdate(Result<Packet<api::ObjectUpdate>, ws::Error>),
-    OpenModal(Modal),
+    OpenModal(MapModal),
     Wheel(WheelEvent),
     ImageLoaded(Result<(), Error>),
     CanvasLoaded(HtmlCanvasElement),
@@ -1040,7 +1042,7 @@ impl Component for Map {
 
             let help = {
                 html! {
-                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenModal(Modal::Help))}>
+                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Help))}>
                         <Icon name="question-mark-circle" />
                     </button>
                 }
@@ -1056,7 +1058,7 @@ impl Component for Map {
                     {locked}
 
                     <section class="icon-group">
-                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenModal(Modal::Rooms))}>
+                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Rooms))}>
                             <Icon name={self.cache.room_icon} />
                             <span>{self.cache.room_name.clone()}</span>
                         </button>
@@ -1168,9 +1170,9 @@ impl Component for Map {
                 }
 
                 if let Some(modal) = &self.s.modal {
-                    <c::Modal title={modal.title()} class="rows" onclose={ctx.link().callback(|_| Msg::CloseModal)}>
+                    <Modal title={modal.title()} class="rows" onclose={ctx.link().callback(|_| Msg::CloseModal)}>
                         {modal.view(ctx)}
-                    </c::Modal>
+                    </Modal>
                 }
 
             </>
@@ -1383,9 +1385,9 @@ impl Map {
                 };
 
                 let modal = if objects.is_locked(o.id) {
-                    Modal::Unlock { object: o.as_ref() }
+                    MapModal::Unlock { object: o.as_ref() }
                 } else {
-                    Modal::Settings { object: o.as_ref() }
+                    MapModal::Settings { object: o.as_ref() }
                 };
 
                 self.s.modal = Some(modal);
@@ -1648,9 +1650,9 @@ impl Map {
                 };
 
                 let modal = if objects.is_locked(o.id) {
-                    Modal::Unlock { object: o.as_ref() }
+                    MapModal::Unlock { object: o.as_ref() }
                 } else {
-                    Modal::Remove { object: o.as_ref() }
+                    MapModal::Remove { object: o.as_ref() }
                 };
 
                 self.s.modal = Some(modal);
@@ -2163,7 +2165,7 @@ impl Map {
             "Escape" => Ok(self.cancel()),
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
-                    |m| matches!(m, Modal::Remove { object } if object.id == self.s.selected),
+                    |m| matches!(m, MapModal::Remove { object } if object.id == self.s.selected),
                 ) {
                     return Ok(false);
                 }
@@ -2173,8 +2175,8 @@ impl Map {
             }
             "F1" | "?" => {
                 self.s.modal = match self.s.modal {
-                    Some(Modal::Help) => None,
-                    _ => Some(Modal::Help),
+                    Some(MapModal::Help) => None,
+                    _ => Some(MapModal::Help),
                 };
 
                 Ok(true)
@@ -2194,7 +2196,7 @@ impl Map {
             return false;
         };
 
-        if let Modal::Remove { object } = modal {
+        if let MapModal::Remove { object } = modal {
             self.remove_object_remote(ctx, object.id);
         }
 
@@ -2570,7 +2572,7 @@ impl Map {
         if objects.is_locked(id)
             && let Some(o) = objects.get(id)
         {
-            self.s.modal = Some(Modal::Unlock { object: o.as_ref() });
+            self.s.modal = Some(MapModal::Unlock { object: o.as_ref() });
             return Ok(true);
         }
 

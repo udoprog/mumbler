@@ -7,16 +7,18 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
+use crate::components::crop::Extent;
 use crate::error::Error;
 use crate::log;
 
-use super::{CropModal, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
+use super::{Crop, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
     Error(Error),
     Channel(Result<ws::Channel, Error>),
     FileSelected(Event),
     FileRead(String, Result<Vec<u8>, gloo::file::FileReadError>),
+    CropDrag(Option<Extent>),
     CropConfirmed(api::CropRegion),
     CropCancelled,
     Uploaded(Result<Packet<api::UploadImage>, ws::Error>),
@@ -24,7 +26,7 @@ pub(crate) enum Msg {
     CloseGallery,
     SelectImage(RemoteId),
     RemoveImage(RemoteId),
-    RemoveResult(Result<Packet<api::RemoveImage>, ws::Error>),
+    RemoveResult(RemoteId, Result<Packet<api::RemoveImage>, ws::Error>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -52,6 +54,7 @@ pub(crate) struct ImageUpload {
     _upload_image: ws::Request,
     crop_source_data: Option<(String, Vec<u8>)>,
     crop_source_url: Option<TemporaryUrl>,
+    drag: Option<Extent>,
     gallery_open: bool,
     uploading: bool,
 }
@@ -75,6 +78,7 @@ impl Component for ImageUpload {
             _upload_image: ws::Request::new(),
             crop_source_data: None,
             crop_source_url: None,
+            drag: None,
             gallery_open: false,
             uploading: false,
         }
@@ -140,13 +144,16 @@ impl Component for ImageUpload {
             }
 
             if let Some(source_url) = &self.crop_source_url {
-                <CropModal
-                    source_url={(*source_url).to_string()}
-                    ratio={ctx.props().ratio}
-                    onconfirm={ctx.link().callback(Msg::CropConfirmed)}
-                    oncancel={ctx.link().callback(|_| Msg::CropCancelled)}
-                    onratio={ctx.props().onratio.clone()}
-                />
+                <Modal title="Crop Image" class="rows" onclose={ctx.link().callback(|_| Msg::CropCancelled)}>
+                    <Crop
+                        drag={self.drag}
+                        ondrag={ctx.link().callback(Msg::CropDrag)}
+                        source_url={(*source_url).to_string()}
+                        ratio={ctx.props().ratio}
+                        onconfirm={ctx.link().callback(Msg::CropConfirmed)}
+                        onratio={ctx.props().onratio.clone()}
+                    />
+                </Modal>
             }
             </>
         }
@@ -192,6 +199,10 @@ impl ImageUpload {
                 self.crop_source_data = Some((content_type, data));
                 Ok(false)
             }
+            Msg::CropDrag(drag) => {
+                self.drag = drag;
+                Ok(true)
+            }
             Msg::CropConfirmed(crop) => {
                 let Some((content_type, data)) = self.crop_source_data.take() else {
                     return Err("image data not ready".into());
@@ -234,7 +245,6 @@ impl ImageUpload {
             }
             Msg::SelectImage(id) => {
                 ctx.props().onselect.emit(id);
-                self.gallery_open = false;
                 Ok(true)
             }
             Msg::RemoveImage(id) => {
@@ -242,14 +252,22 @@ impl ImageUpload {
                     .channel
                     .request()
                     .body(api::RemoveImageRequest { id: id.id })
-                    .on_packet(ctx.link().callback(Msg::RemoveResult))
+                    .on_packet(
+                        ctx.link()
+                            .callback(move |packet| Msg::RemoveResult(id, packet)),
+                    )
                     .send();
+
                 Ok(false)
             }
-            Msg::RemoveResult(body) => {
+            Msg::RemoveResult(id, body) => {
                 let body = body?;
                 _ = body.decode()?;
-                ctx.props().onselect.emit(RemoteId::ZERO);
+
+                if id == ctx.props().selected {
+                    ctx.props().onselect.emit(RemoteId::ZERO);
+                }
+
                 Ok(false)
             }
             Msg::OpenGallery => {

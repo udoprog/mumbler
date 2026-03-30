@@ -12,8 +12,8 @@ pub(crate) use self::map::Map;
 
 pub(crate) mod render;
 
-mod crop_modal;
-pub(crate) use self::crop_modal::CropModal;
+mod crop;
+pub(crate) use self::crop::Crop;
 
 mod image_gallery;
 pub(crate) use self::image_gallery::ImageGallery;
@@ -54,8 +54,8 @@ pub(crate) use self::navigation::{Navigation, Route};
 mod object_list;
 use self::object_list::ObjectList;
 
-mod help_modal;
-use self::help_modal::HelpModal;
+mod help;
+use self::help::Help;
 
 mod dynamic_canvas;
 use self::dynamic_canvas::DynamicCanvas;

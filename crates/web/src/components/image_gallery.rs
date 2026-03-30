@@ -97,7 +97,10 @@ impl Component for ImageGallery {
             .iter()
             .map(|image| {
                 let id = image.id;
-                let on_select = ctx.link().callback(move |_| Msg::Select(id));
+
+                let on_select = ctx.link().callback(move |_: MouseEvent| {
+                    Msg::Select(id)
+                });
 
                 let on_delete = ctx.props().ondelete.reform(move |ev: MouseEvent| {
                     ev.stop_propagation();
@@ -113,7 +116,7 @@ impl Component for ImageGallery {
                 html! {
                     <div class="image-entry">
                         <img src={format!("/api/image/{}", image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
-                        <button class="btn danger floating icon" onclick={on_delete} title="Remove image">{"ⓧ"}</button>
+                        <button class="btn danger floating icon" onclick={on_delete} title="Remove Image">{"ⓧ"}</button>
                     </div>
                 }
             });

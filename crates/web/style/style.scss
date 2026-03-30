@@ -442,6 +442,7 @@ body {
         right: 4px;
         opacity: 0;
         transition: opacity 0.15s;
+        z-index: 1000;
     }
 
     &:hover .btn.floating {

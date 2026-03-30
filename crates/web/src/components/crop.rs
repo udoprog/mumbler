@@ -3,10 +3,6 @@ use core::ops::{Add, Div, Sub};
 use web_sys::{HtmlImageElement, MouseEvent, PointerEvent};
 use yew::prelude::*;
 
-use crate::error::Error;
-
-use super::Modal;
-
 const HANDLES: &[(&str, Dir)] = &[
     ("nw", Dir::NW),
     ("n", Dir::N),
@@ -80,21 +76,29 @@ impl Selection {
         }
     }
 
-    fn from_drag(a: Vec2, b: Vec2, ratio: Option<f64>) -> Self {
-        let d = b - a;
+    fn from_extent(extent: &Extent, ratio: Option<f64>) -> Self {
+        let delta = extent.p2 - extent.p1;
 
         let size = if let Some(ratio) = ratio {
-            let height = (d.x.abs() / ratio).min(d.y.abs());
+            let height = (delta.x.abs() / ratio).min(delta.y.abs());
             let width = height * ratio;
             Vec2::new(width, height)
         } else {
-            Vec2::new(d.x.abs(), d.y.abs())
+            Vec2::new(delta.x.abs(), delta.y.abs())
         };
 
         let size = size.max(Vec2::ZERO);
 
-        let x = if d.x >= 0.0 { a.x } else { a.x - size.x };
-        let y = if d.y >= 0.0 { a.y } else { a.y - size.y };
+        let x = if delta.x >= 0.0 {
+            extent.p1.x
+        } else {
+            extent.p1.x - size.x
+        };
+        let y = if delta.y >= 0.0 {
+            extent.p1.y
+        } else {
+            extent.p1.y - size.y
+        };
 
         Self {
             pos: Vec2::new(x, y),
@@ -113,8 +117,11 @@ impl Selection {
     }
 
     #[inline]
-    fn to_drag(self) -> (Vec2, Vec2) {
-        (self.pos, self.bottom_right())
+    fn to_extent(self) -> Extent {
+        Extent {
+            p1: self.pos,
+            p2: self.bottom_right(),
+        }
     }
 
     #[inline]
@@ -226,9 +233,10 @@ struct ResizeState {
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
+    pub(crate) drag: Option<Extent>,
+    pub(crate) ondrag: Callback<Option<Extent>>,
     pub(crate) source_url: AttrValue,
     pub(crate) onconfirm: Callback<api::CropRegion>,
-    pub(crate) oncancel: Callback<()>,
     #[prop_or_default]
     pub(crate) onratio: Option<Callback<f64>>,
     #[prop_or_default]
@@ -241,16 +249,19 @@ pub(crate) enum Msg {
     PointerDown(PointerEvent),
     PointerMove(PointerEvent),
     PointerUp(PointerEvent),
-    ClearSelection,
     SelectAll,
     Rescale,
     Confirm,
-    Cancel,
 }
 
-pub(crate) struct CropModal {
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Extent {
+    p1: Vec2,
+    p2: Vec2,
+}
+
+pub(crate) struct Crop {
     empty_crop_region: bool,
-    drag: Option<(Vec2, Vec2)>,
     dragging: bool,
     move_state: Option<MoveState>,
     resize_state: Option<ResizeState>,
@@ -258,14 +269,13 @@ pub(crate) struct CropModal {
     div_ref: NodeRef,
 }
 
-impl Component for CropModal {
+impl Component for Crop {
     type Message = Msg;
     type Properties = Props;
 
     fn create(_: &Context<Self>) -> Self {
         Self {
             empty_crop_region: false,
-            drag: None,
             dragging: false,
             move_state: None,
             resize_state: None,
@@ -275,12 +285,43 @@ impl Component for CropModal {
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        match self.try_update(ctx, msg) {
-            Ok(changed) => changed,
-            Err(error) => {
-                tracing::error!(%error, "crop_modal::update");
-                true
+        match msg {
+            Msg::MoveStart(e) => {
+                self.move_start(ctx, e);
+                false
             }
+            Msg::ResizeStart(e, dir) => {
+                self.resize_start(ctx, e, dir);
+                false
+            }
+            Msg::PointerDown(e) => self.pointer_down(ctx, e),
+            Msg::PointerMove(e) => self.pointer_move(ctx, e),
+            Msg::PointerUp(e) => self.pointer_up(ctx, e),
+            Msg::SelectAll => {
+                let selection = Selection::max_centered(self.image_bounds(), ctx.props().ratio);
+                ctx.props().ondrag.emit(Some(selection.to_extent()));
+                false
+            }
+            Msg::Rescale => {
+                let Some(onratio) = &ctx.props().onratio else {
+                    return false;
+                };
+
+                let bounds = self.image_bounds();
+
+                tracing::warn!(
+                    ?bounds,
+                    ratio = bounds.x / bounds.y,
+                    "rescaling crop selection"
+                );
+
+                onratio.emit(bounds.x / bounds.y);
+                ctx.props()
+                    .ondrag
+                    .emit(Some(Selection::max_centered(bounds, None).to_extent()));
+                false
+            }
+            Msg::Confirm => self.on_confirm(ctx),
         }
     }
 
@@ -306,7 +347,7 @@ impl Component for CropModal {
         let selection_class = classes!("crop-selection", self.dragging.then_some("dragging"));
 
         html! {
-            <Modal title="Crop Image" onclose={ctx.link().callback(|_| Msg::Cancel)} onclick={ctx.link().callback(|_| Msg::ClearSelection)} class="rows">
+            <>
                 <p class="hint">{"Drag on the image to select a crop region."}</p>
 
                 <div class="crop-area" onclick={stop_propagation}>
@@ -353,20 +394,16 @@ impl Component for CropModal {
                     }}
 
                     <section class="fill" />
-
-                    <button class="btn danger right" onclick={ctx.link().callback(|_| Msg::Cancel)}>
-                        {"Cancel"}
-                    </button>
                 </div>
-            </Modal>
+            </>
         }
     }
 }
 
-impl CropModal {
+impl Crop {
     fn selection(&self, ctx: &Context<Self>) -> Option<Selection> {
-        let (a, b) = self.drag?;
-        Some(Selection::from_drag(a, b, ctx.props().ratio))
+        let extent = ctx.props().drag.as_ref()?;
+        Some(Selection::from_extent(extent, ctx.props().ratio))
     }
 
     fn image_bounds(&self) -> Vec2 {
@@ -382,65 +419,18 @@ impl CropModal {
         }
     }
 
-    fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
-        match msg {
-            Msg::MoveStart(e) => {
-                self.move_start(ctx, e);
-                Ok(false)
-            }
-            Msg::ResizeStart(e, dir) => {
-                self.resize_start(ctx, e, dir);
-                Ok(false)
-            }
-            Msg::PointerDown(e) => Ok(self.pointer_down(e)),
-            Msg::PointerMove(e) => Ok(self.pointer_move(ctx, e)),
-            Msg::PointerUp(e) => Ok(self.pointer_up(ctx, e)),
-            Msg::ClearSelection => {
-                self.drag = None;
-                Ok(true)
-            }
-            Msg::SelectAll => {
-                let selection = Selection::max_centered(self.image_bounds(), ctx.props().ratio);
-                self.drag = Some(selection.to_drag());
-                Ok(true)
-            }
-            Msg::Rescale => {
-                let Some(onratio) = &ctx.props().onratio else {
-                    return Ok(false);
-                };
-
-                let bounds = self.image_bounds();
-
-                tracing::warn!(
-                    ?bounds,
-                    ratio = bounds.x / bounds.y,
-                    "rescaling crop selection"
-                );
-
-                onratio.emit(bounds.x / bounds.y);
-
-                self.drag = Some(Selection::max_centered(bounds, None).to_drag());
-                Ok(true)
-            }
-            Msg::Confirm => self.on_confirm(ctx),
-            Msg::Cancel => {
-                ctx.props().oncancel.emit(());
-                Ok(false)
-            }
-        }
-    }
-
-    fn pointer_down(&mut self, ev: PointerEvent) -> bool {
+    fn pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> bool {
         if ev.button() != 0 || self.dragging {
             return false;
         }
 
+        self.dragging = true;
+
         self.capture_pointer(&ev);
 
         let p = Vec2::offset(&ev).clamp(Vec2::ZERO, self.image_bounds());
-        self.drag = Some((p, p));
+        ctx.props().ondrag.emit(Some(Extent { p1: p, p2: p }));
         self.move_state = None;
-        self.dragging = true;
         true
     }
 
@@ -499,33 +489,32 @@ impl CropModal {
         if let Some(rs) = &self.resize_state {
             let delta = Vec2::client(&ev) - rs.start;
 
-            self.drag = Some(
+            let drag = Some(
                 rs.selection
                     .resized(rs.dir, delta, bounds, ctx.props().ratio)
-                    .to_drag(),
+                    .to_extent(),
             );
 
-            return true;
+            ctx.props().ondrag.emit(drag);
+            return false;
         }
 
         if let Some(ms) = &self.move_state {
             let delta = Vec2::client(&ev) - ms.start;
 
-            if delta == Vec2::ZERO {
-                self.drag = None;
-            } else {
-                self.drag = Some(ms.selection.moved(delta, bounds).to_drag());
-            }
+            ctx.props()
+                .ondrag
+                .emit(Some(ms.selection.moved(delta, bounds).to_extent()));
 
-            return true;
+            return false;
         }
 
-        if let Some((anchor, _)) = self.drag {
+        if let Some(Extent { p1, .. }) = ctx.props().drag {
             let cursor = Vec2::offset(&ev).clamp(Vec2::ZERO, bounds);
-            self.drag = Some((anchor, cursor));
+            ctx.props().ondrag.emit(Some(Extent { p1, p2: cursor }));
         }
 
-        true
+        false
     }
 
     fn pointer_up(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> bool {
@@ -533,9 +522,9 @@ impl CropModal {
             return false;
         }
 
-        let bounds = self.image_bounds();
-
         self.dragging = false;
+
+        let bounds = self.image_bounds();
 
         if let Some(rs) = self.resize_state.take() {
             let delta = Vec2::client(&ev) - rs.start;
@@ -544,45 +533,46 @@ impl CropModal {
                 .selection
                 .resized(rs.dir, delta, bounds, ctx.props().ratio);
 
-            self.drag = if new.size.y < MIN_SIZE {
+            ctx.props().ondrag.emit(if new.size.y < MIN_SIZE {
                 None
             } else {
-                Some(new.to_drag())
-            };
+                Some(new.to_extent())
+            });
 
             return true;
         }
 
         if let Some(ms) = self.move_state.take() {
             let delta = Vec2::client(&ev) - ms.start;
-
-            self.drag = Some(ms.selection.moved(delta, bounds).to_drag());
+            ctx.props()
+                .ondrag
+                .emit(Some(ms.selection.moved(delta, bounds).to_extent()));
             return true;
         }
 
-        if let Some((anchor, _)) = self.drag {
-            let cursor = Vec2::offset(&ev).clamp(Vec2::ZERO, bounds);
+        if let Some(Extent { p1, .. }) = ctx.props().drag {
+            let p2 = Vec2::offset(&ev).clamp(Vec2::ZERO, bounds);
 
-            if anchor == cursor {
-                self.drag = None;
+            let drag = if p2.manhattan_distance(p1) < MIN_SIZE {
+                None
             } else {
-                self.drag = Some((anchor, cursor));
-            }
+                Some(Extent { p1, p2 })
+            };
 
+            ctx.props().ondrag.emit(drag);
             return true;
         }
 
         true
     }
 
-    fn on_confirm(&mut self, ctx: &Context<Self>) -> Result<bool, Error> {
-        let img = self
-            .image_ref
-            .cast::<HtmlImageElement>()
-            .ok_or("no crop image")?;
+    fn on_confirm(&mut self, ctx: &Context<Self>) -> bool {
+        let Some(img) = self.image_ref.cast::<HtmlImageElement>() else {
+            return false;
+        };
 
         let Some(selection) = self.selection(ctx) else {
-            return Ok(false);
+            return false;
         };
 
         let client = Vec2::new(img.client_width() as f64, img.client_height() as f64);
@@ -590,11 +580,11 @@ impl CropModal {
 
         let Some(region) = selection.to_crop_region(client, natural) else {
             self.empty_crop_region = true;
-            return Ok(true);
+            return true;
         };
 
         ctx.props().onconfirm.emit(region);
-        Ok(false)
+        false
     }
 }
 
@@ -633,7 +623,7 @@ impl Axis {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 struct Vec2 {
     x: f64,
     y: f64,
@@ -645,6 +635,16 @@ impl Vec2 {
     #[inline]
     fn new(x: f64, y: f64) -> Self {
         Self { x, y }
+    }
+
+    #[inline]
+    fn manhattan(self) -> f64 {
+        self.x.abs() + self.y.abs()
+    }
+
+    #[inline]
+    fn manhattan_distance(self, other: Self) -> f64 {
+        (self - other).manhattan()
     }
 
     #[inline]
