@@ -2,25 +2,21 @@ use core::num::NonZeroU32;
 use std::collections::{HashMap, HashSet};
 
 use api::{
-    AtomicIds, Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId,
-    RemoteUpdateBody, Role, StableId, Type, UpdateBody, Value, Vec3,
+    AtomicIds, Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId, RemoteObject,
+    RemoteUpdateBody, StableId, Type, UpdateBody, Value, Vec3,
 };
 use gloo::events::EventListener;
-use gloo::file::callbacks::{FileReader, read_as_bytes};
 use gloo::timers::callback::Interval;
 use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen::closure::Closure;
 use web_sys::{
-    CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, HtmlImageElement, KeyboardEvent,
-    MouseEvent, WheelEvent, Window,
+    CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent,
+    Window,
 };
 use yew::prelude::*;
 
-use crate::components as c;
-use crate::components::render::{RenderObject, RenderObjectKind};
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::images::Images;
@@ -32,9 +28,9 @@ use crate::state::State;
 
 use super::render::{self, ViewTransform};
 use super::{
-    AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DynamicCanvas, GroupSettings,
-    Help, Icon, Modal, ObjectList, RoomSettings, Rooms, SetupChannel, StaticSettings, TemporaryUrl,
-    TokenSettings, UNKNOWN_ROOM,
+    AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult,
+    DynamicCanvas, GroupSettings, Help, Icon, Modal, ObjectList, RenderObject, RenderObjectKind,
+    RoomSettings, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -522,45 +518,6 @@ impl Default for Cache {
     }
 }
 
-struct DropImage {
-    id: NonZeroU32,
-    _onerror: Closure<dyn FnMut()>,
-    _onload: Closure<dyn FnMut()>,
-    _img: HtmlImageElement,
-    _url: TemporaryUrl,
-    bytes: Option<Vec<u8>>,
-    content_type: String,
-    file_reader: Option<FileReader>,
-    pixel_size: Option<(u32, u32)>,
-    world_pos: Vec3,
-    world_size: Option<(f32, f32)>,
-    _upload_image: ws::Request,
-    _create_dropped_object: ws::Request,
-}
-
-impl DropImage {
-    #[inline]
-    fn is_ready_for_upload(&self) -> bool {
-        self.world_size.is_some() && self.pixel_size.is_some() && self.bytes.is_some()
-    }
-
-    #[inline]
-    fn compute_world_image_size(width: u32, height: u32) -> (f32, f32) {
-        if width == 0 || height == 0 {
-            return (2.0, 2.0);
-        }
-
-        let width = width as f32;
-        let height = height as f32;
-
-        if width >= height {
-            (2.0, 2.0 * (height / width))
-        } else {
-            (2.0 * (width / height), 2.0)
-        }
-    }
-}
-
 /// State for the right-click context menu.
 struct ContextMenu {
     object_id: RemoteId,
@@ -587,6 +544,7 @@ pub(crate) struct Map {
     ids: AtomicIds,
     log: log::Log,
     s: MapState,
+    ws: ws::Handle,
     _setup_channel: SetupChannel,
     _create_group: ws::Request,
     _create_object: ws::Request,
@@ -605,7 +563,7 @@ pub(crate) struct Map {
     simulation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
     drag_over: Option<DragOver>,
-    dropped_images: Vec<DropImage>,
+    dropped_images: Vec<(NonZeroU32, DropImage)>,
     images: Images,
     look_at_requests: HashMap<RemoteId, ws::Request>,
     mouse: Option<Vec3>,
@@ -649,10 +607,7 @@ pub(crate) enum Msg {
     DragOver(DragOver),
     CanvasDragOver(DragEvent),
     DropImage(DragEvent),
-    DropImageLoaded(NonZeroU32, u32, u32),
-    DropImageData(NonZeroU32, Result<Vec<u8>, gloo::file::FileReadError>),
-    DropImageUploaded(NonZeroU32, Result<Packet<api::UploadImage>, ws::Error>),
-    DropObjectCreated(NonZeroU32, Result<Packet<api::CreateObject>, ws::Error>),
+    DropImageUpload(NonZeroU32, DropImageResult),
     Initialize(Result<Packet<api::InitializeMap>, ws::Error>),
     KeyDown(KeyboardEvent),
     KeyUp(KeyboardEvent),
@@ -711,6 +666,11 @@ impl Component for Map {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         let link = ctx.link().clone();
         let _keydown_listener = EventListener::new(&document, "keydown", move |e| {
             if let Some(e) = e.dyn_ref::<KeyboardEvent>() {
@@ -729,7 +689,8 @@ impl Component for Map {
             ids: AtomicIds::new(0),
             log,
             s: MapState::new(window),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            ws: ws.clone(),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
@@ -1238,7 +1199,7 @@ impl Map {
     }
 
     fn on_drop_image(&mut self, ctx: &Context<Self>, ev: DragEvent) -> Result<bool, Error> {
-        let world_pos = self.view.to_world(ev.offset());
+        let position = self.view.to_world(ev.offset());
 
         let Some(dt) = ev.data_transfer() else {
             return Ok(false);
@@ -1265,103 +1226,21 @@ impl Map {
                 continue;
             };
 
-            let url = TemporaryUrl::create(&file, ctx.link().callback(Msg::Error))?;
-
-            let img = HtmlImageElement::new()?;
-            let link = ctx.link().clone();
-            let img_clone = img.clone();
-
-            let onload = Closure::<dyn FnMut()>::new(move || {
-                let w = img_clone.natural_width();
-                let h = img_clone.natural_height();
-                link.send_message(Msg::DropImageLoaded(id, w, h));
-            });
-
-            let error_link = ctx.link().clone();
-
-            let onerror = Closure::<dyn FnMut()>::new(move || {
-                error_link.send_message(Msg::DropImageLoaded(id, 0, 0));
-            });
-
-            img.set_onload(Some(onload.as_ref().unchecked_ref()));
-            img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-            img.set_src(&url);
-
-            let gloo_file = gloo::file::File::from(file);
-
-            let link = ctx.link().clone();
-
-            let file_reader = read_as_bytes(&gloo_file, move |result| {
-                link.send_message(Msg::DropImageData(id, result));
-            });
-
-            self.dropped_images.push(DropImage {
-                id,
-                _onerror: onerror,
-                _onload: onload,
-                _img: img,
-                _url: url,
-                bytes: None,
+            let image = DropImage::new(
+                self.ws.clone(),
+                Type::STATIC,
                 content_type,
-                file_reader: Some(file_reader),
-                pixel_size: None,
-                world_pos,
-                world_size: None,
-                _upload_image: ws::Request::new(),
-                _create_dropped_object: ws::Request::new(),
-            });
+                file,
+                position,
+                ctx.link()
+                    .callback(move |result| Msg::DropImageUpload(id, result)),
+            )?;
 
+            self.dropped_images.push((id, image));
             update = true;
         }
 
         Ok(update)
-    }
-
-    fn try_create_dropped_object(
-        &mut self,
-        ctx: &Context<Self>,
-        id: NonZeroU32,
-    ) -> Result<bool, Error> {
-        let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
-            return Ok(false);
-        };
-
-        if !drop_image.is_ready_for_upload() {
-            return Ok(false);
-        }
-
-        let Some((image_width, image_height)) = drop_image.pixel_size else {
-            return Ok(false);
-        };
-
-        let Some(data) = drop_image.bytes.take() else {
-            return Ok(false);
-        };
-
-        drop_image._upload_image = self
-            .s
-            .channel
-            .request()
-            .body(api::UploadImageRequestRef {
-                content_type: &drop_image.content_type,
-                role: Role::STATIC,
-                crop: api::CropRegion {
-                    x1: 0,
-                    y1: 0,
-                    x2: image_width,
-                    y2: image_height,
-                },
-                sizing: api::ImageSizing::Crop,
-                size: 512,
-                data: &data,
-            })
-            .on_packet(
-                ctx.link()
-                    .callback(move |result| Msg::DropImageUploaded(id, result)),
-            )
-            .send();
-
-        Ok(false)
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
@@ -1468,79 +1347,19 @@ impl Map {
                 ev.prevent_default();
                 self.on_drop_image(ctx, ev)
             }
-            Msg::DropImageLoaded(id, width, height) => {
-                let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
-                    return Ok(false);
-                };
-
-                drop_image.world_size = Some(DropImage::compute_world_image_size(width, height));
-                drop_image.pixel_size = Some((width, height));
-                self.try_create_dropped_object(ctx, id)
-            }
-            Msg::DropImageData(id, result) => match result {
-                Ok(data) => {
-                    let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id)
-                    else {
-                        return Ok(false);
-                    };
-
-                    drop_image.bytes = Some(data);
-                    drop_image.file_reader = None;
-                    self.try_create_dropped_object(ctx, id)
-                }
-                Err(err) => {
-                    self.dropped_images.retain(|d| d.id != id);
-
-                    self.log.error(
-                        "drop image",
-                        Error::from(anyhow::anyhow!("file read error: {err}")),
-                    );
+            Msg::DropImageUpload(id, result) => match result {
+                DropImageResult::Ok => {
+                    self.dropped_images.retain(|(i, _)| *i != id);
                     Ok(true)
                 }
+                DropImageResult::Err(error) => {
+                    self.log.error("drop image upload", error);
+                    self.dropped_images.retain(|(i, _)| *i != id);
+                    Ok(true)
+                }
+                DropImageResult::RemoteObject(_result) => Ok(false),
+                DropImageResult::Image(_image) => Ok(false),
             },
-            Msg::DropImageUploaded(id, result) => {
-                let body = result?;
-                let body = body.decode()?;
-
-                let Some(drop_image) = self.dropped_images.iter_mut().find(|d| d.id == id) else {
-                    return Ok(false);
-                };
-
-                let world_pos = drop_image.world_pos;
-                let (width, height) = drop_image.world_size.unwrap_or((2.0, 2.0));
-
-                let transform = api::Transform::new(world_pos, api::Vec3::FORWARD);
-
-                let body = api::CreateObjectRequest {
-                    ty: Type::STATIC,
-                    props: api::Properties::from_iter([
-                        (Key::HIDDEN, Value::from(true)),
-                        (Key::IMAGE_ID, Value::from(body.image.id.id)),
-                        (Key::TRANSFORM, Value::from(transform)),
-                        (Key::STATIC_WIDTH, Value::from(width)),
-                        (Key::STATIC_HEIGHT, Value::from(height)),
-                    ]),
-                };
-
-                drop_image._create_dropped_object = self
-                    .s
-                    .channel
-                    .request()
-                    .body(body)
-                    .on_packet(
-                        ctx.link()
-                            .callback(move |packet| Msg::DropObjectCreated(id, packet)),
-                    )
-                    .send();
-
-                Ok(true)
-            }
-            Msg::DropObjectCreated(id, body) => {
-                let body = body?;
-                let _ = body.decode()?;
-                self.dropped_images.retain(|d| d.id != id);
-                Ok(true)
-            }
             Msg::PointerDown(ev) => {
                 self.on_pointer_down(ctx, ev)?;
                 Ok(true)
@@ -1931,7 +1750,7 @@ impl Map {
             .send()
     }
 
-    fn create_object(&mut self, id: RemoteId, object: api::RemoteObject) -> bool {
+    fn create_object(&mut self, id: RemoteId, object: RemoteObject) -> bool {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 

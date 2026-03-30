@@ -172,10 +172,10 @@ impl ws::Handler for Handler {
                 self.backend.broadcast(RemoteUpdateBody::ObjectCreated {
                     channel: incoming.channel(),
                     id: RemoteId::local(object.id),
-                    object,
+                    object: object.clone(),
                 });
 
-                outgoing.write(api::Empty);
+                outgoing.write(api::CreateObjectResponse { object });
             }
             api::Request::RemoveObject => {
                 let request = incoming

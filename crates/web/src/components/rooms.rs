@@ -89,6 +89,11 @@ impl Component for Rooms {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         Self {
             peers: Peers::default(),
             rooms: Vec::new(),
@@ -99,7 +104,7 @@ impl Component for Rooms {
             _config_listener: ws::Listener::new(),
             _connect_room_request: ws::Request::new(),
             _create_room_request: ws::Request::new(),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             channel: ws::Channel::default(),
         }
     }

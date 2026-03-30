@@ -6,7 +6,7 @@ use std::rc::Rc;
 use api::{Color, Extent, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Type, Value, Vec3};
 use yew::{Html, html};
 
-use crate::components::render::Visibility;
+use crate::components::Visibility;
 use crate::state::State;
 
 const DEFAULT_SPEED: f32 = 2.5;

@@ -6,13 +6,15 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement};
 use yew::prelude::*;
 
-use crate::components::render::{ViewTransform, Visibility};
 use crate::error::Error;
 use crate::images::Images;
 use crate::log;
 use crate::state::State;
 
-use super::{ChannelExt, DynamicCanvas, ImageUpload, SetupChannel, into_target, render};
+use super::{
+    ChannelExt, DynamicCanvas, ImageUpload, SetupChannel, ViewTransform, Visibility, into_target,
+    render,
+};
 
 pub(crate) enum Msg {
     Channel(Result<ws::Channel, Error>),
@@ -78,10 +80,15 @@ impl Component for StaticSettings {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         Self {
             log,
             channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             _list_settings: ws::Request::new(),
             _remote_update_listener: ws::Listener::new(),
             _update_listener: ws::Listener::new(),

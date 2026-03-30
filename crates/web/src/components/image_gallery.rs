@@ -59,10 +59,15 @@ impl Component for ImageGallery {
             .context::<Log>(ctx.link().callback(Msg::Log))
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         Self {
             log,
             channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             _initialize: ws::Request::new(),
             _listener: ws::Listener::new(),
             filter: ctx.props().default_role,

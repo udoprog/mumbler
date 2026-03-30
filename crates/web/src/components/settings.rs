@@ -52,10 +52,15 @@ impl Component for Settings {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         Self {
             log,
             channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             name: State::new(String::new()),
             _name_request: ws::Request::new(),
             peer_secret: State::new(String::new()),

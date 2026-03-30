@@ -879,6 +879,13 @@ pub struct CreateObjectRequest {
     pub props: Properties,
 }
 
+#[derive(Debug, Encode, Decode)]
+#[musli(crate = musli_core)]
+pub struct CreateObjectResponse {
+    /// The remote object that was just created.
+    pub object: RemoteObject,
+}
+
 /// Request to delete a local object.
 #[derive(Debug, Encode, Decode)]
 #[musli(crate = musli_core)]
@@ -1071,7 +1078,7 @@ api::define! {
 
     impl Endpoint for CreateObject {
         impl Request for CreateObjectRequest;
-        type Response<'de> = Empty;
+        type Response<'de> = CreateObjectResponse;
     }
 
     pub type RemoveObject;

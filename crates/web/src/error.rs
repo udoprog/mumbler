@@ -2,6 +2,8 @@ use core::fmt;
 use core::num::ParseIntError;
 use core::str::Utf8Error;
 
+use gloo::file::FileReadError;
+
 /// Errors raised in this application.
 pub struct Error {
     error: anyhow::Error,
@@ -45,6 +47,15 @@ impl From<anyhow::Error> for Error {
 impl From<ParseIntError> for Error {
     #[inline]
     fn from(error: ParseIntError) -> Self {
+        Self {
+            error: anyhow::Error::from(error),
+        }
+    }
+}
+
+impl From<FileReadError> for Error {
+    #[inline]
+    fn from(error: FileReadError) -> Self {
         Self {
             error: anyhow::Error::from(error),
         }

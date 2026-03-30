@@ -2,54 +2,59 @@ mod macros;
 use self::macros::into_target;
 
 mod animation_frame;
-pub(crate) use self::animation_frame::AnimationFrame;
+use self::animation_frame::AnimationFrame;
 
 mod app;
 pub use self::app::App;
 
 mod map;
-pub(crate) use self::map::Map;
+use self::map::Map;
 
-pub(crate) mod render;
+mod render;
+pub(crate) use self::render::Visibility;
+use self::render::{RenderObject, RenderObjectKind, ViewTransform};
 
 mod crop;
-pub(crate) use self::crop::Crop;
+use self::crop::{Crop, Extent};
+
+mod drop_image;
+use self::drop_image::{DropImage, DropImageResult};
 
 mod image_gallery;
-pub(crate) use self::image_gallery::ImageGallery;
+use self::image_gallery::ImageGallery;
 
 mod settings;
-pub(crate) use self::settings::Settings;
+use self::settings::Settings;
 
 mod rooms;
-pub(crate) use self::rooms::Rooms;
+use self::rooms::Rooms;
 
 mod room_settings;
-pub(crate) use self::room_settings::RoomSettings;
+use self::room_settings::RoomSettings;
 
 mod token_settings;
-pub(crate) use self::token_settings::TokenSettings;
+use self::token_settings::TokenSettings;
 
 mod static_settings;
-pub(crate) use self::static_settings::StaticSettings;
+use self::static_settings::StaticSettings;
 
 mod image_upload;
-pub(crate) use self::image_upload::ImageUpload;
+use self::image_upload::ImageUpload;
 
 mod group_settings;
-pub(crate) use self::group_settings::GroupSettings;
+use self::group_settings::GroupSettings;
 
 mod mumble_status;
-pub(crate) use self::mumble_status::MumbleStatus;
+use self::mumble_status::MumbleStatus;
 
 mod remote_status;
-pub(crate) use self::remote_status::RemoteStatus;
+use self::remote_status::RemoteStatus;
 
 mod log;
-pub(crate) use self::log::Log;
+use self::log::Log;
 
 mod navigation;
-pub(crate) use self::navigation::{Navigation, Route};
+use self::navigation::{Navigation, Route};
 
 mod object_list;
 use self::object_list::ObjectList;

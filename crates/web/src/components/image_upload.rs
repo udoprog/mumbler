@@ -7,11 +7,10 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
-use crate::components::crop::Extent;
 use crate::error::Error;
 use crate::log;
 
-use super::{Crop, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
+use super::{Crop, Extent, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
     Error(Error),
@@ -69,10 +68,15 @@ impl Component for ImageUpload {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
+        let (ws, _) = ctx
+            .link()
+            .context::<ws::Handle>(Callback::noop())
+            .expect("WebSocket context not found");
+
         Self {
             log,
             channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ctx, ctx.link().callback(Msg::Channel)),
+            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
             _remove_image: ws::Request::new(),
             _file_reader: None,
             _upload_image: ws::Request::new(),

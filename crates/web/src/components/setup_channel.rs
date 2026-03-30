@@ -22,15 +22,7 @@ pub(crate) struct SetupChannel {
 
 impl SetupChannel {
     /// Construct a new channel builder.
-    pub(crate) fn new<T>(ctx: &Context<T>, onchannel: Callback<Result<ws::Channel, Error>>) -> Self
-    where
-        T: Component,
-    {
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
-
+    pub(crate) fn new(ws: ws::Handle, onchannel: Callback<Result<ws::Channel, Error>>) -> Self {
         let this = Self {
             _inner: Rc::new_cyclic(|inner: &Weak<RefCell<Inner>>| {
                 let on_state = Callback::from({
