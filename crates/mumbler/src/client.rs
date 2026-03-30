@@ -472,6 +472,7 @@ pub async fn managed(b: Backend, default_connect: Option<&str>) -> Result<()> {
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
             }
             _ = reconnect.as_mut() => {
+                (connect, enabled, tls) = settings().await?;
                 future.set(build(connect.as_deref(), enabled, tls).await);
             }
             () = b.client_restart_wait() => {

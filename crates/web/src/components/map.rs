@@ -29,8 +29,8 @@ use crate::state::State;
 use super::render::{self, ViewTransform};
 use super::{
     AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult,
-    DynamicCanvas, GroupSettings, Help, Icon, Modal, ObjectList, RenderObject, RenderObjectKind,
-    RoomSettings, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
+    DynamicCanvas, GroupSettings, Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject,
+    RenderObjectKind, Rooms, SetupChannel, StaticSettings, TokenSettings, UNKNOWN_ROOM,
 };
 
 const LEFT_MOUSE_BUTTON: i16 = 0;
@@ -39,6 +39,13 @@ const MIDDLE_MOUSE_BUTTON: i16 = 1;
 const ZOOM_FACTOR: f32 = 1.2;
 const ARROW_THRESHOLD: f32 = 0.1;
 const SIMULATION_FPS: u32 = 60;
+
+const ROOM_SETTINGS: &[Key] = &[
+    Key::NAME,
+    Key::SHOW_GRID,
+    Key::ROOM_EXTENT,
+    Key::ROOM_BACKGROUND,
+];
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum MapModal {
@@ -144,7 +151,7 @@ impl MapModal {
                         html! { <TokenSettings {id} /> }
                     }
                     Type::ROOM => {
-                        html! { <RoomSettings {id} /> }
+                        html! { <ObjectSettings {id} keys={ROOM_SETTINGS} /> }
                     }
                     _ => html! { <p class="hint">{"Unknown object type"}</p> },
                 }}

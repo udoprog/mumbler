@@ -133,7 +133,8 @@ pub async fn managed(b: Backend) -> Result<()> {
                 reconnect.set(Fuse::new(time::sleep(Duration::from_secs(5))));
             }
             _ = reconnect.as_mut() => {
-                future.set(Fuse::new(run(b.clone())));
+                enabled = settings().await?;
+                future.set(build(enabled));
             }
             () = b.mumblelink_restart_wait() => {
                 enabled = settings().await?;

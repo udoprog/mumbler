@@ -141,6 +141,19 @@ impl Value {
     }
 
     #[inline]
+    pub fn into_extent_mut(&mut self) -> &mut Extent {
+        if !matches!(self.kind, ValueKind::Extent(_)) {
+            self.kind = ValueKind::Extent(Extent::arena());
+        }
+
+        if let ValueKind::Extent(extent) = &mut self.kind {
+            return extent;
+        }
+
+        unreachable!()
+    }
+
+    #[inline]
     pub fn into_string(self) -> String {
         match self.kind {
             ValueKind::String(s) => s,

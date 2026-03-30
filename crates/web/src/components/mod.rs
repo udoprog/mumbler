@@ -29,8 +29,8 @@ use self::settings::Settings;
 mod rooms;
 use self::rooms::Rooms;
 
-mod room_settings;
-use self::room_settings::RoomSettings;
+mod object_settings;
+use self::object_settings::ObjectSettings;
 
 mod token_settings;
 use self::token_settings::TokenSettings;

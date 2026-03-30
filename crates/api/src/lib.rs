@@ -152,6 +152,117 @@ impl Key {
     pub fn is_remote(&self) -> bool {
         matches!(*self, Key::PEER_NAME | Key::ROOM)
     }
+
+    pub fn id(&self) -> &'static str {
+        match *self {
+            Self::IMAGE_ID => "image-id",
+            Self::COLOR => "color",
+            Self::TRANSFORM => "transform",
+            Self::LOOK_AT => "look-at",
+            Self::NAME => "name",
+            Self::MUMBLE_ENABLED => "mumble-enabled",
+            Self::REMOTE_SERVER => "remote-server",
+            Self::REMOTE_ENABLED => "remote-enabled",
+            Self::SCALE => "scale",
+            Self::REMOTE_TLS => "remote-tls",
+            Self::ZOOM => "zoom",
+            Self::PAN => "pan",
+            Self::ROOM_EXTENT => "room-extent",
+            Self::MUMBLE_OBJECT => "mumble-object",
+            Self::HIDDEN => "hidden",
+            Self::LOCAL_HIDDEN => "local-hidden",
+            Self::MUMBLE_FOLLOW => "mumble-follow",
+            Self::TOKEN_RADIUS => "token-radius",
+            Self::SPEED => "speed",
+            Self::STATIC_WIDTH => "static-width",
+            Self::STATIC_HEIGHT => "static-height",
+            Self::RATIO => "ratio",
+            Self::LOCKED => "locked",
+            Self::SORT => "sort",
+            Self::GROUP => "group",
+            Self::EXPANDED => "expanded",
+            Self::PEER_NAME => "peer-name",
+            Self::PEER_SECRET => "peer-secret",
+            Self::ROOM => "room",
+            Self::ROOM_BACKGROUND => "room-background",
+            Self::SHOW_GRID => "show-grid",
+            _ => "unknown",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match *self {
+            Self::IMAGE_ID => "Image Id",
+            Self::COLOR => "Color",
+            Self::TRANSFORM => "Transform",
+            Self::LOOK_AT => "Look At",
+            Self::NAME => "Name",
+            Self::MUMBLE_ENABLED => "Mumble Enabled",
+            Self::REMOTE_SERVER => "Remote Server",
+            Self::REMOTE_ENABLED => "Remote Enabled",
+            Self::SCALE => "Scale",
+            Self::REMOTE_TLS => "Remote TLS",
+            Self::ZOOM => "Zoom",
+            Self::PAN => "Pan",
+            Self::ROOM_EXTENT => "Room Extent",
+            Self::MUMBLE_OBJECT => "Mumble Object",
+            Self::HIDDEN => "Hidden",
+            Self::LOCAL_HIDDEN => "Local Hidden",
+            Self::MUMBLE_FOLLOW => "Mumble Follow",
+            Self::TOKEN_RADIUS => "Token Radius",
+            Self::SPEED => "Speed",
+            Self::STATIC_WIDTH => "Static Width",
+            Self::STATIC_HEIGHT => "Static Height",
+            Self::RATIO => "Ratio",
+            Self::LOCKED => "Locked",
+            Self::SORT => "Sort",
+            Self::GROUP => "Group",
+            Self::EXPANDED => "Expanded",
+            Self::PEER_NAME => "Peer Name",
+            Self::PEER_SECRET => "Peer Secret",
+            Self::ROOM => "Room",
+            Self::ROOM_BACKGROUND => "Room Background",
+            Self::SHOW_GRID => "Show Grid",
+            _ => "Unknown",
+        }
+    }
+
+    pub fn placeholder(&self) -> &'static str {
+        match *self {
+            Self::IMAGE_ID => "Enter Image Id",
+            Self::COLOR => "Enter Color",
+            Self::TRANSFORM => "Enter Transform",
+            Self::LOOK_AT => "Enter Look At",
+            Self::NAME => "Enter Name",
+            Self::MUMBLE_ENABLED => "Enter Mumble Enabled",
+            Self::REMOTE_SERVER => "Enter Remote Server",
+            Self::REMOTE_ENABLED => "Enter Remote Enabled",
+            Self::SCALE => "Enter Scale",
+            Self::REMOTE_TLS => "Enter Remote TLS",
+            Self::ZOOM => "Enter Zoom",
+            Self::PAN => "Enter Pan",
+            Self::ROOM_EXTENT => "Enter Room Extent",
+            Self::MUMBLE_OBJECT => "Enter Mumble Object",
+            Self::HIDDEN => "Enter Hidden",
+            Self::LOCAL_HIDDEN => "Enter Local Hidden",
+            Self::MUMBLE_FOLLOW => "Enter Mumble Follow",
+            Self::TOKEN_RADIUS => "Enter Token Radius",
+            Self::SPEED => "Enter Speed",
+            Self::STATIC_WIDTH => "Enter Static Width",
+            Self::STATIC_HEIGHT => "Enter Static Height",
+            Self::RATIO => "Enter Ratio",
+            Self::LOCKED => "Enter Locked",
+            Self::SORT => "Enter Sort",
+            Self::GROUP => "Enter Group",
+            Self::EXPANDED => "Enter Expanded",
+            Self::PEER_NAME => "Enter Peer Name",
+            Self::PEER_SECRET => "Enter Peer Secret",
+            Self::ROOM => "Set Room",
+            Self::ROOM_BACKGROUND => "Set Room Background",
+            Self::SHOW_GRID => "Toggle Show Grid",
+            _ => "Set Unknown",
+        }
+    }
 }
 
 crate::macros::ids! {
@@ -505,6 +616,11 @@ impl Properties {
     pub fn get(&self, key: Key) -> &Value {
         static DEFAULT: Value = Value::empty();
         self.values.get(&key).unwrap_or(&DEFAULT)
+    }
+
+    /// Get the mutable value of a property by key.
+    pub fn into_mut(&mut self, key: Key) -> &mut Value {
+        self.values.entry(key).or_default()
     }
 
     /// Test if the set of properties contains the given key.
