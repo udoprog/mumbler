@@ -148,6 +148,8 @@ crate::macros::keys! {
         SHOW_GRID: Boolean = 32;
         /// A move target, if set causes the object to be animated to the move target.
         MOVE_TARGET: Vec3 = 33;
+        /// The selected object in the map.
+        SELECTED: StableId = 34;
     }
 }
 

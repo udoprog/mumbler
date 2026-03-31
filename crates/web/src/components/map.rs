@@ -232,6 +232,7 @@ struct MapValues {
     mumble_follow: State<bool>,
     room: State<StableId>,
     name: State<String>,
+    selected: State<RemoteId>,
 }
 
 impl MapValues {
@@ -243,10 +244,11 @@ impl MapValues {
             mumble_follow: State::new(false),
             room: State::new(StableId::ZERO),
             name: State::new(String::new()),
+            selected: State::new(RemoteId::ZERO),
         }
     }
 
-    fn get(&self, key: Key) -> Value {
+    fn get(&self, key: Key, peers: &Peers) -> Value {
         match key {
             Key::ZOOM => Value::from(*self.zoom),
             Key::PAN => Value::from(*self.pan),
@@ -254,24 +256,26 @@ impl MapValues {
             Key::MUMBLE_FOLLOW => Value::from(*self.mumble_follow),
             Key::ROOM => Value::from(*self.room),
             Key::PEER_NAME => Value::from(self.name.as_str()),
+            Key::SELECTED => Value::from(peers.to_stable_id(&self.selected)),
             _ => Value::empty(),
         }
     }
 
-    fn initialize(&mut self, props: api::Properties) {
+    fn initialize(&mut self, props: api::Properties, peers: &Peers) {
         *self.zoom = 2.0;
         *self.pan = Vec3::ZERO;
         *self.mumble_object = RemoteId::ZERO;
         *self.mumble_follow = false;
         *self.room = StableId::ZERO;
         *self.name = String::new();
+        *self.selected = RemoteId::ZERO;
 
         for (key, value) in props {
-            self.update(key, value);
+            self.update(key, value, peers);
         }
     }
 
-    fn update(&mut self, key: Key, value: Value) -> bool {
+    fn update(&mut self, key: Key, value: Value, peers: &Peers) -> bool {
         match key {
             Key::ZOOM => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
@@ -279,6 +283,9 @@ impl MapValues {
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
             Key::ROOM => self.room.update(*value.as_stable_id()),
             Key::PEER_NAME => self.name.update(value.as_str().to_owned()),
+            Key::SELECTED => self
+                .selected
+                .update(peers.to_remote_id(&value.as_stable_id())),
             _ => false,
         }
     }
@@ -294,7 +301,6 @@ struct MapState {
     values: MapValues,
     updates: HashSet<(RemoteId, Key)>,
     requests: HashMap<(RemoteId, Key), ws::Request>,
-    selected: RemoteId,
     context_menu: Option<ContextMenu>,
     modal: Option<MapModal>,
     redraw: bool,
@@ -315,7 +321,6 @@ impl MapState {
             values: MapValues::new(),
             updates: HashSet::default(),
             requests: HashMap::new(),
-            selected: RemoteId::default(),
             context_menu: Option::default(),
             modal: Option::default(),
             redraw: false,
@@ -336,12 +341,12 @@ impl MapState {
     }
 
     fn select_object(&mut self, id: RemoteId, objects: &ObjectsRef) -> bool {
-        if self.selected == id {
+        if !self.values.selected.update(id) {
             return false;
         }
 
+        self.updates.insert((RemoteId::ZERO, Key::SELECTED));
         self.redraw = true;
-        self.selected = id;
         self.context_menu = None;
 
         if self
@@ -823,7 +828,7 @@ impl Component for Map {
         let footer = self.footer(&objects);
 
         let object_list_header = {
-            let o = objects.get(self.s.selected);
+            let o = objects.get(*self.s.values.selected);
 
             let settings_classes = classes! {
                 "btn",
@@ -882,7 +887,7 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = objects.get(self.s.selected);
+            let o = objects.get(*self.s.values.selected);
 
             let mumble = {
                 let is_mumble = o
@@ -1103,7 +1108,7 @@ impl Component for Map {
                                     group={RemoteId::ZERO}
                                     drag_over={self.drag_over}
                                     mumble_object={*self.s.values.mumble_object}
-                                    selected={self.s.selected}
+                                    selected={*self.s.values.selected}
                                     onselect={self.object_onselect.clone()}
                                     onopen={self.object_onopen.clone()}
                                     ondragover={self.object_ondragover.clone()}
@@ -1169,7 +1174,7 @@ impl Map {
             pan.x, pan.y, pan.z
         ));
 
-        if let Some(o) = objects.get(self.s.selected)
+        if let Some(o) = objects.get(*self.s.values.selected)
             && let Some(transform) = o.as_transform()
         {
             let position = &transform.position;
@@ -1526,8 +1531,14 @@ impl Map {
     fn initialize(&mut self, ctx: &Context<Self>, body: InitializeMapResponse) -> bool {
         tracing::debug!(?body, "Initialize");
 
+        self.peers.clear();
+
+        for peer in body.peers {
+            self.peers.insert(peer, &self.s.values.room);
+        }
+
         self.peers.public_key = body.public_key;
-        self.s.values.initialize(body.props);
+        self.s.values.initialize(body.props, &self.peers);
 
         let mut objects = self.objects.borrow_mut();
         objects.clear();
@@ -1545,12 +1556,6 @@ impl Map {
         let mut order = self.order.borrow_mut();
 
         order.extend(objects.values());
-
-        self.peers.clear();
-
-        for peer in body.peers {
-            self.peers.insert(peer, &self.s.values.room);
-        }
 
         for (peer_id, object) in body.peer_objects {
             let Some(object) = Object::new(peer_id, &object) else {
@@ -1586,7 +1591,7 @@ impl Map {
                     return Ok(false);
                 }
 
-                let changed = self.s.values.update(key, value);
+                let changed = self.s.values.update(key, value, &self.peers);
 
                 if changed {
                     if matches!(key, Key::ROOM) {
@@ -1798,7 +1803,7 @@ impl Map {
         objects.remove(id);
         order.remove(id);
 
-        if self.s.selected == id {
+        if *self.s.values.selected == id {
             self.s.select_object(RemoteId::ZERO, &objects);
         }
 
@@ -1863,7 +1868,7 @@ impl Map {
                 .flat_map(|id| objects.get(id))
                 .find(|o| o.as_click_geometry().intersects(mouse));
 
-            let selected = objects.get(self.s.selected);
+            let selected = objects.get(*self.s.values.selected);
 
             let s_is_token = selected.is_some_and(|o| o.is_token());
             let s_id = selected.map(|o| o.id);
@@ -1880,7 +1885,7 @@ impl Map {
         }
 
         if start_translate {
-            update |= self.start_translate(self.s.selected);
+            update |= self.start_translate(*self.s.values.selected);
         }
 
         update
@@ -1944,17 +1949,17 @@ impl Map {
             return false;
         };
 
-        if self.s.selected.is_zero() || !self.s.selected.is_local() {
+        if self.s.values.selected.is_zero() || !self.s.values.selected.is_local() {
             return false;
         }
 
         let mut objects = self.objects.borrow_mut();
 
-        if objects.is_locked(self.s.selected) {
+        if objects.is_locked(*self.s.values.selected) {
             return false;
         };
 
-        let Some(o) = objects.get_mut(self.s.selected) else {
+        let Some(o) = objects.get_mut(*self.s.values.selected) else {
             return false;
         };
 
@@ -1964,14 +1969,14 @@ impl Map {
 
         let initial_distance = position.dist(mouse).max(INTERPOLATION_THRESHOLD);
 
-        self.s.active.remove(&self.s.selected);
+        self.s.active.remove(&self.s.values.selected);
 
         if let Some(action) = self.action.take() {
             self.s.finalize_action(&mut objects, action);
         }
 
         let action = self.action.insert(Action::Scale(Scale {
-            id: self.s.selected,
+            id: *self.s.values.selected,
             scale: 1.0,
             position,
             initial_distance,
@@ -1997,12 +2002,13 @@ impl Map {
             "Escape" => Ok(self.cancel()),
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
-                    |m| matches!(m, MapModal::Remove { object } if object.id == self.s.selected),
+                    |m| matches!(m, MapModal::Remove { object } if object.id == *self.s.values.selected),
                 ) {
                     return Ok(false);
                 }
 
-                ctx.link().send_message(Msg::ConfirmRemove(self.s.selected));
+                ctx.link()
+                    .send_message(Msg::ConfirmRemove(*self.s.values.selected));
                 Ok(false)
             }
             "F1" | "?" => {
@@ -2015,9 +2021,11 @@ impl Map {
             }
             "Enter" if self.s.modal.is_none() => Ok(self.accept(ctx)),
             "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
-            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(self.s.selected)),
+            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(*self.s.values.selected)),
             "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
-            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(self.s.selected)),
+            "g" | "G" if self.s.modal.is_none() => {
+                Ok(self.start_translate(*self.s.values.selected))
+            }
             "Shift" if self.s.modal.is_none() => Ok(self.start_rotation()),
             _ => Ok(false),
         }
@@ -2050,9 +2058,9 @@ impl Map {
             return true;
         }
 
-        if self.s.selected != RemoteId::ZERO {
-            self.s.selected = RemoteId::ZERO;
+        if self.s.values.selected.update(RemoteId::ZERO) {
             self.s.redraw = true;
+            self.s.updates.insert((RemoteId::ZERO, Key::SELECTED));
             return true;
         }
 
@@ -2060,7 +2068,7 @@ impl Map {
     }
 
     fn start_rotation(&mut self) -> bool {
-        if self.s.selected.is_zero() || !self.s.selected.is_local() {
+        if self.s.values.selected.is_zero() || !self.s.values.selected.is_local() {
             return false;
         }
 
@@ -2070,11 +2078,11 @@ impl Map {
 
         let mut objects = self.objects.borrow_mut();
 
-        if objects.is_locked(self.s.selected) {
+        if objects.is_locked(*self.s.values.selected) {
             return false;
         }
 
-        let Some(o) = objects.get(self.s.selected) else {
+        let Some(o) = objects.get(*self.s.values.selected) else {
             return false;
         };
 
@@ -2182,7 +2190,7 @@ impl Map {
             }
 
             if id.id.is_zero() {
-                let value = self.s.values.get(key);
+                let value = self.s.values.get(key, &self.peers);
                 let req = self.s.channel.updates(ctx, [(key, value)]);
                 self.s.requests.insert((id, key), req);
                 continue;
@@ -2231,8 +2239,11 @@ impl Map {
             onremove: ctx.link().callback(move |_| Msg::ConfirmRemove(object_id)),
         });
 
-        self.s.selected = object_id;
-        self.s.redraw = true;
+        if self.s.values.selected.update(object_id) {
+            self.s.redraw = true;
+            self.s.updates.insert((RemoteId::ZERO, Key::SELECTED));
+        }
+
         Ok(())
     }
 
@@ -2567,14 +2578,12 @@ impl Map {
             );
         }
 
-        let selected = self.s.selected;
-
         for id in order.walk().rev() {
             let Some(o) = objects.get(id) else {
                 continue;
             };
 
-            let selected = selected == o.id;
+            let selected = *self.s.values.selected == o.id;
 
             let Some(mut render) = RenderObject::from_data(o, |id| objects.visibility(id)) else {
                 continue;
