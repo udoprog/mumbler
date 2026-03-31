@@ -178,7 +178,7 @@ impl Rooms {
         let is_local = room.id.public_key == self.peers.public_key;
 
         let remove_button = is_local.then(|| {
-            let id = self.peers.to_remote_id(&room.id);
+            let id = self.peers.to_remote_id(room.id);
 
             let onclick = ctx.props().onrequestdelete.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
@@ -219,7 +219,7 @@ impl Rooms {
             + usize::from(self.active_room == room.id);
 
         let settings_button = is_local.then(|| {
-            let id = self.peers.to_remote_id(&room.id);
+            let id = self.peers.to_remote_id(room.id);
 
             let onopensettings = ctx.props().onopensettings.clone();
 
@@ -316,7 +316,7 @@ impl Rooms {
 
                 for (peer_id, object) in body.peer_objects {
                     let id = RemoteId::new(peer_id, object.id);
-                    let id = self.peers.to_stable_id(&id);
+                    let id = self.peers.to_stable_id(id);
 
                     if let Some(room) = Room::from_remote(id, &object) {
                         self.rooms.push(room);
@@ -344,7 +344,7 @@ impl Rooms {
                     }
                     RemoteUpdateBody::PeerDisconnect { peer_id } => Ok(self.remove_peer(peer_id)),
                     RemoteUpdateBody::ObjectCreated { id, object, .. } => {
-                        let id = self.peers.to_stable_id(&id);
+                        let id = self.peers.to_stable_id(id);
 
                         if let Some(room) = Room::from_remote(id, &object) {
                             self.rooms.push(room);
@@ -359,7 +359,7 @@ impl Rooms {
                             return Ok(false);
                         }
 
-                        let id = self.peers.to_stable_id(&id);
+                        let id = self.peers.to_stable_id(id);
 
                         let prev = self.rooms.len();
                         self.rooms.retain(|r| r.id != id);
@@ -375,7 +375,7 @@ impl Rooms {
                             return Ok(false);
                         }
 
-                        let id = self.peers.to_stable_id(&id);
+                        let id = self.peers.to_stable_id(id);
 
                         let Some(entry) = self.rooms.iter_mut().find(|r| r.id == id) else {
                             return Ok(false);
@@ -487,7 +487,7 @@ impl Rooms {
             return false;
         };
 
-        self.peers.remove_peer(peer_id);
+        self.peers.remove(peer_id);
         self.rooms.retain(|r| r.id.public_key != public_key);
         true
     }

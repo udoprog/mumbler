@@ -77,7 +77,7 @@ impl Peers {
     }
 
     /// Remove all objects associated with a peer.
-    pub(crate) fn remove_peer(&mut self, id: PeerId) {
+    pub(crate) fn remove(&mut self, id: PeerId) {
         if let Some(peer) = self.peers.remove(&id) {
             self.public_keys.remove(&peer.public_key);
         }
@@ -112,7 +112,7 @@ impl Peers {
     ///
     /// RemoteId are temporary identifiers for peers. A StableId is globally
     /// unique based on their key.
-    pub(crate) fn to_remote_id(&self, id: &StableId) -> RemoteId {
+    pub(crate) fn to_remote_id(&self, id: StableId) -> RemoteId {
         if id.public_key == self.public_key {
             return RemoteId::local(id.id);
         }
@@ -125,7 +125,7 @@ impl Peers {
     }
 
     /// Translates a remote id to a stable id.
-    pub(crate) fn to_stable_id(&self, id: &RemoteId) -> StableId {
+    pub(crate) fn to_stable_id(&self, id: RemoteId) -> StableId {
         if id.is_local() {
             return StableId::new(self.public_key, id.id);
         }

@@ -18,6 +18,7 @@ use web_sys::{
 use yew::prelude::*;
 
 use crate::components::object_settings::ObjectRender;
+use crate::consts::DEFAULT_ZOOM;
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::images::Images;
@@ -231,24 +232,28 @@ struct MapValues {
     mumble_object: State<RemoteId>,
     mumble_follow: State<bool>,
     room: State<StableId>,
+    room_id: RemoteId,
     name: State<String>,
-    selected: State<RemoteId>,
+    selected: State<StableId>,
+    selected_id: RemoteId,
 }
 
 impl MapValues {
     fn new() -> Self {
         Self {
-            zoom: State::new(2.0),
+            zoom: State::new(DEFAULT_ZOOM),
             pan: State::new(Vec3::ZERO),
             mumble_object: State::new(RemoteId::ZERO),
             mumble_follow: State::new(false),
             room: State::new(StableId::ZERO),
+            room_id: RemoteId::ZERO,
             name: State::new(String::new()),
-            selected: State::new(RemoteId::ZERO),
+            selected: State::new(StableId::ZERO),
+            selected_id: RemoteId::ZERO,
         }
     }
 
-    fn get(&self, key: Key, peers: &Peers) -> Value {
+    fn get(&self, key: Key) -> Value {
         match key {
             Key::ZOOM => Value::from(*self.zoom),
             Key::PAN => Value::from(*self.pan),
@@ -256,19 +261,20 @@ impl MapValues {
             Key::MUMBLE_FOLLOW => Value::from(*self.mumble_follow),
             Key::ROOM => Value::from(*self.room),
             Key::PEER_NAME => Value::from(self.name.as_str()),
-            Key::SELECTED => Value::from(peers.to_stable_id(&self.selected)),
+            Key::SELECTED => Value::from(*self.selected),
             _ => Value::empty(),
         }
     }
 
     fn initialize(&mut self, props: api::Properties, peers: &Peers) {
-        *self.zoom = 2.0;
+        *self.zoom = DEFAULT_ZOOM;
         *self.pan = Vec3::ZERO;
         *self.mumble_object = RemoteId::ZERO;
         *self.mumble_follow = false;
         *self.room = StableId::ZERO;
         *self.name = String::new();
-        *self.selected = RemoteId::ZERO;
+        *self.selected = StableId::ZERO;
+        self.selected_id = RemoteId::ZERO;
 
         for (key, value) in props {
             self.update(key, value, peers);
@@ -277,17 +283,34 @@ impl MapValues {
 
     fn update(&mut self, key: Key, value: Value, peers: &Peers) -> bool {
         match key {
-            Key::ZOOM => self.zoom.update(value.as_f32().unwrap_or(2.0)),
+            Key::ZOOM => self.zoom.update(value.as_f32().unwrap_or(DEFAULT_ZOOM)),
             Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
-            Key::ROOM => self.room.update(*value.as_stable_id()),
+            Key::ROOM => {
+                if self.room.update(*value.as_stable_id()) {
+                    self.room_id = peers.to_remote_id(*self.room);
+                    true
+                } else {
+                    false
+                }
+            }
             Key::PEER_NAME => self.name.update(value.as_str().to_owned()),
-            Key::SELECTED => self
-                .selected
-                .update(peers.to_remote_id(&value.as_stable_id())),
+            Key::SELECTED => {
+                if self.selected.update(*value.as_stable_id()) {
+                    self.selected_id = peers.to_remote_id(*self.selected);
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
+    }
+
+    fn update_peers(&mut self, peers: &Peers) {
+        self.room_id = peers.to_remote_id(*self.room);
+        self.selected_id = peers.to_remote_id(*self.selected);
     }
 }
 
@@ -340,11 +363,12 @@ impl MapState {
         }
     }
 
-    fn select_object(&mut self, id: RemoteId, objects: &ObjectsRef) -> bool {
-        if !self.values.selected.update(id) {
+    fn select_object(&mut self, id: RemoteId, objects: &ObjectsRef, peers: &Peers) -> bool {
+        if !self.values.selected.update(peers.to_stable_id(id)) {
             return false;
         }
 
+        self.values.selected_id = id;
         self.updates.insert((RemoteId::ZERO, Key::SELECTED));
         self.redraw = true;
         self.context_menu = None;
@@ -772,9 +796,9 @@ impl Component for Map {
         }
 
         if self.s.update_cache {
-            let room_id = self.peers.to_remote_id(&self.s.values.room);
             let objects = self.objects.borrow();
-            self.cache.update(room_id, &objects);
+
+            self.cache.update(self.s.values.room_id, &objects);
 
             // If the cache is updated, the view needs to change as well since
             // extent might be modified.
@@ -828,7 +852,7 @@ impl Component for Map {
         let footer = self.footer(&objects);
 
         let object_list_header = {
-            let o = objects.get(*self.s.values.selected);
+            let o = objects.get(self.s.values.selected_id);
 
             let settings_classes = classes! {
                 "btn",
@@ -887,7 +911,7 @@ impl Component for Map {
         };
 
         let toolbar = {
-            let o = objects.get(*self.s.values.selected);
+            let o = objects.get(self.s.values.selected_id);
 
             let mumble = {
                 let is_mumble = o
@@ -1108,7 +1132,7 @@ impl Component for Map {
                                     group={RemoteId::ZERO}
                                     drag_over={self.drag_over}
                                     mumble_object={*self.s.values.mumble_object}
-                                    selected={*self.s.values.selected}
+                                    selected={self.s.values.selected_id}
                                     onselect={self.object_onselect.clone()}
                                     onopen={self.object_onopen.clone()}
                                     ondragover={self.object_ondragover.clone()}
@@ -1174,7 +1198,7 @@ impl Map {
             pan.x, pan.y, pan.z
         ));
 
-        if let Some(o) = objects.get(*self.s.values.selected)
+        if let Some(o) = objects.get(self.s.values.selected_id)
             && let Some(transform) = o.as_transform()
         {
             let position = &transform.position;
@@ -1404,7 +1428,7 @@ impl Map {
                 self.cancel_action();
 
                 let objects = self.objects.borrow();
-                let update = self.s.select_object(id, &objects);
+                let update = self.s.select_object(id, &objects, &self.peers);
                 Ok(update)
             }
             Msg::OpenObject(id) => {
@@ -1633,6 +1657,7 @@ impl Map {
             }
             RemoteUpdateBody::PeerConnected { peer } => {
                 self.peers.insert(peer, &self.s.values.room);
+                self.s.values.update_peers(&self.peers);
                 true
             }
             RemoteUpdateBody::PeerJoin {
@@ -1674,7 +1699,8 @@ impl Map {
                 // that peer disconnects.
                 objects.retain(|id, _| id.peer_id != peer_id);
                 order.retain(|this| this != peer_id);
-                self.peers.remove_peer(peer_id);
+                self.peers.remove(peer_id);
+                self.s.values.update_peers(&self.peers);
 
                 self.s.redraw = true;
                 true
@@ -1689,6 +1715,7 @@ impl Map {
                 };
 
                 peer.update(key, value, &self.s.values.room);
+                self.s.values.update_peers(&self.peers);
                 true
             }
             RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
@@ -1803,8 +1830,8 @@ impl Map {
         objects.remove(id);
         order.remove(id);
 
-        if *self.s.values.selected == id {
-            self.s.select_object(RemoteId::ZERO, &objects);
+        if self.s.values.selected_id == id {
+            self.s.select_object(RemoteId::ZERO, &objects, &self.peers);
         }
 
         self.s.requests.retain(|(object_id, _), _| *object_id != id);
@@ -1868,7 +1895,7 @@ impl Map {
                 .flat_map(|id| objects.get(id))
                 .find(|o| o.as_click_geometry().intersects(mouse));
 
-            let selected = objects.get(*self.s.values.selected);
+            let selected = objects.get(self.s.values.selected_id);
 
             let s_is_token = selected.is_some_and(|o| o.is_token());
             let s_id = selected.map(|o| o.id);
@@ -1880,12 +1907,12 @@ impl Map {
             start_translate = s_id == h_id || new_selected.is_none() || !h_is_token;
 
             if let Some(id) = new_selected {
-                update = self.s.select_object(id, &objects);
+                update = self.s.select_object(id, &objects, &self.peers);
             }
         }
 
         if start_translate {
-            update |= self.start_translate(*self.s.values.selected);
+            update |= self.start_translate(self.s.values.selected_id);
         }
 
         update
@@ -1944,22 +1971,22 @@ impl Map {
         true
     }
 
-    fn start_scale(&mut self) -> bool {
+    fn start_scale(&mut self, id: RemoteId) -> bool {
+        if id.is_zero() || !id.is_local() {
+            return false;
+        }
+
         let Some(mouse) = self.mouse else {
             return false;
         };
 
-        if self.s.values.selected.is_zero() || !self.s.values.selected.is_local() {
-            return false;
-        }
-
         let mut objects = self.objects.borrow_mut();
 
-        if objects.is_locked(*self.s.values.selected) {
+        if objects.is_locked(self.s.values.selected_id) {
             return false;
         };
 
-        let Some(o) = objects.get_mut(*self.s.values.selected) else {
+        let Some(o) = objects.get_mut(self.s.values.selected_id) else {
             return false;
         };
 
@@ -1969,14 +1996,14 @@ impl Map {
 
         let initial_distance = position.dist(mouse).max(INTERPOLATION_THRESHOLD);
 
-        self.s.active.remove(&self.s.values.selected);
+        self.s.active.remove(&self.s.values.selected_id);
 
         if let Some(action) = self.action.take() {
             self.s.finalize_action(&mut objects, action);
         }
 
         let action = self.action.insert(Action::Scale(Scale {
-            id: *self.s.values.selected,
+            id: self.s.values.selected_id,
             scale: 1.0,
             position,
             initial_distance,
@@ -2002,13 +2029,13 @@ impl Map {
             "Escape" => Ok(self.cancel()),
             "Delete" => {
                 if self.s.modal.as_ref().is_some_and(
-                    |m| matches!(m, MapModal::Remove { object } if object.id == *self.s.values.selected),
+                    |m| matches!(m, MapModal::Remove { object } if object.id == self.s.values.selected_id),
                 ) {
                     return Ok(false);
                 }
 
                 ctx.link()
-                    .send_message(Msg::ConfirmRemove(*self.s.values.selected));
+                    .send_message(Msg::ConfirmRemove(self.s.values.selected_id));
                 Ok(false)
             }
             "F1" | "?" => {
@@ -2020,13 +2047,17 @@ impl Map {
                 Ok(true)
             }
             "Enter" if self.s.modal.is_none() => Ok(self.accept(ctx)),
-            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
-            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(*self.s.values.selected)),
-            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
-            "g" | "G" if self.s.modal.is_none() => {
-                Ok(self.start_translate(*self.s.values.selected))
+            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale(self.s.values.selected_id)),
+            "t" | "T" if self.s.modal.is_none() => {
+                Ok(self.toggle_locked(self.s.values.selected_id))
             }
-            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation()),
+            "r" | "R" if self.s.modal.is_none() => {
+                Ok(self.start_rotation(self.s.values.selected_id))
+            }
+            "g" | "G" if self.s.modal.is_none() => {
+                Ok(self.start_translate(self.s.values.selected_id))
+            }
+            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation(self.s.values.selected_id)),
             _ => Ok(false),
         }
     }
@@ -2058,7 +2089,8 @@ impl Map {
             return true;
         }
 
-        if self.s.values.selected.update(RemoteId::ZERO) {
+        if self.s.values.selected.update(StableId::ZERO) {
+            self.s.values.selected_id = RemoteId::ZERO;
             self.s.redraw = true;
             self.s.updates.insert((RemoteId::ZERO, Key::SELECTED));
             return true;
@@ -2067,8 +2099,8 @@ impl Map {
         false
     }
 
-    fn start_rotation(&mut self) -> bool {
-        if self.s.values.selected.is_zero() || !self.s.values.selected.is_local() {
+    fn start_rotation(&mut self, id: RemoteId) -> bool {
+        if id.is_zero() || !id.is_local() {
             return false;
         }
 
@@ -2078,11 +2110,11 @@ impl Map {
 
         let mut objects = self.objects.borrow_mut();
 
-        if objects.is_locked(*self.s.values.selected) {
+        if objects.is_locked(id) {
             return false;
         }
 
-        let Some(o) = objects.get(*self.s.values.selected) else {
+        let Some(o) = objects.get(id) else {
             return false;
         };
 
@@ -2190,7 +2222,7 @@ impl Map {
             }
 
             if id.id.is_zero() {
-                let value = self.s.values.get(key, &self.peers);
+                let value = self.s.values.get(key);
                 let req = self.s.channel.updates(ctx, [(key, value)]);
                 self.s.requests.insert((id, key), req);
                 continue;
@@ -2212,10 +2244,12 @@ impl Map {
     fn on_context_menu(&mut self, ctx: &Context<Self>, ev: MouseEvent) -> Result<(), Error> {
         let mouse = self.view.to_world(ev.offset());
 
+        let order = self.order.borrow();
         let objects = self.objects.borrow();
 
-        let hit = objects
-            .values()
+        let hit = order
+            .walk()
+            .flat_map(|id| objects.get(id))
             .find(|o| o.as_click_geometry().intersects(mouse))
             .map(|o| o.id);
 
@@ -2239,7 +2273,13 @@ impl Map {
             onremove: ctx.link().callback(move |_| Msg::ConfirmRemove(object_id)),
         });
 
-        if self.s.values.selected.update(object_id) {
+        if self
+            .s
+            .values
+            .selected
+            .update(self.peers.to_stable_id(object_id))
+        {
+            self.s.values.selected_id = self.peers.to_remote_id(*self.s.values.selected);
             self.s.redraw = true;
             self.s.updates.insert((RemoteId::ZERO, Key::SELECTED));
         }
@@ -2258,7 +2298,7 @@ impl Map {
 
                 self.mouse = Some(e);
 
-                if self.start_rotation() {
+                if self.start_rotation(self.s.values.selected_id) {
                     ev.prevent_default();
                     return Ok(());
                 }
@@ -2583,7 +2623,7 @@ impl Map {
                 continue;
             };
 
-            let selected = *self.s.values.selected == o.id;
+            let selected = self.s.values.selected_id == o.id;
 
             let Some(mut render) = RenderObject::from_data(o, |id| objects.visibility(id)) else {
                 continue;
