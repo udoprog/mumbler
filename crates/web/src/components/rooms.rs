@@ -11,7 +11,7 @@ use crate::error::Error;
 use crate::log;
 use crate::peers::Peers;
 
-use super::{COMMON_ROOM, Icon, SetupChannel};
+use super::{COMMON_ROOM, ChannelExt as _, Icon, SetupChannel};
 
 pub(crate) enum Msg {
     Channel(Result<ws::Channel, Error>),
@@ -20,9 +20,16 @@ pub(crate) enum Msg {
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
     Disconnect,
     Connect(StableId),
-    ConnectResult(Result<Packet<api::Updates>, ws::Error>),
+    UpdatesResult(Result<Packet<api::Updates>, ws::Error>),
     CreateRoom,
     CreateRoomResult(Result<Packet<api::CreateObject>, ws::Error>),
+}
+
+impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
+    #[inline]
+    fn from(result: Result<Packet<api::Updates>, ws::Error>) -> Self {
+        Self::UpdatesResult(result)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -259,7 +266,6 @@ impl Rooms {
         match msg {
             Msg::Channel(channel) => {
                 self.channel = channel?;
-
                 self.peers = Peers::default();
                 self.active_room = StableId::ZERO;
                 self.rooms.clear();
@@ -427,32 +433,30 @@ impl Rooms {
                 }
             }
             Msg::Disconnect => {
-                let values = vec![(Key::ROOM, Value::empty())];
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
+
                 self.active_room = StableId::ZERO;
 
-                self._connect_room_request = self
-                    .channel
-                    .request()
-                    .body(api::UpdatesRequest { values })
-                    .on_packet(ctx.link().callback(Msg::ConnectResult))
-                    .send();
+                self._connect_room_request =
+                    self.channel.updates(ctx, [(Key::ROOM, Value::empty())]);
 
                 Ok(true)
             }
             Msg::Connect(room) => {
-                let values = vec![(Key::ROOM, Value::from(room))];
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(true);
+                }
+
                 self.active_room = room;
 
-                self._connect_room_request = self
-                    .channel
-                    .request()
-                    .body(api::UpdatesRequest { values })
-                    .on_packet(ctx.link().callback(Msg::ConnectResult))
-                    .send();
+                self._connect_room_request =
+                    self.channel.updates(ctx, [(Key::ROOM, Value::from(room))]);
 
                 Ok(true)
             }
-            Msg::ConnectResult(body) => {
+            Msg::UpdatesResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(false)

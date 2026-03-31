@@ -3,6 +3,8 @@ use core::mem;
 use core::ops::Sub;
 use core::ops::{Deref, DerefMut};
 
+use api::Value;
+
 /// A wrapper around a value that tracks whether it has changed.
 ///
 /// The [`update`] method assigns a new value and returns `true` if the value
@@ -58,6 +60,28 @@ impl State<String> {
         self.0.clear();
         self.0.push_str(new);
         true
+    }
+}
+
+impl<T> State<T> {
+    /// Coerce the state into a value.
+    #[inline]
+    pub fn value(&self) -> Value
+    where
+        T: Clone,
+        Value: From<T>,
+    {
+        Value::from(self.0.clone())
+    }
+
+    /// Coerce the dereffed state into a value.
+    #[inline]
+    pub fn deref_value(&self) -> Value
+    where
+        T: Deref,
+        Value: for<'a> From<&'a T::Target>,
+    {
+        Value::from(self.0.deref())
     }
 }
 

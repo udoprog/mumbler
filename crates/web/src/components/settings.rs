@@ -6,6 +6,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
+use crate::components::ChannelExt;
 use crate::error::Error;
 use crate::log;
 use crate::state::State;
@@ -21,6 +22,13 @@ pub(crate) enum Msg {
     UpdateConfig(Result<Packet<api::Updates>, ws::Error>),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
+}
+
+impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
+    #[inline]
+    fn from(result: Result<Packet<api::Updates>, ws::Error>) -> Self {
+        Self::UpdateConfig(result)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -165,49 +173,36 @@ impl Settings {
                 let input = into_target!(e, HtmlInputElement);
 
                 let value = input.value();
-                let value = value.trim();
 
-                let value = if value.is_empty() {
-                    *self.name = String::new();
-                    api::Value::empty()
-                } else {
-                    *self.name = value.to_owned();
-                    api::Value::from((*self.name).clone())
-                };
+                if !self.name.update_str(value.trim()) {
+                    return Ok(false);
+                }
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
 
                 self._name_request = self
                     .channel
-                    .request()
-                    .body(api::UpdatesRequest {
-                        values: vec![(api::Key::PEER_NAME, value)],
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
-                    .send();
+                    .updates(ctx, [(api::Key::PEER_NAME, self.name.as_str().into())]);
 
                 Ok(false)
             }
             Msg::PeerSecretChanged(e) => {
                 let input = into_target!(e, HtmlInputElement);
-
                 let value = input.value();
-                let value = value.trim();
 
-                let value = if value.is_empty() {
-                    *self.peer_secret = String::new();
-                    api::Value::empty()
-                } else {
-                    *self.peer_secret = value.to_owned();
-                    api::Value::from((*self.peer_secret).clone())
-                };
+                if !self.peer_secret.update_str(value.trim()) {
+                    return Ok(false);
+                }
+
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
 
                 self._peer_secret_request = self
                     .channel
-                    .request()
-                    .body(api::UpdatesRequest {
-                        values: vec![(api::Key::PEER_SECRET, value)],
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
-                    .send();
+                    .updates(ctx, [(Key::PEER_SECRET, self.peer_secret.as_str().into())]);
 
                 Ok(false)
             }
@@ -215,24 +210,19 @@ impl Settings {
                 let input = into_target!(e, HtmlInputElement);
 
                 let value = input.value();
-                let value = value.trim();
 
-                let value = if value.is_empty() {
-                    *self.remote_server = String::new();
-                    api::Value::empty()
-                } else {
-                    *self.remote_server = value.to_owned();
-                    api::Value::from((*self.remote_server).clone())
-                };
+                if !self.remote_server.update_str(value.trim()) {
+                    return Ok(false);
+                }
 
-                self._remote_server_request = self
-                    .channel
-                    .request()
-                    .body(api::UpdatesRequest {
-                        values: vec![(api::Key::REMOTE_SERVER, value)],
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
-                    .send();
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
+
+                self._remote_server_request = self.channel.updates(
+                    ctx,
+                    [(Key::REMOTE_SERVER, self.remote_server.deref_value())],
+                );
 
                 Ok(false)
             }
@@ -242,14 +232,13 @@ impl Settings {
                 let remote_server_tls = input.checked();
                 *self.remote_server_tls = remote_server_tls;
 
+                if self.channel.id() == ChannelId::NONE {
+                    return Ok(false);
+                }
+
                 self._remote_server_tls_request = self
                     .channel
-                    .request()
-                    .body(api::UpdatesRequest {
-                        values: vec![(api::Key::REMOTE_TLS, remote_server_tls.into())],
-                    })
-                    .on_packet(ctx.link().callback(Msg::UpdateConfig))
-                    .send();
+                    .updates(ctx, [(Key::REMOTE_TLS, self.remote_server_tls.value())]);
 
                 Ok(false)
             }

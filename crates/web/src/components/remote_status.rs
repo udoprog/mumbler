@@ -8,16 +8,23 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{Icon, SetupChannel};
+use super::{ChannelExt as _, Icon, SetupChannel};
 
 pub(crate) enum Msg {
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
-    ToggleResponse(Result<Packet<api::Updates>, ws::Error>),
+    UpdatesResult(Result<Packet<api::Updates>, ws::Error>),
     Channel(Result<ws::Channel, Error>),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
+}
+
+impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
+    #[inline]
+    fn from(result: Result<Packet<api::Updates>, ws::Error>) -> Self {
+        Self::UpdatesResult(result)
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -134,16 +141,11 @@ impl RemoteStatus {
 
                 self._toggle_request = self
                     .channel
-                    .request()
-                    .body(api::UpdatesRequest {
-                        values: Vec::from([(Key::REMOTE_ENABLED, Value::from(new_enabled))]),
-                    })
-                    .on_packet(ctx.link().callback(Msg::ToggleResponse))
-                    .send();
+                    .updates(ctx, [(Key::REMOTE_ENABLED, Value::from(new_enabled))]);
 
                 Ok(true)
             }
-            Msg::ToggleResponse(body) => {
+            Msg::UpdatesResult(body) => {
                 let body = body?;
                 _ = body.decode()?;
                 Ok(false)
