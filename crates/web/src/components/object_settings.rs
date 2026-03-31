@@ -9,6 +9,9 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement};
 use yew::prelude::*;
 
 use crate::components::render::{self, ViewTransform};
+use crate::consts::{
+    DEFAULT_HEIGHT, DEFAULT_RADIUS, DEFAULT_SPEED, DEFAULT_WIDTH, MAX_FLOAT, MIN_FLOAT,
+};
 use crate::error::Error;
 use crate::images::Images;
 use crate::log;
@@ -204,8 +207,16 @@ impl ObjectSettings {
                     let ratio = if let Some(ratio) = set_ratio {
                         round(ratio)
                     } else {
-                        let width = self.properties.get(Key::WIDTH).as_f64().unwrap_or(1.0);
-                        let height = self.properties.get(Key::HEIGHT).as_f64().unwrap_or(1.0);
+                        let width = self
+                            .properties
+                            .get(Key::WIDTH)
+                            .as_f64()
+                            .unwrap_or(f64::from(DEFAULT_WIDTH));
+                        let height = self
+                            .properties
+                            .get(Key::HEIGHT)
+                            .as_f64()
+                            .unwrap_or(f64::from(DEFAULT_HEIGHT));
                         round(width / height)
                     };
 
@@ -227,8 +238,13 @@ impl ObjectSettings {
                         </section>
                     }
                 }
-                _ => {
-                    let value = round(self.properties.get(key).as_f64().unwrap_or(0.0));
+                key => {
+                    let value = round(
+                        self.properties
+                            .get(key)
+                            .as_f64()
+                            .unwrap_or(default_f64(key)),
+                    );
 
                     html! {
                         <section class="input-group">
@@ -237,8 +253,8 @@ impl ObjectSettings {
                             <input
                                 id={key.id()}
                                 type="number"
-                                min="0.1"
-                                max="50"
+                                min={MIN_FLOAT.to_string()}
+                                max={MAX_FLOAT.to_string()}
                                 step="0.1"
                                 placeholder={key.placeholder()}
                                 value={value.to_string()}
@@ -523,7 +539,7 @@ impl ObjectSettings {
                     return Ok(false);
                 };
 
-                let value = round(value);
+                let value = round(value.clamp(MIN_FLOAT, MAX_FLOAT));
 
                 match key {
                     Key::HEIGHT if ctx.props().height_ratio => {
@@ -787,29 +803,37 @@ impl ObjectSettings {
             .as_color()
             .unwrap_or(ctx.props().default_color);
 
-        let width = canvas.width();
-        let height = canvas.height();
+        let canvas_width = canvas.width();
+        let canvas_height = canvas.height();
 
-        cx.clear_rect(0.0, 0.0, width as f64, height as f64);
+        cx.clear_rect(0.0, 0.0, canvas_width as f64, canvas_height as f64);
 
         match render {
             ObjectRender::Static => {
-                let render_width = self.properties.get(Key::WIDTH).as_f64().unwrap_or(1.0) as f32;
+                let width = self
+                    .properties
+                    .get(Key::WIDTH)
+                    .as_f32()
+                    .unwrap_or(DEFAULT_WIDTH);
 
-                let render_height = self.properties.get(Key::HEIGHT).as_f64().unwrap_or(1.0) as f32;
+                let height = self
+                    .properties
+                    .get(Key::HEIGHT)
+                    .as_f32()
+                    .unwrap_or(DEFAULT_HEIGHT);
 
                 let render = render::RenderStatic {
                     transform: &api::Transform::origin(),
                     image,
                     color,
-                    width: render_width,
-                    height: render_height,
+                    width,
+                    height,
                 };
 
-                let min = width.min(height) as f32;
+                let min = canvas_width.min(canvas_height) as f32;
 
-                let scale = (min - min * 0.2) / render_width.max(render_height);
-                let view = ViewTransform::simple(width, height, scale);
+                let scale = (min - min * 0.2) / width.max(height);
+                let view = ViewTransform::simple(canvas_width, canvas_height, scale);
 
                 render::draw_static(&cx, &view, &base, &render, &self.images)?;
             }
@@ -822,7 +846,7 @@ impl ObjectSettings {
                     token_radius: 1.0,
                 };
 
-                let view = ViewTransform::simple(width, height, 50.0);
+                let view = ViewTransform::simple(canvas_width, canvas_height, 50.0);
                 render::draw_token(&cx, &view, &base, &render, &self.images)?;
             }
         }
@@ -833,4 +857,14 @@ impl ObjectSettings {
 
 fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
+}
+
+fn default_f64(key: Key) -> f64 {
+    match key {
+        Key::WIDTH => f64::from(DEFAULT_WIDTH),
+        Key::HEIGHT => f64::from(DEFAULT_HEIGHT),
+        Key::SPEED => f64::from(DEFAULT_SPEED),
+        Key::RADIUS => f64::from(DEFAULT_RADIUS),
+        _ => 0.0,
+    }
 }

@@ -7,12 +7,8 @@ use api::{Color, Extent, Id, Key, PeerId, RemoteId, RemoteObject, Transform, Typ
 use yew::{Html, html};
 
 use crate::components::Visibility;
+use crate::consts::{DEFAULT_HEIGHT, DEFAULT_RADIUS, DEFAULT_SPEED, DEFAULT_WIDTH};
 use crate::state::State;
-
-const DEFAULT_SPEED: f32 = 2.5;
-const DEFAULT_STATIC_WIDTH: f32 = 1.0;
-const DEFAULT_STATIC_HEIGHT: f32 = 1.0;
-const DEFAULT_TOKEN_RADIUS: f32 = 0.25;
 
 enum Shape {
     Empty,
@@ -216,7 +212,7 @@ pub(crate) struct TokenObject {
     pub(crate) look_at: State<Option<Vec3>>,
     pub(crate) image: State<Id>,
     pub(crate) color: State<Option<Color>>,
-    pub(crate) token_radius: State<f32>,
+    pub(crate) radius: State<f32>,
     pub(crate) speed: State<f32>,
     pub(crate) move_target: State<Option<Vec3>>,
 }
@@ -234,12 +230,7 @@ impl TokenObject {
             look_at: State::new(o.props.get(Key::LOOK_AT).as_vec3()),
             image: State::new(o.props.get(Key::IMAGE_ID).as_id()),
             color: State::new(o.props.get(Key::COLOR).as_color()),
-            token_radius: State::new(
-                o.props
-                    .get(Key::RADIUS)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_TOKEN_RADIUS),
-            ),
+            radius: State::new(o.props.get(Key::RADIUS).as_f32().unwrap_or(DEFAULT_RADIUS)),
             speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
             move_target: State::new(o.props.get(Key::MOVE_TARGET).as_vec3()),
         }
@@ -253,7 +244,7 @@ impl TokenObject {
             Key::LOOK_AT => Value::from(*self.look_at),
             Key::IMAGE_ID => Value::from(*self.image),
             Key::COLOR => Value::from(*self.color),
-            Key::RADIUS => Value::from(*self.token_radius),
+            Key::RADIUS => Value::from(*self.radius),
             Key::SPEED => Value::from(*self.speed),
             Key::MOVE_TARGET => Value::from(*self.move_target),
             _ => Value::empty(),
@@ -289,9 +280,7 @@ impl TokenObject {
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
             Key::COLOR => self.color.update(value.as_color()),
-            Key::RADIUS => self
-                .token_radius
-                .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
+            Key::RADIUS => self.radius.update(value.as_f32().unwrap_or(DEFAULT_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
             Key::MOVE_TARGET => self.move_target.update(value.as_vec3()),
             _ => false,
@@ -330,18 +319,8 @@ impl StaticObject {
             color: State::new(o.props.get(Key::COLOR).as_color()),
             name: State::new(o.props.get(Key::NAME).as_str().to_owned()),
             hidden: State::new(o.props.get(Key::HIDDEN).as_bool()),
-            width: State::new(
-                o.props
-                    .get(Key::WIDTH)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_STATIC_WIDTH),
-            ),
-            height: State::new(
-                o.props
-                    .get(Key::HEIGHT)
-                    .as_f32()
-                    .unwrap_or(DEFAULT_STATIC_HEIGHT),
-            ),
+            width: State::new(o.props.get(Key::WIDTH).as_f32().unwrap_or(DEFAULT_WIDTH)),
+            height: State::new(o.props.get(Key::HEIGHT).as_f32().unwrap_or(DEFAULT_HEIGHT)),
         }
     }
 
@@ -370,12 +349,8 @@ impl StaticObject {
             Key::COLOR => self.color.update(v.as_color()),
             Key::NAME => self.name.update(v.as_str().to_owned()),
             Key::HIDDEN => self.hidden.update(v.as_bool()),
-            Key::WIDTH => self
-                .width
-                .update(v.as_f32().unwrap_or(DEFAULT_STATIC_WIDTH)),
-            Key::HEIGHT => self
-                .height
-                .update(v.as_f32().unwrap_or(DEFAULT_STATIC_HEIGHT)),
+            Key::WIDTH => self.width.update(v.as_f32().unwrap_or(DEFAULT_WIDTH)),
+            Key::HEIGHT => self.height.update(v.as_f32().unwrap_or(DEFAULT_HEIGHT)),
             _ => false,
         }
     }
@@ -678,7 +653,7 @@ impl Object {
             ObjectKind::Token(this) => (
                 &*this.transform,
                 Shape::Circle {
-                    radius: *this.token_radius,
+                    radius: *this.radius,
                 },
             ),
             ObjectKind::Static(this) => (

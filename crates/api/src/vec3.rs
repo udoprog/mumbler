@@ -29,13 +29,15 @@ impl Vec3 {
     }
 
     /// Calculate the dot product of `self` and `other`.
+    #[inline]
     pub fn dot(&self, other: &Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
     /// Normalize the vector to a unit vector.
+    #[inline]
     pub fn normalize(&self) -> Self {
-        let len = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
+        let len = self.len();
         Self::new(self.x / len, self.y / len, self.z / len)
     }
 

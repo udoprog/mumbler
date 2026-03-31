@@ -632,16 +632,19 @@ pub struct Transform {
 
 impl Transform {
     /// Creates a new transform with the given position and front direction.
+    #[inline]
     pub const fn new(position: Vec3, front: Vec3) -> Self {
         Self { position, front }
     }
 
     /// A transform at the origin facing forward.
+    #[inline]
     pub const fn origin() -> Self {
         Self::new(Vec3::ZERO, Vec3::FORWARD)
     }
 
     /// Transforms a world-space point into this transform's local space.
+    #[inline]
     pub fn transform_point(&self, point: Vec3) -> Vec3 {
         let right = self.front.cross(&Vec3::Y).normalize();
         let up = right.cross(&self.front).normalize();

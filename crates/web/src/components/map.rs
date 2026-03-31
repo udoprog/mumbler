@@ -461,7 +461,7 @@ impl MapState {
                 }
             }
             ObjectKind::Token(t) => {
-                if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
+                if t.radius.update_epsilon(*t.radius * scale.scale) {
                     self.updates.insert((scale.id, Key::RADIUS));
                 }
             }

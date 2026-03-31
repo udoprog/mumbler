@@ -60,7 +60,7 @@ impl<'a> RenderObject<'a> {
                 look_at: this.look_at.as_ref(),
                 image: RemoteId::new(data.id.peer_id, *this.image),
                 color: this.color.unwrap_or_else(Color::neutral),
-                token_radius: *this.token_radius,
+                token_radius: *this.radius,
             }),
             ObjectKind::Static(this) => RenderObjectKind::Static(RenderStatic {
                 transform: &this.transform,
