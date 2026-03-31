@@ -29,6 +29,11 @@ pub struct Value {
 }
 
 impl Value {
+    /// A constant representing an empty value.
+    pub const EMPTY: Self = Self {
+        kind: ValueKind::Empty,
+    };
+
     /// Get a reference to the inner [`ValueKind`].
     #[inline]
     pub fn as_kind(&self) -> &ValueKind {

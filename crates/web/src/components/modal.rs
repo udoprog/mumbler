@@ -56,7 +56,7 @@ pub(crate) fn modal(props: &Props) -> Html {
         &props.class,
     };
 
-    let style = use_state(|| format!(""));
+    let style = use_state(String::new);
     let anchor = use_state(|| Client2 { x: 0, y: 0 });
     let dragging = use_state(|| None::<Client2>);
 

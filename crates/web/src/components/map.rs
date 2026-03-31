@@ -34,6 +34,7 @@ use super::{
     Rooms, SetupChannel, UNKNOWN_ROOM,
 };
 
+const INTERPOLATION_THRESHOLD: f32 = 0.01;
 const LEFT_MOUSE_BUTTON: i16 = 0;
 const MIDDLE_MOUSE_BUTTON: i16 = 1;
 
@@ -231,8 +232,8 @@ impl MapModal {
 struct MapState {
     window: Window,
     channel: ws::Channel,
-    look_at: HashSet<RemoteId>,
-    transforms: HashSet<RemoteId>,
+    updates: HashSet<(RemoteId, Key)>,
+    requests: HashMap<(RemoteId, Key), ws::Request>,
     selected: RemoteId,
     context_menu: Option<ContextMenu>,
     modal: Option<MapModal>,
@@ -241,8 +242,10 @@ struct MapState {
     update_cache: bool,
     update_config: bool,
     update_view: bool,
-    move_target: HashMap<RemoteId, Vec3>,
-    move_target_remove: Vec<RemoteId>,
+    /// Objects which are actively being simulated.
+    active: HashSet<RemoteId>,
+    /// Objects which are scheduled to be remove from simulation.
+    active_remove: Vec<RemoteId>,
     animation_frame: Option<AnimationFrame>,
     object_requests: HashMap<RemoteId, ObjectRequests>,
     zoom: State<f32>,
@@ -258,8 +261,8 @@ impl MapState {
         Self {
             window,
             channel: ws::Channel::default(),
-            look_at: HashSet::default(),
-            transforms: HashSet::default(),
+            updates: HashSet::default(),
+            requests: HashMap::new(),
             selected: RemoteId::default(),
             context_menu: Option::default(),
             modal: Option::default(),
@@ -268,8 +271,8 @@ impl MapState {
             update_cache: false,
             update_config: false,
             update_view: false,
-            move_target: HashMap::default(),
-            move_target_remove: Vec::new(),
+            active: HashSet::default(),
+            active_remove: Vec::new(),
             animation_frame: Option::default(),
             object_requests: HashMap::new(),
             zoom: State::new(2.0),
@@ -321,19 +324,6 @@ impl MapState {
         values
     }
 
-    fn look_at(&mut self, objects: &mut ObjectsRef, from: Vec3, to: Vec3) {
-        let Some(o) = objects.get_mut(self.selected) else {
-            return;
-        };
-
-        let Some(transform) = o.as_transform_mut() else {
-            return;
-        };
-
-        transform.front = from.direction_to(to);
-        self.transforms.insert(o.id);
-    }
-
     fn select_object(&mut self, ctx: &Context<Map>, id: RemoteId, objects: &ObjectsRef) -> bool {
         if self.selected == id {
             return false;
@@ -380,20 +370,27 @@ impl MapState {
                     return;
                 }
 
-                if r.is_static {
-                    // Use the original cursor offset to rotate relative to the initial grab.
-                    if let Some(transform) = o.as_transform_mut() {
-                        let cursor = mouse - r.center;
-                        let angle = cursor.angle_xz() + r.rotation_offset;
-                        transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
-                        self.transforms.insert(o.id);
-                    }
-                } else if let Some(look_at) = o.as_look_at_mut() {
-                    **look_at = Some(Vec3::new(mouse.x, 0.0, mouse.z));
-                    self.look_at.insert(o.id);
-                    self.look_at(objects, r.center, mouse);
-                }
+                let (Some(transform), look_at) = o.as_transform_mut() else {
+                    return;
+                };
 
+                // If an object has LOOK_AT, we change the location of the look
+                // at marker to where the mouse is and always perform an
+                // absolute rotation.
+                if let Some(look_at) = look_at {
+                    **look_at = Some(Vec3::new(mouse.x, 0.0, mouse.z));
+                    transform.front = r.center.direction_to(mouse);
+                    self.updates
+                        .extend([(o.id, Key::TRANSFORM), (o.id, Key::LOOK_AT)]);
+                    self.redraw = true;
+                    return;
+                };
+
+                // Use the original cursor offset to rotate relative to the initial grab.
+                let cursor = mouse - r.center;
+                let angle = cursor.angle_xz() + r.rotation_offset;
+                transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
+                self.updates.insert((o.id, Key::TRANSFORM));
                 self.redraw = true;
             }
             Action::Translate(t) => {
@@ -402,15 +399,23 @@ impl MapState {
                 };
 
                 if o.is_static() {
-                    let Some(transform) = o.as_transform_mut() else {
+                    let (Some(transform), _) = o.as_transform_mut() else {
                         return;
                     };
 
                     transform.position = mouse + t.offset;
-                    self.transforms.insert(o.id);
+
+                    self.updates.insert((o.id, Key::TRANSFORM));
                     self.redraw = true;
                 } else {
-                    self.move_target.insert(t.id, mouse);
+                    let Some(move_target) = o.as_move_target_mut() else {
+                        return;
+                    };
+
+                    **move_target = Some(mouse);
+
+                    self.active.insert(o.id);
+                    self.updates.insert((o.id, Key::MOVE_TARGET));
                     self.redraw = true;
                 }
             }
@@ -496,7 +501,6 @@ struct Rotate {
     id: RemoteId,
     center: Vec3,
     rotation_offset: f32,
-    is_static: bool,
 }
 
 struct Scale {
@@ -619,7 +623,6 @@ pub(crate) struct Map {
     drag_over: Option<DragOver>,
     dropped_images: Vec<(NonZeroU32, DropImage)>,
     images: Images,
-    look_at_requests: HashMap<RemoteId, ws::Request>,
     mouse: Option<Vec3>,
     object_ondragend: Callback<RemoteId>,
     object_ondragover: Callback<DragOver>,
@@ -636,7 +639,6 @@ pub(crate) struct Map {
     peers: Peers,
     cache: Cache,
     action: Option<Action>,
-    transform_requests: HashMap<RemoteId, ws::Request>,
     look_ats: Vec<(Vec3, Color)>,
     view: ViewTransform,
 }
@@ -765,7 +767,6 @@ impl Component for Map {
             drag_over: None,
             dropped_images: Vec::new(),
             images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
-            look_at_requests: HashMap::new(),
             look_ats: Vec::new(),
             mouse: None,
             object_ondragend: ctx.link().callback(Msg::DragEnd),
@@ -782,7 +783,6 @@ impl Component for Map {
             pan_anchor: None,
             peers: Peers::default(),
             cache: Cache::default(),
-            transform_requests: HashMap::new(),
             view: ViewTransform::simple(0, 0, 1.0),
         }
     }
@@ -802,12 +802,8 @@ impl Component for Map {
             }
         };
 
-        if !self.s.transforms.is_empty() {
-            self.send_transform_updates(ctx);
-        }
-
-        if !self.s.look_at.is_empty() {
-            self.send_look_at_updates(ctx);
+        if !self.s.updates.is_empty() {
+            self.send_updates(ctx);
         }
 
         if self.s.update_config {
@@ -855,7 +851,7 @@ impl Component for Map {
             self.s.redraw = false;
         }
 
-        if self.simulation_interval.is_none() && !self.s.move_target.is_empty() {
+        if self.simulation_interval.is_none() && !self.s.active.is_empty() {
             let link = ctx.link().clone();
 
             let interval = Interval::new(1000 / SIMULATION_FPS, move || {
@@ -1767,6 +1763,10 @@ impl Map {
                 self.s.update_cache = o.ty() == Type::ROOM;
                 self.s.redraw |= update;
 
+                if matches!(key, Key::MOVE_TARGET) {
+                    self.s.active.insert(o.id);
+                }
+
                 if update && let Some(modal) = &mut self.s.modal {
                     modal.update(&mut objects);
                 }
@@ -1837,7 +1837,7 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 
-        self.s.move_target.remove(&id);
+        self.s.active.remove(&id);
 
         objects.remove(id);
         order.remove(id);
@@ -1870,7 +1870,7 @@ impl Map {
 
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = None;
-                    self.s.look_at.insert(r.id);
+                    self.s.updates.insert((r.id, Key::LOOK_AT));
                 }
 
                 self.s.redraw = true;
@@ -1960,7 +1960,13 @@ impl Map {
             // position on move.
             transform.position - mouse
         } else {
-            self.s.move_target.insert(id, mouse);
+            let Some(move_target) = o.as_move_target_mut() else {
+                return false;
+            };
+
+            **move_target = Some(mouse);
+            self.s.active.insert(id);
+            self.s.updates.insert((id, Key::MOVE_TARGET));
             mouse
         };
 
@@ -1999,9 +2005,9 @@ impl Map {
             return false;
         };
 
-        let initial_distance = position.dist(mouse).max(0.01);
+        let initial_distance = position.dist(mouse).max(INTERPOLATION_THRESHOLD);
 
-        self.s.move_target.remove(&self.s.selected);
+        self.s.active.remove(&self.s.selected);
 
         if let Some(action) = self.action.take() {
             self.s.finalize_action(ctx, &mut objects, action);
@@ -2130,8 +2136,6 @@ impl Map {
             0.0
         };
 
-        let is_static = o.is_static();
-
         if let Some(action) = self.action.take() {
             self.s.finalize_action(ctx, &mut objects, action);
         }
@@ -2140,7 +2144,6 @@ impl Map {
             id: object_id,
             center,
             rotation_offset,
-            is_static,
         }));
 
         self.s.apply(&mut objects, action, mouse);
@@ -2153,103 +2156,89 @@ impl Map {
     fn simulation_frame(&mut self) {
         let mut objects = self.objects.borrow_mut();
 
-        for (id, target) in self.s.move_target.iter_mut() {
-            let Some(o) = objects.get_mut(*id) else {
-                continue;
+        for id in &self.s.active {
+            let remove = 'remove: {
+                let Some(o) = objects.get_mut(*id) else {
+                    break 'remove true;
+                };
+
+                let Some((transform, move_target, look_at, speed)) = o.as_interpolate_mut() else {
+                    break 'remove true;
+                };
+
+                let Some(target) = &**move_target else {
+                    break 'remove true;
+                };
+
+                let delta = *target - transform.position;
+                let distance = delta.len();
+
+                if distance < INTERPOLATION_THRESHOLD {
+                    transform.position = *target;
+                    **move_target = None;
+                    self.s.updates.insert((*id, Key::MOVE_TARGET));
+                    break 'remove true;
+                }
+
+                let step = speed / SIMULATION_FPS as f32;
+                let move_distance = step.min(distance);
+                let ratio = move_distance / distance;
+
+                transform.position += delta * ratio;
+
+                if let Some(t) = look_at {
+                    transform.front = transform.position.direction_to(*t);
+                } else {
+                    transform.front = transform.position.direction_to(*target);
+                }
+
+                self.s.updates.insert((*id, Key::TRANSFORM));
+                false
             };
 
-            let Some((transform, look_at, speed)) = o.as_interpolate_mut() else {
-                continue;
-            };
-
-            let Some(speed) = speed else {
-                continue;
-            };
-
-            let d = *target - transform.position;
-
-            let distance = d.len();
-
-            if distance < 0.01 {
-                transform.position = *target;
-                self.s.transforms.insert(*id);
-                self.s.move_target_remove.push(*id);
-                continue;
-            }
-
-            let step = speed / SIMULATION_FPS as f32;
-            let move_distance = step.min(distance);
-            let ratio = move_distance / distance;
-
-            transform.position += d * ratio;
-
-            // Face the movement direction unless a look_at target is active.
-            if look_at.is_none() {
-                transform.front = transform.position.direction_to(*target);
-            }
-
-            self.s.transforms.insert(*id);
-
-            if let Some(t) = look_at {
-                transform.front = transform.position.direction_to(*t);
+            if remove {
+                self.s.active_remove.push(*id);
             }
         }
 
-        for id in self.s.move_target_remove.drain(..) {
-            self.s.move_target.remove(&id);
+        for id in self.s.active_remove.drain(..) {
+            self.s.active.remove(&id);
         }
 
-        if self.s.move_target.is_empty() {
+        if self.s.active.is_empty() {
             self.simulation_interval = None;
         }
     }
 
-    fn send_transform_updates(&mut self, ctx: &Context<Self>) {
+    fn send_updates(&mut self, ctx: &Context<Self>) {
         if self.s.channel.id() == ChannelId::NONE {
-            self.s.transforms.clear();
+            self.s.updates.clear();
             return;
         }
 
         let objects = self.objects.borrow();
 
-        for id in self.s.transforms.drain() {
+        for (id, key) in self.s.updates.drain() {
+            // We absolutely should never send updates for non-local objects.
+            if !id.is_local() {
+                continue;
+            }
+
             let Some(o) = objects.get(id) else {
                 continue;
             };
 
-            let Some(transform) = o.as_transform() else {
+            // Don't send transform updates, if we have sent a look at.
+            if matches!(key, Key::TRANSFORM) && o.has_interpolation() {
                 continue;
-            };
+            }
 
-            let req =
-                self.s
-                    .channel
-                    .object_updates(ctx, id.id, [(Key::TRANSFORM, (*transform).into())]);
+            let req = self
+                .s
+                .channel
+                .object_updates(ctx, id.id, [(key, o.get(key))]);
 
-            self.transform_requests.insert(id, req);
-        }
-    }
-
-    fn send_look_at_updates(&mut self, ctx: &Context<Self>) {
-        if self.s.channel.id() == ChannelId::NONE {
-            self.s.look_at.clear();
-            return;
-        }
-
-        let objects = self.objects.borrow();
-
-        for id in self.s.look_at.drain() {
-            let Some(o) = objects.get(id) else {
-                continue;
-            };
-
-            let req = self.s.channel.object_updates(
-                ctx,
-                id.id,
-                [(Key::LOOK_AT, o.look_at().copied().into())],
-            );
-
-            self.look_at_requests.insert(id, req);
+            self.s.requests.insert((id, key), req);
         }
     }
 

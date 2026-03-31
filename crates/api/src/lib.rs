@@ -147,6 +147,8 @@ crate::macros::keys! {
         ROOM_BACKGROUND: Id = 31;
         /// Whether the grid is visible for a room.
         SHOW_GRID: Boolean = 32;
+        /// A move target, if set causes the object to be animated to the move target.
+        MOVE_TARGET: Vec3 = 33;
     }
 }
 

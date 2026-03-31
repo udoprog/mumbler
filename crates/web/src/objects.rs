@@ -213,6 +213,7 @@ pub(crate) struct TokenObject {
     pub(crate) color: State<Option<Color>>,
     pub(crate) token_radius: State<f32>,
     pub(crate) speed: State<f32>,
+    pub(crate) move_target: State<Option<Vec3>>,
 }
 
 impl TokenObject {
@@ -235,6 +236,22 @@ impl TokenObject {
                     .unwrap_or(DEFAULT_TOKEN_RADIUS),
             ),
             speed: State::new(o.props.get(Key::SPEED).as_f32().unwrap_or(DEFAULT_SPEED)),
+            move_target: State::new(o.props.get(Key::MOVE_TARGET).as_vec3()),
+        }
+    }
+
+    /// Get a property of this object meant to send remotely.
+    pub(crate) fn get(&self, key: Key) -> Value {
+        match key {
+            Key::TRANSFORM => Value::from(*self.transform),
+            Key::LOCKED => Value::from(*self.locked),
+            Key::LOOK_AT => Value::from(*self.look_at),
+            Key::IMAGE_ID => Value::from(*self.image),
+            Key::COLOR => Value::from(*self.color),
+            Key::RADIUS => Value::from(*self.token_radius),
+            Key::SPEED => Value::from(*self.speed),
+            Key::MOVE_TARGET => Value::from(*self.move_target),
+            _ => Value::empty(),
         }
     }
 
@@ -251,6 +268,7 @@ impl TokenObject {
                 .token_radius
                 .update(value.as_f32().unwrap_or(DEFAULT_TOKEN_RADIUS)),
             Key::SPEED => self.speed.update(value.as_f32().unwrap_or(DEFAULT_SPEED)),
+            Key::MOVE_TARGET => self.move_target.update(value.as_vec3()),
             _ => false,
         }
     }
@@ -297,6 +315,21 @@ impl StaticObject {
         }
     }
 
+    /// Get a property of this object meant to send remotely.
+    pub(crate) fn get(&self, key: Key) -> Value {
+        match key {
+            Key::TRANSFORM => Value::from(*self.transform),
+            Key::LOCKED => Value::from(*self.locked),
+            Key::IMAGE_ID => Value::from(*self.image),
+            Key::COLOR => Value::from(*self.color),
+            Key::NAME => Value::from(self.name.as_str()),
+            Key::HIDDEN => Value::from(*self.hidden),
+            Key::WIDTH => Value::from(*self.width),
+            Key::HEIGHT => Value::from(*self.height),
+            _ => Value::empty(),
+        }
+    }
+
     pub(crate) fn update(&mut self, key: Key, v: &Value) -> bool {
         match key {
             Key::TRANSFORM => self
@@ -329,6 +362,15 @@ impl GroupObject {
         Self {
             locked: State::new(o.props.get(Key::LOCKED).as_bool()),
             expanded: State::new(o.props.get(Key::EXPANDED).as_bool()),
+        }
+    }
+
+    /// Get a property of this object meant to send remotely.
+    pub(crate) fn get(&self, key: Key) -> Value {
+        match key {
+            Key::LOCKED => Value::from(*self.locked),
+            Key::EXPANDED => Value::from(*self.expanded),
+            _ => Value::empty(),
         }
     }
 
@@ -371,6 +413,17 @@ impl RoomObject {
                     .as_color()
                     .unwrap_or_else(Color::neutral_background),
             ),
+        }
+    }
+
+    /// Get a property of this object meant to send remotely.
+    pub(crate) fn get(&self, key: Key) -> Value {
+        match key {
+            Key::ROOM_BACKGROUND => Value::from(*self.background),
+            Key::ROOM_EXTENT => Value::from(*self.extent),
+            Key::SHOW_GRID => Value::from(*self.show_grid),
+            Key::COLOR => Value::from(*self.color),
+            _ => Value::empty(),
         }
     }
 
@@ -428,6 +481,35 @@ impl Object {
             sort: State::new(o.props.get(Key::SORT).as_bytes().to_vec()),
             kind,
         })
+    }
+
+    /// Test if the object is actively interpolating.
+    ///
+    /// Interpolation parameters are sent remotely and should prevent
+    /// immediately transformations from being sent.
+    pub(crate) fn has_interpolation(&self) -> bool {
+        let ObjectKind::Token(this) = &self.kind else {
+            return false;
+        };
+
+        this.move_target.is_some()
+    }
+
+    /// Get a property of this object.
+    pub(crate) fn get(&self, key: Key) -> Value {
+        match key {
+            Key::NAME => Value::from(self.name.as_str()),
+            Key::HIDDEN => Value::from(*self.hidden),
+            Key::LOCAL_HIDDEN => Value::from(*self.local_hidden),
+            Key::GROUP => Value::from(self.group.id),
+            Key::SORT => Value::from(self.sort.as_slice()),
+            _ => match &self.kind {
+                ObjectKind::Token(this) => this.get(key),
+                ObjectKind::Static(this) => this.get(key),
+                ObjectKind::Group(this) => this.get(key),
+                ObjectKind::Room(this) => this.get(key),
+            },
+        }
     }
 
     /// Get a view for this object.
@@ -521,10 +603,23 @@ impl Object {
     }
 
     #[inline]
-    pub(crate) fn as_transform_mut(&mut self) -> Option<&mut State<Transform>> {
+    pub(crate) fn as_transform_mut(
+        &mut self,
+    ) -> (
+        Option<&mut State<Transform>>,
+        Option<&mut State<Option<Vec3>>>,
+    ) {
         match &mut self.kind {
-            ObjectKind::Token(this) => Some(&mut this.transform),
-            ObjectKind::Static(this) => Some(&mut this.transform),
+            ObjectKind::Token(this) => (Some(&mut this.transform), Some(&mut this.look_at)),
+            ObjectKind::Static(this) => (Some(&mut this.transform), None),
+            _ => (None, None),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_move_target_mut(&mut self) -> Option<&mut State<Option<Vec3>>> {
+        match &mut self.kind {
+            ObjectKind::Token(this) => Some(&mut this.move_target),
             _ => None,
         }
     }
@@ -532,14 +627,19 @@ impl Object {
     #[inline]
     pub(crate) fn as_interpolate_mut(
         &mut self,
-    ) -> Option<(&mut State<Transform>, Option<&Vec3>, Option<f32>)> {
+    ) -> Option<(
+        &mut State<Transform>,
+        &mut State<Option<Vec3>>,
+        Option<&Vec3>,
+        f32,
+    )> {
         match &mut self.kind {
             ObjectKind::Token(this) => Some((
                 &mut this.transform,
+                &mut this.move_target,
                 this.look_at.as_ref(),
-                Some(*this.speed),
+                *this.speed,
             )),
-            ObjectKind::Static(this) => Some((&mut this.transform, None, None)),
             _ => None,
         }
     }
@@ -583,14 +683,6 @@ impl Object {
     #[inline]
     pub(crate) fn is_static(&self) -> bool {
         matches!(&self.kind, ObjectKind::Static(_))
-    }
-
-    #[inline]
-    pub(crate) fn look_at(&self) -> Option<&Vec3> {
-        match &self.kind {
-            ObjectKind::Token(this) => this.look_at.as_ref(),
-            _ => None,
-        }
     }
 
     #[inline]
