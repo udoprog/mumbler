@@ -99,6 +99,11 @@ pub(crate) struct ObjectsRef {
 
 impl ObjectsRef {
     #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.values.clear();
+    }
+
+    #[inline]
     pub(crate) fn get(&self, id: RemoteId) -> Option<&Object> {
         self.values.get(&id)
     }
@@ -256,6 +261,11 @@ impl TokenObject {
     }
 
     pub(crate) fn update(&mut self, key: Key, value: &Value) -> bool {
+        // Don't receive transform updates if we are interpolating.
+        if matches!(key, Key::TRANSFORM) && self.has_interpolation() {
+            return false;
+        }
+
         match key {
             Key::TRANSFORM => self
                 .transform
@@ -271,6 +281,11 @@ impl TokenObject {
             Key::MOVE_TARGET => self.move_target.update(value.as_vec3()),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub(crate) fn has_interpolation(&self) -> bool {
+        self.move_target.is_some()
     }
 }
 
@@ -483,18 +498,6 @@ impl Object {
         })
     }
 
-    /// Test if the object is actively interpolating.
-    ///
-    /// Interpolation parameters are sent remotely and should prevent
-    /// immediately transformations from being sent.
-    pub(crate) fn has_interpolation(&self) -> bool {
-        let ObjectKind::Token(this) = &self.kind else {
-            return false;
-        };
-
-        this.move_target.is_some()
-    }
-
     /// Get a property of this object.
     pub(crate) fn get(&self, key: Key) -> Value {
         match key {
@@ -621,6 +624,14 @@ impl Object {
         match &mut self.kind {
             ObjectKind::Token(this) => Some(&mut this.move_target),
             _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn has_interpolation(&self) -> bool {
+        match &self.kind {
+            ObjectKind::Token(this) => this.has_interpolation(),
+            _ => false,
         }
     }
 

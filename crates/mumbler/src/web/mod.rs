@@ -10,8 +10,8 @@ use std::net::SocketAddr;
 use anyhow::{Context as _, Result};
 use api::{
     GetObjectSettingsRequest, GetObjectSettingsResponse, Id, Image, InitializeImageUploadResponse,
-    InitializeMapResponse, InitializeRoomsResponse, Key, PeerId, Properties, RemoteId,
-    RemoteObject, RemotePeer, Type, UploadImageRequest, Value,
+    InitializeMapResponse, InitializeRoomsResponse, PeerId, Properties, RemoteId, RemoteObject,
+    RemotePeer, Type, UploadImageRequest,
 };
 use axum::extract::Path;
 use axum::http::{StatusCode, header};
@@ -311,57 +311,4 @@ async fn initialize_image_upload(backend: &Backend) -> Result<InitializeImageUpl
     }
 
     Ok(InitializeImageUploadResponse { images })
-}
-
-async fn object_update(backend: &Backend, id: Id, values: &[(Key, Value)]) -> Result<()> {
-    for (key, value) in values {
-        match *key {
-            Key::TRANSFORM => 'done: {
-                let Some(transform) = value.as_transform() else {
-                    break 'done;
-                };
-
-                if backend.mumble_object() != id {
-                    break 'done;
-                };
-
-                let transform = if backend.is_hidden(id) {
-                    None
-                } else {
-                    Some(transform)
-                };
-
-                backend.set_mumblelink_transform(transform).await;
-            }
-            Key::HIDDEN => {
-                let hidden = value.as_bool();
-
-                backend.set_hidden(id, hidden);
-
-                'out: {
-                    if backend.mumble_object() != id {
-                        break 'out;
-                    }
-
-                    let state = backend.client_state().await;
-
-                    let Some(object) = state.objects.get(&id) else {
-                        return Ok(());
-                    };
-
-                    let transform = if hidden {
-                        None
-                    } else {
-                        object.props.get(Key::TRANSFORM).as_transform()
-                    };
-
-                    backend.set_mumblelink_transform(transform).await;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    backend.object_update(id, values).await;
-    Ok(())
 }

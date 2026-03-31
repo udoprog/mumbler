@@ -90,7 +90,7 @@ impl Data {
     }
 
     /// Remove the given id from all groups.
-    fn remove(&mut self, group: RemoteId, sort: &[u8], id: RemoteId) -> bool {
+    fn remove(&mut self, id: RemoteId, group: RemoteId, sort: &[u8]) -> bool {
         let key = SortKey {
             sort: sort.to_vec(),
             id,
@@ -118,13 +118,13 @@ impl Data {
     /// Move an object from one position to another.
     fn reorder(
         &mut self,
+        id: RemoteId,
         old_group: RemoteId,
         old_sort: &[u8],
         new_group: RemoteId,
         new_sort: &[u8],
-        id: RemoteId,
     ) -> bool {
-        if !self.remove(old_group, old_sort, id) {
+        if !self.remove(id, old_group, old_sort) {
             return false;
         }
 
@@ -165,7 +165,7 @@ impl OrderRef {
                 };
 
                 self.data
-                    .reorder(*o.group, &old_sort, *o.group, &o.sort, id)
+                    .reorder(id, *o.group, &old_sort, *o.group, &o.sort)
             }
             Key::GROUP => 'done: {
                 let new = RemoteId::new(id.peer_id, value.as_id());
@@ -174,14 +174,14 @@ impl OrderRef {
                     break 'done false;
                 };
 
-                self.data.reorder(old_group, &o.sort, *o.group, &o.sort, id)
+                self.data.reorder(id, old_group, &o.sort, *o.group, &o.sort)
             }
             _ => false,
         }
     }
 
     /// Move an object from one position to another.
-    pub(crate) fn reorder(&mut self, new_group: RemoteId, new_sort: &[u8], id: RemoteId) -> bool {
+    pub(crate) fn reorder(&mut self, id: RemoteId, new_group: RemoteId, new_sort: &[u8]) -> bool {
         let Some(o) = self.objects.get_mut(&id) else {
             return false;
         };
@@ -192,7 +192,7 @@ impl OrderRef {
         let group = group.unwrap_or(*o.group);
         let sort = sort.as_deref().unwrap_or(&o.sort[..]);
 
-        self.data.reorder(group, sort, *o.group, &o.sort[..], id)
+        self.data.reorder(id, group, sort, *o.group, &o.sort[..])
     }
 
     /// Test if the given group is empty.
@@ -253,7 +253,7 @@ impl OrderRef {
             return false;
         };
 
-        self.data.remove(*o.group, &o.sort, id)
+        self.data.remove(id, *o.group, &o.sort)
     }
 
     /// Insert an object into the hierarchy. Does nothing if the object has no sort key.

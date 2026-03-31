@@ -104,7 +104,6 @@ crate::macros::keys! {
         MUMBLE_ENABLED: Boolean = 5;
         REMOTE_SERVER: String = 6;
         REMOTE_ENABLED: Boolean = 7;
-        SCALE: Float = 8;
         REMOTE_TLS: Boolean = 11;
         ZOOM: Float = 9;
         PAN: Vec3 = 10;
@@ -168,7 +167,6 @@ impl Key {
             Self::MUMBLE_ENABLED => "mumble-enabled",
             Self::REMOTE_SERVER => "remote-server",
             Self::REMOTE_ENABLED => "remote-enabled",
-            Self::SCALE => "scale",
             Self::REMOTE_TLS => "remote-tls",
             Self::ZOOM => "zoom",
             Self::PAN => "pan",
@@ -205,7 +203,6 @@ impl Key {
             Self::MUMBLE_ENABLED => "Mumble Enabled",
             Self::REMOTE_SERVER => "Remote Server",
             Self::REMOTE_ENABLED => "Remote Enabled",
-            Self::SCALE => "Scale",
             Self::REMOTE_TLS => "Remote TLS",
             Self::ZOOM => "Zoom",
             Self::PAN => "Pan",
@@ -242,7 +239,6 @@ impl Key {
             Self::MUMBLE_ENABLED => "Enter Mumble Enabled",
             Self::REMOTE_SERVER => "Enter Remote Server",
             Self::REMOTE_ENABLED => "Enter Remote Enabled",
-            Self::SCALE => "Enter Scale",
             Self::REMOTE_TLS => "Enter Remote TLS",
             Self::ZOOM => "Enter Zoom",
             Self::PAN => "Enter Pan",

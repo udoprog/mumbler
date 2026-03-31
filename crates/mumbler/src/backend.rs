@@ -429,6 +429,52 @@ impl Backend {
     pub(crate) async fn object_update(&self, id: Id, values: &[(Key, Value)]) {
         let mut state = self.inner.client_state.lock().await;
 
+        for (key, value) in values {
+            match *key {
+                Key::TRANSFORM => 'done: {
+                    let Some(transform) = value.as_transform() else {
+                        break 'done;
+                    };
+
+                    if self.mumble_object() != id {
+                        break 'done;
+                    };
+
+                    let transform = if self.is_hidden(id) {
+                        None
+                    } else {
+                        Some(transform)
+                    };
+
+                    self.set_mumblelink_transform(transform).await;
+                }
+                Key::HIDDEN => {
+                    let hidden = value.as_bool();
+
+                    self.set_hidden(id, hidden);
+
+                    'out: {
+                        if self.mumble_object() != id {
+                            break 'out;
+                        }
+
+                        let Some(object) = state.objects.get(&id) else {
+                            break 'out;
+                        };
+
+                        let transform = if hidden {
+                            None
+                        } else {
+                            object.props.get(Key::TRANSFORM).as_transform()
+                        };
+
+                        self.set_mumblelink_transform(transform).await;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let Some(object) = state.objects.get_mut(&id) else {
             return;
         };

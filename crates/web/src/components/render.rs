@@ -221,8 +221,6 @@ pub(crate) fn draw_grid(
     let stroke_color;
     let thick_stroke_color;
 
-    tracing::warn!(factor = color.factor());
-
     if color.is_light() {
         stroke_color = color.darken(0.2).to_css_string();
         thick_stroke_color = color.darken(0.4).to_css_string();

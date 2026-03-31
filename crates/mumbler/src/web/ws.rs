@@ -108,7 +108,9 @@ impl ws::Handler for Handler {
 
                 tracing::debug!(?id, ?request);
 
-                super::object_update(&self.backend, request.id, &request.values).await?;
+                self.backend
+                    .object_update(request.id, &request.values)
+                    .await;
 
                 for (key, value) in request.values {
                     self.inner

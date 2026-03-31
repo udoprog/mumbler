@@ -225,29 +225,7 @@ impl MapModal {
     }
 }
 
-/// We keep some interior state here since sometimes we require a split borrow
-/// between it and for example the objects or hierarchy.
-///
-/// Long term, most local mutable state will end up here.
-struct MapState {
-    window: Window,
-    channel: ws::Channel,
-    updates: HashSet<(RemoteId, Key)>,
-    requests: HashMap<(RemoteId, Key), ws::Request>,
-    selected: RemoteId,
-    context_menu: Option<ContextMenu>,
-    modal: Option<MapModal>,
-    _toggle_mumble_request: ws::Request,
-    redraw: bool,
-    update_cache: bool,
-    update_config: bool,
-    update_view: bool,
-    /// Objects which are actively being simulated.
-    active: HashSet<RemoteId>,
-    /// Objects which are scheduled to be remove from simulation.
-    active_remove: Vec<RemoteId>,
-    animation_frame: Option<AnimationFrame>,
-    object_requests: HashMap<RemoteId, ObjectRequests>,
+struct MapValues {
     zoom: State<f32>,
     pan: State<Vec3>,
     mumble_object: State<RemoteId>,
@@ -256,25 +234,9 @@ struct MapState {
     name: State<String>,
 }
 
-impl MapState {
-    fn new(window: Window) -> Self {
+impl MapValues {
+    fn new() -> Self {
         Self {
-            window,
-            channel: ws::Channel::default(),
-            updates: HashSet::default(),
-            requests: HashMap::new(),
-            selected: RemoteId::default(),
-            context_menu: Option::default(),
-            modal: Option::default(),
-            _toggle_mumble_request: ws::Request::default(),
-            redraw: false,
-            update_cache: false,
-            update_config: false,
-            update_view: false,
-            active: HashSet::default(),
-            active_remove: Vec::new(),
-            animation_frame: Option::default(),
-            object_requests: HashMap::new(),
             zoom: State::new(2.0),
             pan: State::new(Vec3::ZERO),
             mumble_object: State::new(RemoteId::ZERO),
@@ -284,11 +246,15 @@ impl MapState {
         }
     }
 
-    fn display(&self) -> &str {
-        if self.name.is_empty() {
-            "You"
-        } else {
-            &self.name
+    fn get(&self, key: Key) -> Value {
+        match key {
+            Key::ZOOM => Value::from(*self.zoom),
+            Key::PAN => Value::from(*self.pan),
+            Key::MUMBLE_OBJECT => Value::from(self.mumble_object.id),
+            Key::MUMBLE_FOLLOW => Value::from(*self.mumble_follow),
+            Key::ROOM => Value::from(*self.room),
+            Key::PEER_NAME => Value::from(self.name.as_str()),
+            _ => Value::empty(),
         }
     }
 
@@ -307,7 +273,7 @@ impl MapState {
 
     fn update(&mut self, key: Key, value: Value) -> bool {
         match key {
-            Key::SCALE => self.zoom.update(value.as_f32().unwrap_or(2.0)),
+            Key::ZOOM => self.zoom.update(value.as_f32().unwrap_or(2.0)),
             Key::PAN => self.pan.update(value.as_vec3().unwrap_or_else(Vec3::zero)),
             Key::MUMBLE_OBJECT => self.mumble_object.update(RemoteId::local(value.as_id())),
             Key::MUMBLE_FOLLOW => self.mumble_follow.update(value.as_bool()),
@@ -316,15 +282,60 @@ impl MapState {
             _ => false,
         }
     }
+}
 
-    fn world_values(&self) -> Vec<(Key, Value)> {
-        let mut values = Vec::new();
-        values.push((Key::SCALE, Value::from(*self.zoom)));
-        values.push((Key::PAN, Value::from(*self.pan)));
-        values
+/// We keep some interior state here since sometimes we require a split borrow
+/// between it and for example the objects or hierarchy.
+///
+/// Long term, most local mutable state will end up here.
+struct MapState {
+    window: Window,
+    channel: ws::Channel,
+    values: MapValues,
+    updates: HashSet<(RemoteId, Key)>,
+    requests: HashMap<(RemoteId, Key), ws::Request>,
+    selected: RemoteId,
+    context_menu: Option<ContextMenu>,
+    modal: Option<MapModal>,
+    redraw: bool,
+    update_cache: bool,
+    update_view: bool,
+    /// Objects which are actively being simulated.
+    active: HashSet<RemoteId>,
+    /// Objects which are scheduled to be remove from simulation.
+    active_remove: Vec<RemoteId>,
+    animation_frame: Option<AnimationFrame>,
+}
+
+impl MapState {
+    fn new(window: Window) -> Self {
+        Self {
+            window,
+            channel: ws::Channel::default(),
+            values: MapValues::new(),
+            updates: HashSet::default(),
+            requests: HashMap::new(),
+            selected: RemoteId::default(),
+            context_menu: Option::default(),
+            modal: Option::default(),
+            redraw: false,
+            update_cache: false,
+            update_view: false,
+            active: HashSet::default(),
+            active_remove: Vec::new(),
+            animation_frame: Option::default(),
+        }
     }
 
-    fn select_object(&mut self, ctx: &Context<Map>, id: RemoteId, objects: &ObjectsRef) -> bool {
+    fn display(&self) -> &str {
+        if self.values.name.is_empty() {
+            "You"
+        } else {
+            &self.values.name
+        }
+    }
+
+    fn select_object(&mut self, id: RemoteId, objects: &ObjectsRef) -> bool {
         if self.selected == id {
             return false;
         }
@@ -341,7 +352,7 @@ impl MapState {
             self.modal = None;
         }
 
-        if !*self.mumble_follow || *self.mumble_object == id {
+        if !*self.values.mumble_follow || *self.values.mumble_object == id {
             return true;
         }
 
@@ -349,11 +360,8 @@ impl MapState {
             return true;
         }
 
-        *self.mumble_object = id;
-
-        self._toggle_mumble_request = self
-            .channel
-            .updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(id.id))]);
+        *self.values.mumble_object = id;
+        self.updates.insert((RemoteId::ZERO, Key::MUMBLE_OBJECT));
         true
     }
 
@@ -430,24 +438,14 @@ impl MapState {
         }
     }
 
-    fn finalize_action(
-        &mut self,
-        ctx: &Context<Map>,
-        objects: &mut ObjectsRef,
-        action: Action,
-    ) -> bool {
+    fn finalize_action(&mut self, objects: &mut ObjectsRef, action: Action) -> bool {
         match action {
-            Action::Scale(scale) => self.finalize_scale(ctx, objects, scale),
+            Action::Scale(scale) => self.finalize_scale(objects, scale),
             _ => true,
         }
     }
 
-    fn finalize_scale(
-        &mut self,
-        ctx: &Context<Map>,
-        objects: &mut ObjectsRef,
-        scale: Scale,
-    ) -> bool {
+    fn finalize_scale(&mut self, objects: &mut ObjectsRef, scale: Scale) -> bool {
         let Some(o) = objects.get_mut(scale.id) else {
             return false;
         };
@@ -455,34 +453,16 @@ impl MapState {
         match &mut o.kind {
             ObjectKind::Static(s) => {
                 if s.width.update_epsilon(*s.width * scale.scale) {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-
-                    requests._scale_width = self.channel.object_updates(
-                        ctx,
-                        scale.id.id,
-                        [(Key::WIDTH, s.width.value())],
-                    );
+                    self.updates.insert((scale.id, Key::WIDTH));
                 }
 
                 if s.height.update_epsilon(*s.height * scale.scale) {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-
-                    requests._scale_height = self.channel.object_updates(
-                        ctx,
-                        scale.id.id,
-                        [(Key::HEIGHT, s.height.value())],
-                    );
+                    self.updates.insert((scale.id, Key::HEIGHT));
                 }
             }
             ObjectKind::Token(t) => {
                 if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
-                    let requests = self.object_requests.entry(scale.id).or_default();
-
-                    requests._scale_radius = self.channel.object_updates(
-                        ctx,
-                        scale.id.id,
-                        [(Key::RADIUS, t.token_radius.value())],
-                    );
+                    self.updates.insert((scale.id, Key::RADIUS));
                 }
             }
             _ => {}
@@ -588,16 +568,6 @@ struct ContextMenu {
     onremove: Callback<()>,
 }
 
-#[derive(Default)]
-struct ObjectRequests {
-    _expanded: ws::Request,
-    _scale_height: ws::Request,
-    _scale_radius: ws::Request,
-    _scale_width: ws::Request,
-    _toggle_hidden: ws::Request,
-    _toggle_local_hidden: ws::Request,
-}
-
 pub(crate) struct Map {
     ids: AtomicIds,
     log: log::Log,
@@ -613,11 +583,6 @@ pub(crate) struct Map {
     _keyup_listener: EventListener,
     _config_update: ws::Listener,
     _remote_update: ws::Listener,
-    _set_group: ws::Request,
-    _set_mumble_follow: ws::Request,
-    _set_sort: ws::Request,
-    _toggle_locked: ws::Request,
-    _update_world: ws::Request,
     simulation_interval: Option<Interval>,
     canvas: Option<HtmlCanvasElement>,
     drag_over: Option<DragOver>,
@@ -756,11 +721,6 @@ impl Component for Map {
             _keyup_listener,
             _config_update: ws::Listener::new(),
             _remote_update: ws::Listener::new(),
-            _set_group: ws::Request::new(),
-            _set_mumble_follow: ws::Request::new(),
-            _set_sort: ws::Request::new(),
-            _toggle_locked: ws::Request::new(),
-            _update_world: ws::Request::new(),
             action: None,
             simulation_interval: None,
             canvas: None,
@@ -806,14 +766,8 @@ impl Component for Map {
             self.send_updates(ctx);
         }
 
-        if self.s.update_config {
-            self._update_world = self.s.channel.updates(ctx, self.s.world_values());
-            self.s.update_config = false;
-            changed = true;
-        }
-
         if self.s.update_cache {
-            let room_id = self.peers.to_remote_id(&self.s.room);
+            let room_id = self.peers.to_remote_id(&self.s.values.room);
             let objects = self.objects.borrow();
             self.cache.update(room_id, &objects);
 
@@ -829,8 +783,8 @@ impl Component for Map {
             self.view = ViewTransform::new(
                 self.view.width,
                 self.view.height,
-                *self.s.zoom,
-                &self.s.pan,
+                *self.s.values.zoom,
+                &self.s.values.pan,
                 &self.cache.extent,
             );
 
@@ -931,7 +885,9 @@ impl Component for Map {
             let o = objects.get(self.s.selected);
 
             let mumble = {
-                let is_mumble = o.map(|o| *self.s.mumble_object == o.id).unwrap_or_default();
+                let is_mumble = o
+                    .map(|o| *self.s.values.mumble_object == o.id)
+                    .unwrap_or_default();
 
                 let onclick = o.filter(|o| o.is_interactive()).map(|o| {
                     let id = o.id;
@@ -1035,10 +991,10 @@ impl Component for Map {
             let follow = {
                 let class = classes! {
                     "btn", "square",
-                    self.s.mumble_follow.then_some("success"),
+                    self.s.values.mumble_follow.then_some("success"),
                 };
 
-                let title = if *self.s.mumble_follow {
+                let title = if *self.s.values.mumble_follow {
                     "Disable MumbleLink selection following"
                 } else {
                     "Enable MumbleLink selection following"
@@ -1146,7 +1102,7 @@ impl Component for Map {
                                     key={format!("{}", RemoteId::ZERO)}
                                     group={RemoteId::ZERO}
                                     drag_over={self.drag_over}
-                                    mumble_object={*self.s.mumble_object}
+                                    mumble_object={*self.s.values.mumble_object}
                                     selected={self.s.selected}
                                     onselect={self.object_onselect.clone()}
                                     onopen={self.object_onopen.clone()}
@@ -1172,7 +1128,7 @@ impl Component for Map {
                         position={menu.position}
                         object_id={menu.object_id}
                         is_hidden={objects.get(menu.object_id).map(|o| o.is_hidden()).unwrap_or_default()}
-                        mumble_object={*self.s.mumble_object}
+                        mumble_object={*self.s.values.mumble_object}
                         onclose={menu.onclose.clone()}
                         onsettings={menu.onsettings.clone()}
                         onhidden={menu.onhidden.clone()}
@@ -1204,10 +1160,10 @@ impl Map {
             ));
         }
 
-        let zoom = *self.s.zoom;
+        let zoom = *self.s.values.zoom;
         parts.push(format!("ZOOM:{:.02}", zoom));
 
-        let pan = *self.s.pan;
+        let pan = *self.s.values.pan;
         parts.push(format!(
             "PAN: X:{:.02}, Y:{:.02}, Z:{:.02}",
             pan.x, pan.y, pan.z
@@ -1305,7 +1261,7 @@ impl Map {
                 self.drag_over = Some(drag_over);
                 Ok(true)
             }
-            Msg::DragEnd(id) => self.drag_end(ctx, id),
+            Msg::DragEnd(id) => self.drag_end(id),
             Msg::OpenSettings(id) => {
                 self.s.context_menu = None;
 
@@ -1336,11 +1292,11 @@ impl Map {
                 result?;
                 Ok(false)
             }
-            Msg::ToggleMumbleObject(id) => Ok(self.toggle_mumble_object(ctx, id)),
-            Msg::ToggleLocked(id) => Ok(self.toggle_locked(ctx, id)),
-            Msg::ToggleHidden(id) => Ok(self.toggle_hidden(ctx, id)),
-            Msg::ToggleLocalHidden(id) => Ok(self.toggle_local_hidden(ctx, id)),
-            Msg::ToggleExpanded(id) => Ok(self.toggle_expanded(ctx, id)),
+            Msg::ToggleMumbleObject(id) => Ok(self.toggle_mumble_object(id)),
+            Msg::ToggleLocked(id) => Ok(self.toggle_locked(id)),
+            Msg::ToggleHidden(id) => Ok(self.toggle_hidden(id)),
+            Msg::ToggleLocalHidden(id) => Ok(self.toggle_local_hidden(id)),
+            Msg::ToggleExpanded(id) => Ok(self.toggle_expanded(id)),
             Msg::Channel(channel) => {
                 self.s.channel = channel?;
 
@@ -1413,14 +1369,14 @@ impl Map {
                 DropImageResult::Image(_image) => Ok(false),
             },
             Msg::PointerDown(ev) => {
-                self.on_pointer_down(ctx, ev)?;
+                self.on_pointer_down(ev)?;
                 Ok(true)
             }
             Msg::PointerMove(ev) => {
                 self.on_pointer_move(ev)?;
                 Ok(true)
             }
-            Msg::PointerUp(ev) => self.on_pointer_up(ctx, ev),
+            Msg::PointerUp(ev) => self.on_pointer_up(ev),
             Msg::PointerLeave(ev) => self.on_pointer_leave(ev),
             Msg::Wheel(e) => {
                 self.on_wheel(e)?;
@@ -1443,9 +1399,7 @@ impl Map {
                 self.cancel_action();
 
                 let objects = self.objects.borrow();
-
-                let update = self.s.select_object(ctx, id, &objects);
-
+                let update = self.s.select_object(id, &objects);
                 Ok(update)
             }
             Msg::OpenObject(id) => {
@@ -1467,12 +1421,8 @@ impl Map {
                 }
             }
             Msg::ToggleFollowMumbleSelection => {
-                *self.s.mumble_follow = !*self.s.mumble_follow;
-
-                self._set_mumble_follow = self.s.channel.updates(
-                    ctx,
-                    [(Key::MUMBLE_FOLLOW, Value::from(*self.s.mumble_follow))],
-                );
+                *self.s.values.mumble_follow = !*self.s.values.mumble_follow;
+                self.s.updates.insert((RemoteId::ZERO, Key::MUMBLE_FOLLOW));
                 Ok(true)
             }
             Msg::CreateToken => {
@@ -1562,8 +1512,8 @@ impl Map {
                 self.view = ViewTransform::new(
                     width,
                     height,
-                    *self.s.zoom,
-                    &self.s.pan,
+                    *self.s.values.zoom,
+                    &self.s.values.pan,
                     &self.cache.extent,
                 );
 
@@ -1577,15 +1527,21 @@ impl Map {
         tracing::debug!(?body, "Initialize");
 
         self.peers.public_key = body.public_key;
-        self.s.initialize(body.props);
-
-        self.objects = body
-            .objects
-            .iter()
-            .filter_map(|object| Object::new(PeerId::ZERO, object))
-            .collect();
+        self.s.values.initialize(body.props);
 
         let mut objects = self.objects.borrow_mut();
+        objects.clear();
+
+        for object in body.objects {
+            if let Some(object) = Object::new(PeerId::ZERO, &object) {
+                if object.has_interpolation() {
+                    self.s.active.insert(object.id);
+                }
+
+                objects.insert(object);
+            }
+        }
+
         let mut order = self.order.borrow_mut();
 
         order.extend(objects.values());
@@ -1593,7 +1549,7 @@ impl Map {
         self.peers.clear();
 
         for peer in body.peers {
-            self.peers.insert(peer, &self.s.room);
+            self.peers.insert(peer, &self.s.values.room);
         }
 
         for (peer_id, object) in body.peer_objects {
@@ -1630,12 +1586,12 @@ impl Map {
                     return Ok(false);
                 }
 
-                let changed = self.s.update(key, value);
+                let changed = self.s.values.update(key, value);
 
                 if changed {
                     if matches!(key, Key::ROOM) {
                         for peer in self.peers.iter_mut() {
-                            peer.update_config(&self.s.room);
+                            peer.update_config(&self.s.values.room);
                         }
 
                         self.s.update_cache = true;
@@ -1671,7 +1627,7 @@ impl Map {
                 true
             }
             RemoteUpdateBody::PeerConnected { peer } => {
-                self.peers.insert(peer, &self.s.room);
+                self.peers.insert(peer, &self.s.values.room);
                 true
             }
             RemoteUpdateBody::PeerJoin {
@@ -1727,7 +1683,7 @@ impl Map {
                     return false;
                 };
 
-                peer.update(key, value, &self.s.room);
+                peer.update(key, value, &self.s.values.room);
                 true
             }
             RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
@@ -1736,7 +1692,7 @@ impl Map {
                     return false;
                 }
 
-                self.remove_object(ctx, id)
+                self.remove_object(id)
             }
             RemoteUpdateBody::ObjectUpdated {
                 channel,
@@ -1830,10 +1786,10 @@ impl Map {
             .on_packet(ctx.link().callback(Msg::ObjectRemoved))
             .send();
 
-        self.remove_object(ctx, id)
+        self.remove_object(id)
     }
 
-    fn remove_object(&mut self, ctx: &Context<Map>, id: RemoteId) -> bool {
+    fn remove_object(&mut self, id: RemoteId) -> bool {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 
@@ -1843,11 +1799,11 @@ impl Map {
         order.remove(id);
 
         if self.s.selected == id {
-            self.s.select_object(ctx, RemoteId::ZERO, &objects);
+            self.s.select_object(RemoteId::ZERO, &objects);
         }
 
+        self.s.requests.retain(|(object_id, _), _| *object_id != id);
         self.s.modal = None;
-        self.s.object_requests.remove(&id);
         self.s.update_cache = true;
         self.s.redraw = true;
         true
@@ -1889,7 +1845,7 @@ impl Map {
         false
     }
 
-    fn start_translate_on_hit(&mut self, ctx: &Context<Self>) -> bool {
+    fn start_translate_on_hit(&mut self) -> bool {
         let Some(mouse) = self.mouse else {
             return false;
         };
@@ -1912,24 +1868,25 @@ impl Map {
             let s_is_token = selected.is_some_and(|o| o.is_token());
             let s_id = selected.map(|o| o.id);
             let h_id = hit.map(|o| o.id);
-            let h_is_not_token = hit.is_some_and(|o| !o.is_token());
+            let h_is_token = hit.is_some_and(|o| o.is_token());
 
-            new_selected = (s_id != h_id && !s_is_token).then_some(h_id.unwrap_or(RemoteId::ZERO));
-            start_translate = s_id == h_id || s_is_token || h_is_not_token;
+            new_selected = (s_id != h_id && (!s_is_token || h_is_token))
+                .then_some(h_id.unwrap_or(RemoteId::ZERO));
+            start_translate = s_id == h_id || new_selected.is_none() || !h_is_token;
 
             if let Some(id) = new_selected {
-                update = self.s.select_object(ctx, id, &objects);
+                update = self.s.select_object(id, &objects);
             }
         }
 
         if start_translate {
-            update |= self.start_translate(ctx, self.s.selected);
+            update |= self.start_translate(self.s.selected);
         }
 
         update
     }
 
-    fn start_translate(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn start_translate(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -1971,7 +1928,7 @@ impl Map {
         };
 
         if let Some(action) = self.action.take() {
-            self.s.finalize_action(ctx, &mut objects, action);
+            self.s.finalize_action(&mut objects, action);
         }
 
         let action = self
@@ -1982,7 +1939,7 @@ impl Map {
         true
     }
 
-    fn start_scale(&mut self, ctx: &Context<Self>) -> bool {
+    fn start_scale(&mut self) -> bool {
         let Some(mouse) = self.mouse else {
             return false;
         };
@@ -2010,7 +1967,7 @@ impl Map {
         self.s.active.remove(&self.s.selected);
 
         if let Some(action) = self.action.take() {
-            self.s.finalize_action(ctx, &mut objects, action);
+            self.s.finalize_action(&mut objects, action);
         }
 
         let action = self.action.insert(Action::Scale(Scale {
@@ -2024,13 +1981,13 @@ impl Map {
         true
     }
 
-    fn finalize_action(&mut self, ctx: &Context<Self>) -> bool {
+    fn finalize_action(&mut self) -> bool {
         let Some(action) = self.action.take() else {
             return false;
         };
 
         let mut objects = self.objects.borrow_mut();
-        self.s.finalize_action(ctx, &mut objects, action)
+        self.s.finalize_action(&mut objects, action)
     }
 
     fn on_key_down(&mut self, ctx: &Context<Self>, ev: KeyboardEvent) -> Result<bool, Error> {
@@ -2057,11 +2014,11 @@ impl Map {
                 Ok(true)
             }
             "Enter" if self.s.modal.is_none() => Ok(self.accept(ctx)),
-            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale(ctx)),
-            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(ctx, self.s.selected)),
-            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation(ctx)),
-            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(ctx, self.s.selected)),
-            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation(ctx)),
+            "s" | "S" if self.s.modal.is_none() => Ok(self.start_scale()),
+            "t" | "T" if self.s.modal.is_none() => Ok(self.toggle_locked(self.s.selected)),
+            "r" | "R" if self.s.modal.is_none() => Ok(self.start_rotation()),
+            "g" | "G" if self.s.modal.is_none() => Ok(self.start_translate(self.s.selected)),
+            "Shift" if self.s.modal.is_none() => Ok(self.start_rotation()),
             _ => Ok(false),
         }
     }
@@ -2102,7 +2059,7 @@ impl Map {
         false
     }
 
-    fn start_rotation(&mut self, ctx: &Context<Self>) -> bool {
+    fn start_rotation(&mut self) -> bool {
         if self.s.selected.is_zero() || !self.s.selected.is_local() {
             return false;
         }
@@ -2137,7 +2094,7 @@ impl Map {
         };
 
         if let Some(action) = self.action.take() {
-            self.s.finalize_action(ctx, &mut objects, action);
+            self.s.finalize_action(&mut objects, action);
         }
 
         let action = self.action.insert(Action::Rotate(Rotate {
@@ -2224,14 +2181,16 @@ impl Map {
                 continue;
             }
 
+            if id.id.is_zero() {
+                let value = self.s.values.get(key);
+                let req = self.s.channel.updates(ctx, [(key, value)]);
+                self.s.requests.insert((id, key), req);
+                continue;
+            }
+
             let Some(o) = objects.get(id) else {
                 continue;
             };
-
-            // Don't send transform updates, if we have sent a look at.
-            if matches!(key, Key::TRANSFORM) && o.has_interpolation() {
-                continue;
-            }
 
             let req = self
                 .s
@@ -2252,33 +2211,31 @@ impl Map {
             .find(|o| o.as_click_geometry().intersects(mouse))
             .map(|o| o.id);
 
-        if let Some(object_id) = hit {
-            self.s.selected = object_id;
-
-            self.s.context_menu = Some(ContextMenu {
-                object_id,
-                position: ev.client(),
-                onclose: ctx.link().callback(|_| Msg::CloseContextMenu),
-                onsettings: ctx.link().callback(move |_| Msg::OpenSettings(object_id)),
-                onhidden: ctx.link().callback(move |_| Msg::ToggleHidden(object_id)),
-                onlocalhidden: ctx
-                    .link()
-                    .callback(move |_| Msg::ToggleLocalHidden(object_id)),
-                onmumbleobject: ctx
-                    .link()
-                    .callback(move |_| Msg::ToggleMumbleObject(object_id)),
-                onremove: ctx.link().callback(move |_| Msg::ConfirmRemove(object_id)),
-            });
-
-            self.s.redraw = true;
-        } else {
+        let Some(object_id) = hit else {
             self.s.context_menu = None;
-        }
+        };
 
+        self.s.context_menu = Some(ContextMenu {
+            object_id,
+            position: ev.client(),
+            onclose: ctx.link().callback(|_| Msg::CloseContextMenu),
+            onsettings: ctx.link().callback(move |_| Msg::OpenSettings(object_id)),
+            onhidden: ctx.link().callback(move |_| Msg::ToggleHidden(object_id)),
+            onlocalhidden: ctx
+                .link()
+                .callback(move |_| Msg::ToggleLocalHidden(object_id)),
+            onmumbleobject: ctx
+                .link()
+                .callback(move |_| Msg::ToggleMumbleObject(object_id)),
+            onremove: ctx.link().callback(move |_| Msg::ConfirmRemove(object_id)),
+        });
+
+        self.s.selected = object_id;
+        self.s.redraw = true;
         Ok(())
     }
 
-    fn on_pointer_down(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<(), Error> {
+    fn on_pointer_down(&mut self, ev: PointerEvent) -> Result<(), Error> {
         ev.prevent_default();
 
         self.s.context_menu = None;
@@ -2289,13 +2246,13 @@ impl Map {
 
                 self.mouse = Some(e);
 
-                if self.start_rotation(ctx) {
+                if self.start_rotation() {
                     ev.prevent_default();
                     return Ok(());
                 }
             }
             LEFT_MOUSE_BUTTON => {
-                if self.finalize_action(ctx) {
+                if self.finalize_action() {
                     self.s.redraw = true;
                     return Ok(());
                 }
@@ -2303,7 +2260,7 @@ impl Map {
                 let e = self.view.to_world(ev.offset());
 
                 self.mouse = Some(e);
-                self.start_translate_on_hit(ctx);
+                self.start_translate_on_hit();
             }
             MIDDLE_MOUSE_BUTTON => {
                 ev.prevent_default();
@@ -2321,11 +2278,11 @@ impl Map {
         if let Some(a) = self.pan_anchor {
             let d = self.view.to_world(ev.client()) - self.view.to_world(a);
 
-            *self.s.pan = *self.s.pan - d;
+            *self.s.values.pan = *self.s.values.pan - d;
             self.pan_anchor = Some(ev.client());
 
             self.s.update_view = true;
-            self.s.update_config = true;
+            self.s.updates.insert((RemoteId::ZERO, Key::PAN));
             self.s.redraw = true;
         }
 
@@ -2342,13 +2299,13 @@ impl Map {
         Ok(())
     }
 
-    fn on_pointer_up(&mut self, ctx: &Context<Self>, ev: PointerEvent) -> Result<bool, Error> {
+    fn on_pointer_up(&mut self, ev: PointerEvent) -> Result<bool, Error> {
         let mut update = false;
 
         match ev.button() {
             LEFT_MOUSE_BUTTON => {
                 ev.prevent_default();
-                update = self.finalize_action(ctx);
+                update = self.finalize_action();
             }
             MIDDLE_MOUSE_BUTTON => {
                 self.pan_anchor = None;
@@ -2377,34 +2334,36 @@ impl Map {
             1.0 / ZOOM_FACTOR
         };
 
-        let zoom = (*self.s.zoom * delta).clamp(0.1, 20.0);
+        let zoom = (*self.s.values.zoom * delta).clamp(0.1, 20.0);
 
         let after = ViewTransform::new(
             self.view.width,
             self.view.height,
             zoom,
-            &self.s.pan,
+            &self.s.values.pan,
             &self.cache.extent,
         );
 
         let mut update = false;
-        update |= self.s.zoom.update(zoom);
-        update |= self
-            .s
-            .pan
-            .update(*self.s.pan + (self.view.to_world(ev.offset()) - after.to_world(ev.offset())));
+
+        update |= self.s.values.zoom.update(zoom);
+        update |= self.s.values.pan.update(
+            *self.s.values.pan + (self.view.to_world(ev.offset()) - after.to_world(ev.offset())),
+        );
 
         if !update {
             return Ok(());
         }
 
         self.s.update_view = true;
-        self.s.update_config = true;
+        self.s
+            .updates
+            .extend([(RemoteId::ZERO, Key::ZOOM), (RemoteId::ZERO, Key::PAN)]);
         self.s.redraw = true;
         Ok(())
     }
 
-    fn drag_end(&mut self, ctx: &Context<Self>, id: RemoteId) -> Result<bool, Error> {
+    fn drag_end(&mut self, id: RemoteId) -> Result<bool, Error> {
         let Some(drag_over) = self.drag_over.take() else {
             return Ok(false);
         };
@@ -2441,50 +2400,37 @@ impl Map {
         };
 
         if o.group.update(new_group) {
-            self._set_group =
-                self.s
-                    .channel
-                    .object_updates(ctx, id.id, [(Key::GROUP, o.group.id.into())]);
+            self.s.updates.insert((id, Key::GROUP));
         }
 
         if o.sort.update(new_sort) {
-            self._set_sort =
-                self.s
-                    .channel
-                    .object_updates(ctx, id.id, [(Key::SORT, o.sort[..].into())]);
+            self.s.updates.insert((id, Key::SORT));
         }
 
-        tracing::warn!("reorder");
-        order.reorder(*o.group, &o.sort[..], id);
-
+        order.reorder(id, *o.group, &o.sort[..]);
         self.s.redraw = true;
         Ok(true)
     }
 
-    fn toggle_mumble_object(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn toggle_mumble_object(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
 
         self.s.context_menu = None;
 
-        let update = if *self.s.mumble_object == id {
+        let update = if *self.s.values.mumble_object == id {
             RemoteId::ZERO
         } else {
             id
         };
 
-        *self.s.mumble_object = update;
-
-        self.s._toggle_mumble_request = self
-            .s
-            .channel
-            .updates(ctx, [(Key::MUMBLE_OBJECT, Value::from(update.id))]);
-
+        *self.s.values.mumble_object = update;
+        self.s.updates.insert((RemoteId::ZERO, Key::MUMBLE_OBJECT));
         true
     }
 
-    fn toggle_locked(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn toggle_locked(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -2501,17 +2447,12 @@ impl Map {
 
         let new = !**locked;
         **locked = new;
-
-        self._toggle_locked =
-            self.s
-                .channel
-                .object_updates(ctx, id.id, [(Key::LOCKED, new.into())]);
-
+        self.s.updates.insert((id, Key::LOCKED));
         self.s.redraw = true;
         true
     }
 
-    fn toggle_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn toggle_hidden(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -2527,16 +2468,12 @@ impl Map {
         let new_hidden = !*object.hidden;
         *object.hidden = new_hidden;
 
-        let requests = self.s.object_requests.entry(id).or_default();
-        requests._toggle_hidden =
-            self.s
-                .channel
-                .object_updates(ctx, id.id, [(Key::HIDDEN, new_hidden.into())]);
+        self.s.updates.insert((id, Key::HIDDEN));
         self.s.redraw = true;
         true
     }
 
-    fn toggle_local_hidden(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn toggle_local_hidden(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -2552,19 +2489,12 @@ impl Map {
         let new_local_hidden = !*object.local_hidden;
         *object.local_hidden = new_local_hidden;
 
-        let requests = self.s.object_requests.entry(id).or_default();
-
-        requests._toggle_local_hidden = self.s.channel.object_updates(
-            ctx,
-            id.id,
-            [(Key::LOCAL_HIDDEN, new_local_hidden.into())],
-        );
-
+        self.s.updates.insert((id, Key::LOCAL_HIDDEN));
         self.s.redraw = true;
         true
     }
 
-    fn toggle_expanded(&mut self, ctx: &Context<Self>, id: RemoteId) -> bool {
+    fn toggle_expanded(&mut self, id: RemoteId) -> bool {
         if id.is_zero() || !id.is_local() {
             return false;
         }
@@ -2583,14 +2513,7 @@ impl Map {
 
         let new_expanded = !**expanded;
         **expanded = new_expanded;
-
-        let requests = self.s.object_requests.entry(id).or_default();
-
-        requests._expanded =
-            self.s
-                .channel
-                .object_updates(ctx, id.id, [(Key::EXPANDED, new_expanded.into())]);
-
+        self.s.updates.insert((id, Key::EXPANDED));
         true
     }
 
@@ -2638,7 +2561,7 @@ impl Map {
                 &cx,
                 &self.view,
                 &self.cache.extent,
-                *self.s.zoom,
+                *self.s.values.zoom,
                 self.cache.room_color,
             );
         }
