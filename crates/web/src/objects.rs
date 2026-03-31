@@ -143,11 +143,6 @@ impl ObjectsRef {
         self.values.get_mut(&id)
     }
 
-    #[inline]
-    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut Object> {
-        self.values.values_mut()
-    }
-
     /// Test if the given group or any of its ancestors is hidden.
     #[inline]
     pub(crate) fn visibility(&self, group: RemoteId) -> Visibility {

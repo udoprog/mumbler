@@ -820,7 +820,6 @@ impl ObjectSettings {
                     image,
                     color,
                     token_radius: 1.0,
-                    arrow_target: None,
                 };
 
                 let view = ViewTransform::simple(width, height, 50.0);

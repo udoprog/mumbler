@@ -242,7 +242,7 @@ struct MapState {
     update_config: bool,
     update_view: bool,
     move_target: HashMap<RemoteId, Vec3>,
-    arrow_target: HashMap<RemoteId, Vec3>,
+    move_target_remove: Vec<RemoteId>,
     animation_frame: Option<AnimationFrame>,
     object_requests: HashMap<RemoteId, ObjectRequests>,
     zoom: State<f32>,
@@ -269,7 +269,7 @@ impl MapState {
             update_config: false,
             update_view: false,
             move_target: HashMap::default(),
-            arrow_target: HashMap::default(),
+            move_target_remove: Vec::new(),
             animation_frame: Option::default(),
             object_requests: HashMap::new(),
             zoom: State::new(2.0),
@@ -331,8 +331,6 @@ impl MapState {
         };
 
         transform.front = from.direction_to(to);
-
-        self.arrow_target.insert(o.id, to);
         self.transforms.insert(o.id);
     }
 
@@ -372,7 +370,7 @@ impl MapState {
     fn apply(&mut self, objects: &mut ObjectsRef, action: &mut Action, mouse: Vec3) {
         match action {
             Action::Rotate(r) => {
-                let Some(o) = objects.get_mut(r.object_id) else {
+                let Some(o) = objects.get_mut(r.id) else {
                     return;
                 };
 
@@ -390,8 +388,6 @@ impl MapState {
                         transform.front = Vec3::new(angle.cos(), transform.front.y, -angle.sin());
                         self.transforms.insert(o.id);
                     }
-
-                    self.arrow_target.insert(r.object_id, mouse);
                 } else if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = Some(Vec3::new(mouse.x, 0.0, mouse.z));
                     self.look_at.insert(o.id);
@@ -401,7 +397,7 @@ impl MapState {
                 self.redraw = true;
             }
             Action::Translate(t) => {
-                let Some(o) = objects.get_mut(t.object_id) else {
+                let Some(o) = objects.get_mut(t.id) else {
                     return;
                 };
 
@@ -414,7 +410,7 @@ impl MapState {
                     self.transforms.insert(o.id);
                     self.redraw = true;
                 } else {
-                    self.move_target.insert(t.object_id, mouse);
+                    self.move_target.insert(t.id, mouse);
                     self.redraw = true;
                 }
             }
@@ -447,39 +443,39 @@ impl MapState {
         objects: &mut ObjectsRef,
         scale: Scale,
     ) -> bool {
-        let Some(o) = objects.get_mut(scale.object_id) else {
+        let Some(o) = objects.get_mut(scale.id) else {
             return false;
         };
 
         match &mut o.kind {
             ObjectKind::Static(s) => {
                 if s.width.update_epsilon(*s.width * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    let requests = self.object_requests.entry(scale.id).or_default();
 
                     requests._scale_width = self.channel.object_updates(
                         ctx,
-                        scale.object_id.id,
+                        scale.id.id,
                         [(Key::WIDTH, s.width.value())],
                     );
                 }
 
                 if s.height.update_epsilon(*s.height * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    let requests = self.object_requests.entry(scale.id).or_default();
 
                     requests._scale_height = self.channel.object_updates(
                         ctx,
-                        scale.object_id.id,
+                        scale.id.id,
                         [(Key::HEIGHT, s.height.value())],
                     );
                 }
             }
             ObjectKind::Token(t) => {
                 if t.token_radius.update_epsilon(*t.token_radius * scale.scale) {
-                    let requests = self.object_requests.entry(scale.object_id).or_default();
+                    let requests = self.object_requests.entry(scale.id).or_default();
 
                     requests._scale_radius = self.channel.object_updates(
                         ctx,
-                        scale.object_id.id,
+                        scale.id.id,
                         [(Key::RADIUS, t.token_radius.value())],
                     );
                 }
@@ -492,19 +488,19 @@ impl MapState {
 }
 
 struct Translate {
-    object_id: RemoteId,
+    id: RemoteId,
     offset: Vec3,
 }
 
 struct Rotate {
-    object_id: RemoteId,
+    id: RemoteId,
     center: Vec3,
     rotation_offset: f32,
     is_static: bool,
 }
 
 struct Scale {
-    object_id: RemoteId,
+    id: RemoteId,
     scale: f32,
     position: Vec3,
     initial_distance: f32,
@@ -1841,7 +1837,6 @@ impl Map {
         let mut objects = self.objects.borrow_mut();
         let mut order = self.order.borrow_mut();
 
-        self.s.arrow_target.remove(&id);
         self.s.move_target.remove(&id);
 
         objects.remove(id);
@@ -1869,15 +1864,13 @@ impl Map {
 
                 let mut objects = self.objects.borrow_mut();
 
-                let Some(o) = objects.get_mut(r.object_id) else {
+                let Some(o) = objects.get_mut(r.id) else {
                     return Ok(false);
                 };
 
-                self.s.arrow_target.remove(&r.object_id);
-
                 if let Some(look_at) = o.as_look_at_mut() {
                     **look_at = None;
-                    self.s.look_at.insert(r.object_id);
+                    self.s.look_at.insert(r.id);
                 }
 
                 self.s.redraw = true;
@@ -1955,8 +1948,6 @@ impl Map {
             return false;
         };
 
-        self.s.arrow_target.remove(&id);
-
         let is_static = o.is_static();
 
         let offset = if is_static {
@@ -1977,10 +1968,9 @@ impl Map {
             self.s.finalize_action(ctx, &mut objects, action);
         }
 
-        let action = self.action.insert(Action::Translate(Translate {
-            object_id: id,
-            offset,
-        }));
+        let action = self
+            .action
+            .insert(Action::Translate(Translate { id, offset }));
 
         self.s.apply(&mut objects, action, mouse);
         true
@@ -2018,7 +2008,7 @@ impl Map {
         }
 
         let action = self.action.insert(Action::Scale(Scale {
-            object_id: self.s.selected,
+            id: self.s.selected,
             scale: 1.0,
             position,
             initial_distance,
@@ -2147,7 +2137,7 @@ impl Map {
         }
 
         let action = self.action.insert(Action::Rotate(Rotate {
-            object_id,
+            id: object_id,
             center,
             rotation_offset,
             is_static,
@@ -2163,58 +2153,50 @@ impl Map {
     fn simulation_frame(&mut self) {
         let mut objects = self.objects.borrow_mut();
 
-        for o in objects.values_mut() {
-            let id = o.id;
+        for (id, target) in self.s.move_target.iter_mut() {
+            let Some(o) = objects.get_mut(*id) else {
+                continue;
+            };
 
             let Some((transform, look_at, speed)) = o.as_interpolate_mut() else {
                 continue;
             };
 
-            let p = transform.position;
-
-            'move_done: {
-                let (Some(target), Some(speed)) = (self.s.move_target.get(&id), speed) else {
-                    break 'move_done;
-                };
-
-                let dx = target.x - p.x;
-                let dy = target.y - p.y;
-                let dz = target.z - p.z;
-                let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-
-                if distance < 0.01 {
-                    transform.position = *target;
-                    self.s.move_target.remove(&id);
-                    self.s.transforms.insert(id);
-                    break 'move_done;
-                }
-
-                let step = speed / SIMULATION_FPS as f32;
-                let move_distance = step.min(distance);
-                let ratio = move_distance / distance;
-
-                transform.position.x += dx * ratio;
-                transform.position.y += dy * ratio;
-                transform.position.z += dz * ratio;
-
-                // Face the movement direction unless a look_at target is active.
-                if look_at.is_none() {
-                    transform.front = p.direction_to(*target);
-                }
-
-                self.s.transforms.insert(id);
+            let Some(speed) = speed else {
+                continue;
             };
 
-            'look_done: {
-                let Some(t) = look_at else {
-                    break 'look_done;
-                };
+            let d = *target - transform.position;
 
-                transform.front = p.direction_to(*t);
+            let distance = d.len();
 
-                self.s.arrow_target.insert(id, *t);
-                self.s.transforms.insert(id);
-            };
+            if distance < 0.01 {
+                transform.position = *target;
+                self.s.transforms.insert(*id);
+                self.s.move_target_remove.push(*id);
+                continue;
+            }
+
+            let step = speed / SIMULATION_FPS as f32;
+            let move_distance = step.min(distance);
+            let ratio = move_distance / distance;
+
+            transform.position += d * ratio;
+
+            // Face the movement direction unless a look_at target is active.
+            if look_at.is_none() {
+                transform.front = transform.position.direction_to(*target);
+            }
+
+            self.s.transforms.insert(*id);
+
+            if let Some(t) = look_at {
+                transform.front = transform.position.direction_to(*t);
+            }
+        }
+
+        for id in self.s.move_target_remove.drain(..) {
+            self.s.move_target.remove(&id);
         }
 
         if self.s.move_target.is_empty() {
@@ -2378,7 +2360,6 @@ impl Map {
             LEFT_MOUSE_BUTTON => {
                 ev.prevent_default();
                 update = self.finalize_action(ctx);
-                self.s.redraw |= self.s.arrow_target.remove(&self.s.selected).is_some();
             }
             MIDDLE_MOUSE_BUTTON => {
                 self.pan_anchor = None;
@@ -2395,7 +2376,6 @@ impl Map {
         self.s.redraw |= self.action.take().is_some();
         self.pan_anchor = None;
         self.mouse = None;
-        self.s.redraw |= self.s.arrow_target.remove(&self.s.selected).is_some();
         Ok(false)
     }
 
@@ -2682,11 +2662,8 @@ impl Map {
             };
 
             let selected = selected == o.id;
-            let arrow_target = selected.then(|| self.s.arrow_target.get(&id)).flatten();
 
-            let Some(mut render) =
-                RenderObject::from_data(o, arrow_target, |id| objects.visibility(id))
-            else {
+            let Some(mut render) = RenderObject::from_data(o, |id| objects.visibility(id)) else {
                 continue;
             };
 
@@ -2697,7 +2674,7 @@ impl Map {
             }
 
             if let Some(Action::Scale(s)) = &self.action
-                && s.object_id == o.id
+                && s.id == o.id
             {
                 render.apply_scale(s.scale);
             }

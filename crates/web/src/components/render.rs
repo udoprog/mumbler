@@ -52,7 +52,6 @@ pub(crate) enum RenderObjectKind<'a> {
 impl<'a> RenderObject<'a> {
     pub(crate) fn from_data(
         data: &'a Object,
-        arrow_target: Option<&'a Vec3>,
         visibility: impl FnOnce(RemoteId) -> Visibility,
     ) -> Option<Self> {
         let kind = match &data.kind {
@@ -62,7 +61,6 @@ impl<'a> RenderObject<'a> {
                 image: RemoteId::new(data.id.peer_id, *this.image),
                 color: this.color.unwrap_or_else(Color::neutral),
                 token_radius: *this.token_radius,
-                arrow_target,
             }),
             ObjectKind::Static(this) => RenderObjectKind::Static(RenderStatic {
                 transform: &this.transform,
@@ -103,7 +101,6 @@ pub(crate) struct RenderToken<'a> {
     pub(crate) image: RemoteId,
     pub(crate) color: Color,
     pub(crate) token_radius: f32,
-    pub(crate) arrow_target: Option<&'a Vec3>,
 }
 
 pub(crate) struct RenderStatic<'a> {
@@ -393,19 +390,13 @@ pub(crate) fn draw_token(
         cx.fill();
     }
 
-    let front = if let Some(m) = render.arrow_target {
-        render.transform.position.direction_to(*m)
-    } else {
-        render.transform.front
-    };
+    let front = &render.transform.front;
 
-    if front.x.hypot(front.z) > 0.01 {
-        let angle = front.angle_xz() as f64;
-        let arc_radius = token_radius * 1.5;
-        let color = render.color.to_transparent_rgba(0.5);
-        cx.set_stroke_style_str(&color);
-        draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
-    }
+    let angle = front.angle_xz() as f64;
+    let arc_radius = token_radius * 1.5;
+    let color = render.color.to_transparent_rgba(0.5);
+    cx.set_stroke_style_str(&color);
+    draw_facing_arc(cx, pos.x, pos.y, arc_radius, angle, token_radius * 0.25)?;
 
     if !base.name.is_empty() {
         let font_size = (token_radius * 0.6).max(10.0);
