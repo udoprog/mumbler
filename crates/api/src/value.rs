@@ -29,14 +29,15 @@ pub struct Value {
 }
 
 impl Value {
-    #[inline]
-    pub fn into_kind(self) -> ValueKind {
-        self.kind
-    }
-
+    /// Get a reference to the inner [`ValueKind`].
     #[inline]
     pub fn as_kind(&self) -> &ValueKind {
         &self.kind
+    }
+
+    #[inline]
+    pub fn as_kind_mut(&mut self) -> &mut ValueKind {
+        &mut self.kind
     }
 
     #[inline]
@@ -49,7 +50,7 @@ impl Value {
     /// Check if the value is empty.
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        matches!(self.kind, ValueKind::Empty)
+        self.kind.is_empty()
     }
 
     #[inline]
@@ -276,6 +277,21 @@ pub enum ValueKind {
     String(String),
     Transform(Transform),
     Vec3(Vec3),
+}
+
+impl ValueKind {
+    #[inline]
+    pub(crate) const fn is_empty(&self) -> bool {
+        match self {
+            ValueKind::Empty => true,
+            ValueKind::Id(id) => id.is_zero(),
+            ValueKind::PeerId(peer_id) => peer_id.is_zero(),
+            ValueKind::StableId(stable_id) => stable_id.is_zero(),
+            ValueKind::Bytes(bytes) => bytes.is_empty(),
+            ValueKind::String(string) => string.is_empty(),
+            _ => false,
+        }
+    }
 }
 
 impl From<Id> for Value {

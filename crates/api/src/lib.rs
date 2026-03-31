@@ -9,6 +9,9 @@ pub use peer_id::PeerId;
 mod public_key;
 pub use public_key::PublicKey;
 
+mod properties;
+pub use properties::Properties;
+
 mod remote_id;
 pub use remote_id::RemoteId;
 
@@ -25,9 +28,6 @@ mod hash;
 
 use core::fmt;
 use core::ops::{Add, AddAssign, Sub};
-
-use std::collections::HashMap;
-use std::collections::hash_map::IntoIter;
 
 use musli_core::{Decode, Encode};
 use musli_web::api::{self, ChannelId};
@@ -246,7 +246,7 @@ impl Key {
             Self::HIDDEN => "Enter Hidden",
             Self::LOCAL_HIDDEN => "Enter Local Hidden",
             Self::MUMBLE_FOLLOW => "Enter Mumble Follow",
-            Self::RADIUS => "Enter Token Radius",
+            Self::RADIUS => "Enter Radius",
             Self::SPEED => "Enter Speed",
             Self::WIDTH => "Enter Static Width",
             Self::HEIGHT => "Enter Static Height",
@@ -622,112 +622,6 @@ impl Sub for Canvas2 {
     #[inline]
     fn sub(self, rhs: Self) -> Self {
         Self::new(self.x - rhs.x, self.y - rhs.y)
-    }
-}
-
-#[derive(Default, Clone, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
-pub struct Properties {
-    /// Global values.
-    values: HashMap<Key, Value>,
-}
-
-impl Properties {
-    /// Construct a new empty set of properties.
-    pub fn new() -> Self {
-        Self {
-            values: HashMap::new(),
-        }
-    }
-
-    /// Iterate over properties.
-    pub fn iter(&self) -> impl Iterator<Item = (Key, &Value)> {
-        self.values.iter().map(|(&k, v)| (k, v))
-    }
-
-    /// Get the value of a property by key.
-    #[inline]
-    pub fn get(&self, key: Key) -> &Value {
-        static DEFAULT: Value = Value::empty();
-        self.values.get(&key).unwrap_or(&DEFAULT)
-    }
-
-    /// Get the mutable value of a property by key.
-    #[inline]
-    pub fn into_mut(&mut self, key: Key) -> &mut Value {
-        self.values.entry(key).or_default()
-    }
-
-    /// Test if the set of properties contains the given key.
-    #[inline]
-    pub fn contains(&self, key: Key) -> bool {
-        self.values.contains_key(&key)
-    }
-
-    /// Insert or update a property value by key.
-    ///
-    /// Inserting an [`Value::empty`] value is the equivalent of removing it.
-    #[inline]
-    pub fn insert(&mut self, key: Key, value: Value) -> Value {
-        if value.is_empty() {
-            return self.remove(key);
-        }
-
-        let Some(value) = self.values.insert(key, value) else {
-            return Value::empty();
-        };
-
-        value
-    }
-
-    /// Remove a property by key.
-    #[inline]
-    pub fn remove(&mut self, key: Key) -> Value {
-        let Some(value) = self.values.remove(&key) else {
-            return Value::empty();
-        };
-
-        value
-    }
-}
-
-impl fmt::Debug for Properties {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.values.iter()).finish()
-    }
-}
-
-impl IntoIterator for Properties {
-    type Item = (Key, Value);
-    type IntoIter = IntoIter<Key, Value>;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.into_iter()
-    }
-}
-
-impl FromIterator<(Key, Value)> for Properties {
-    #[inline]
-    fn from_iter<T>(iter: T) -> Self
-    where
-        T: IntoIterator<Item = (Key, Value)>,
-    {
-        let mut properties = Properties::new();
-
-        for (key, value) in iter {
-            properties.insert(key, value);
-        }
-
-        properties
-    }
-}
-
-impl<const N: usize> From<[(Key, Value); N]> for Properties {
-    #[inline]
-    fn from(values: [(Key, Value); N]) -> Self {
-        Self::from_iter(values)
     }
 }
 

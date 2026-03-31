@@ -323,15 +323,19 @@ impl ObjectSettings {
 
                 html! {
                     <>
-                        <ImageUpload
-                            selected={value}
-                            sizing={ImageSizing::Crop}
-                            size={1024}
-                            role={Role::BACKGROUND}
-                            input_id={key.id()}
-                            onselect={ctx.link().callback(move |id| Msg::RemoteIdChanged(key, id))}
-                            onclear={ctx.link().callback(move |_| Msg::RemoteIdChanged(key, RemoteId::ZERO))}
-                        />
+                        <section class="input-group">
+                            <label>{"Background:"}</label>
+
+                            <ImageUpload
+                                selected={value}
+                                sizing={ImageSizing::Crop}
+                                size={1024}
+                                role={Role::BACKGROUND}
+                                input_id={key.id()}
+                                onselect={ctx.link().callback(move |id| Msg::RemoteIdChanged(key, id))}
+                                onclear={ctx.link().callback(move |_| Msg::RemoteIdChanged(key, RemoteId::ZERO))}
+                            />
+                        </section>
 
                         if let Some(src) = src {
                             <section class="input-image-preview">
@@ -349,31 +353,39 @@ impl ObjectSettings {
                         let ratio = self.properties.get(Key::RATIO).as_f64();
 
                         html! {
-                            <ImageUpload
-                                selected={value}
-                                sizing={ImageSizing::Crop}
-                                size={512}
-                                {ratio}
-                                role={Role::STATIC}
-                                input_id="image"
-                                onselect={ctx.link().callback(move |id| Msg::ImageChanged(key, id))}
-                                onclear={ctx.link().callback(move |_| Msg::ImageChanged(key, RemoteId::ZERO))}
-                                onratio={ctx.link().callback(Msg::Ratio)}
-                            />
+                            <section class="input-group">
+                                <label>{"Image:"}</label>
+
+                                <ImageUpload
+                                    selected={value}
+                                    sizing={ImageSizing::Crop}
+                                    size={512}
+                                    {ratio}
+                                    role={Role::STATIC}
+                                    input_id="image"
+                                    onselect={ctx.link().callback(move |id| Msg::ImageChanged(key, id))}
+                                    onclear={ctx.link().callback(move |_| Msg::ImageChanged(key, RemoteId::ZERO))}
+                                    onratio={ctx.link().callback(Msg::Ratio)}
+                                />
+                            </section>
                         }
                     }
                     Some(ObjectRender::Token) => {
                         html! {
-                            <ImageUpload
-                                selected={value}
-                                sizing={ImageSizing::Square}
-                                size={128}
-                                ratio={1.0}
-                                role={Role::TOKEN}
-                                input_id="image"
-                                onselect={ctx.link().callback(move |id| Msg::ImageChanged(key, id))}
-                                onclear={ctx.link().callback(move |_| Msg::ImageChanged(key, RemoteId::ZERO))}
-                            />
+                            <section class="input-group">
+                                <label>{"Image:"}</label>
+
+                                <ImageUpload
+                                    selected={value}
+                                    sizing={ImageSizing::Square}
+                                    size={128}
+                                    ratio={1.0}
+                                    role={Role::TOKEN}
+                                    input_id="image"
+                                    onselect={ctx.link().callback(move |id| Msg::ImageChanged(key, id))}
+                                    onclear={ctx.link().callback(move |_| Msg::ImageChanged(key, RemoteId::ZERO))}
+                                />
+                            </section>
                         }
                     }
                     None => {
@@ -450,9 +462,7 @@ impl ObjectSettings {
                 Ok(update)
             }
             Msg::RemoteIdChanged(key, id) => {
-                let old = self.properties.insert(key, Value::from(id.id));
-
-                if old.as_id() == id.id {
+                if !self.properties.update(key, id.id) {
                     return Ok(false);
                 }
 
@@ -468,13 +478,13 @@ impl ObjectSettings {
                 Ok(true)
             }
             Msg::ImageChanged(key, id) => {
-                let old = self.properties.insert(key, Value::from(id.id));
+                let old = self.properties.insert(key, id.id).as_id();
 
-                if old.as_id() == id.id {
+                if old != id.id {
                     return Ok(false);
                 }
 
-                self.images.remove(&RemoteId::local(old.as_id()));
+                self.images.remove(&RemoteId::local(old));
                 self.images
                     .load_id(&id, ctx.link().callback(Msg::ImageLoaded));
 
@@ -491,12 +501,9 @@ impl ObjectSettings {
             }
             Msg::StringChanged(key, ev) => {
                 let input = into_target!(ev, HtmlInputElement);
-
                 let value = input.value();
 
-                let old = self.properties.insert(key, Value::from(value.as_str()));
-
-                if old.as_str() == value.as_str() {
+                if !self.properties.update(key, value.as_str()) {
                     return Ok(false);
                 }
 
@@ -531,7 +538,7 @@ impl ObjectSettings {
                                 [(Key::WIDTH, width.into())],
                             );
 
-                            self.properties.insert(Key::WIDTH, width.into());
+                            self.properties.insert(Key::WIDTH, width);
                             self.requests.insert(Key::WIDTH, request);
                         }
                     }
@@ -547,14 +554,14 @@ impl ObjectSettings {
                                 [(Key::HEIGHT, width.into())],
                             );
 
-                            self.properties.insert(Key::HEIGHT, width.into());
+                            self.properties.insert(Key::HEIGHT, width);
                             self.requests.insert(Key::HEIGHT, request);
                         }
                     }
                     _ => {}
                 }
 
-                let old = self.properties.insert(key, Value::from(value));
+                let old = self.properties.insert(key, value);
 
                 if old.as_f64() == Some(value) {
                     return Ok(false);
@@ -571,9 +578,8 @@ impl ObjectSettings {
             Msg::BooleanChanged(key, ev) => {
                 let input = into_target!(ev, HtmlInputElement);
                 let value = input.checked();
-                let old = self.properties.insert(key, Value::from(value));
 
-                if old.as_bool() == value {
+                if !self.properties.update(key, value) {
                     return Ok(false);
                 }
 
@@ -616,9 +622,7 @@ impl ObjectSettings {
                     return Ok(false);
                 };
 
-                let old = self.properties.insert(key, Value::from(value));
-
-                if old.as_color() == Some(value) {
+                if !self.properties.update(key, value) {
                     return Ok(false);
                 }
 
@@ -635,7 +639,6 @@ impl ObjectSettings {
                 let fixed_ratio = input.checked();
 
                 let width = self.properties.get(Key::WIDTH).as_f64().unwrap_or(0.0);
-
                 let height = self.properties.get(Key::HEIGHT).as_f64().unwrap_or(0.0);
 
                 let ratio = if fixed_ratio {
@@ -645,11 +648,9 @@ impl ObjectSettings {
                     None
                 };
 
-                let old = self.properties.insert(Key::RATIO, ratio.into());
-
-                if ratio == old.as_f64() {
+                if !self.properties.update(Key::RATIO, ratio) {
                     return Ok(false);
-                };
+                }
 
                 let request = self.channel.object_updates(
                     ctx,
@@ -669,16 +670,8 @@ impl ObjectSettings {
 
                 let mut update = false;
 
-                update |= self
-                    .properties
-                    .insert(Key::RATIO, Value::from(Some(ratio)))
-                    .as_f64()
-                    != Some(ratio);
-                update |= self
-                    .properties
-                    .insert(Key::WIDTH, Value::from(new_width))
-                    .as_f64()
-                    != Some(new_width);
+                update |= self.properties.update(Key::RATIO, Some(ratio));
+                update |= self.properties.update(Key::WIDTH, new_width);
 
                 if update {
                     let request = self.channel.object_updates(

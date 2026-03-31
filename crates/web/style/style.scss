@@ -472,6 +472,8 @@ body {
         background-color: var(--color);
         height: $input-height;
         width: $input-height;
+        border: 1px solid var(--border-color);
+        border-radius: $border-radius;
     }
 
     input[type="color"] {
@@ -742,7 +744,6 @@ body {
     &-backdrop {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.65);
         display: flex;
         align-items: center;
         justify-content: center;

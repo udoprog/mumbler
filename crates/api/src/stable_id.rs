@@ -34,7 +34,7 @@ impl StableId {
 
     /// Whether the stable identifier is zero.
     #[inline]
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.public_key.is_zero() && self.id.is_zero()
     }
 }
