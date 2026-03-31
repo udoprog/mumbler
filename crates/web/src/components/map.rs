@@ -1244,10 +1244,10 @@ impl Map {
 
         for part in iter {
             if !first {
-                html_parts.push(html!(<span class="separator">{" | "}</span>));
+                html_parts.push(html!(<span class="footer-separator">{"|"}</span>));
             }
 
-            html_parts.push(html!({ part }));
+            html_parts.push(html!(<span class="footer-element">{part}</span>));
             first = false;
         }
 

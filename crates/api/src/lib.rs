@@ -293,12 +293,12 @@ impl Color {
 
     /// A neutral gray-blue color.
     pub const fn neutral() -> Self {
-        Self::new(0x66, 0xc5, 0xe5, 0xff)
+        Self::new(0x66, 0xc5, 0xe5, u8::MAX)
     }
 
     /// A neutral background.
     pub const fn neutral_background() -> Self {
-        Self::new(0x20, 0x20, 0x20, 0xff)
+        Self::new(0x10, 0x10, 0x10, u8::MAX)
     }
 
     /// Get the average color value.
@@ -331,16 +331,10 @@ impl Color {
 
     /// Convert to a CSS color string.
     pub fn to_css_string(&self) -> String {
-        if self.a == 255 {
+        if self.a == u8::MAX {
             format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
         } else {
-            format!(
-                "rgba({}, {}, {}, {})",
-                self.r,
-                self.g,
-                self.b,
-                self.a as f32 / 255.0
-            )
+            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
         }
     }
 

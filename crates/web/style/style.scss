@@ -360,8 +360,17 @@ body {
 }
 
 .footer {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: $text-gap;
+
     font-size: 0.8em;
     color: var(--text-color-muted);
+
+    &-element {
+        white-space: nowrap;
+    }
 }
 
 .map-column {
@@ -732,6 +741,7 @@ body {
 }
 
 .modal {
+    position: relative;
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: $border-radius2;
@@ -742,6 +752,7 @@ body {
     overflow: hidden;
 
     &-backdrop {
+        background: rgba(0, 0, 0, 0.5);
         position: fixed;
         inset: 0;
         display: flex;
@@ -750,7 +761,15 @@ body {
         z-index: 1000;
     }
 
+    &.moving {
+        .modal-header {
+            cursor: move;
+        }
+    }
+
     &-header {
+        cursor: grab;
+
         display: flex;
         align-items: center;
         justify-content: space-between;
