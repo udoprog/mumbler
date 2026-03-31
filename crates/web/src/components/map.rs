@@ -2213,6 +2213,7 @@ impl Map {
 
         let Some(object_id) = hit else {
             self.s.context_menu = None;
+            return Ok(());
         };
 
         self.s.context_menu = Some(ContextMenu {

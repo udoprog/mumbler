@@ -267,9 +267,24 @@ impl TokenObject {
         }
 
         match key {
-            Key::TRANSFORM => self
-                .transform
-                .update(value.as_transform().unwrap_or_else(Transform::origin)),
+            Key::TRANSFORM => {
+                let transform = value.as_transform().unwrap_or_else(Transform::origin);
+
+                if !self.has_interpolation() {
+                    return self.transform.update(transform);
+                }
+
+                if self.look_at.is_some() {
+                    return false;
+                }
+
+                if self.transform.front == transform.front {
+                    return false;
+                }
+
+                self.transform.front = transform.front;
+                true
+            }
             Key::LOCKED => self.locked.update(value.as_bool()),
             Key::LOOK_AT => self.look_at.update(value.as_vec3()),
             Key::IMAGE_ID => self.image.update(value.as_id()),
