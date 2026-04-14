@@ -30,7 +30,7 @@ musli-web = { workspace = true, features = ["axum08"] }
 musli = { version = "0.0.149", features = ["storage", "descriptive"] }
 relative-path = "2.0.1"
 tower-http = { version = "0.6.8", features = ["cors"] }
-rand = "0.10.0"
+rand = "0.10.1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 sha2 = "0.10"
 image = "0.25.9"
