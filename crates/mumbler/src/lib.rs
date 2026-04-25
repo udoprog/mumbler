@@ -1,5 +1,6 @@
 #![allow(clippy::async_yields_async)]
 #![allow(clippy::single_match)]
+#![allow(clippy::collapsible_match)]
 
 mod web;
 

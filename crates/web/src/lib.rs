@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::single_match)]
 #![allow(clippy::vec_init_then_push)]
+#![allow(clippy::collapsible_match)]
 
 mod components;
 mod consts;
