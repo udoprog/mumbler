@@ -6,13 +6,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use rust_embed::RustEmbed;
 
-use super::common_routes;
-
 pub(crate) fn router() -> Router {
-    let router = Router::new().route("/", get(index_handler));
-    let router = common_routes(router);
-
-    router
+    Router::new()
+        .route("/", get(index_handler))
         .route("/{*file}", get(static_handler))
         .fallback(index_handler)
 }

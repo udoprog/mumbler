@@ -2,10 +2,10 @@
 mod bundle;
 mod imaging;
 mod nonbundle;
+mod origin;
 mod ws;
 
 use std::future::Future;
-use std::net::SocketAddr;
 
 use anyhow::{Context as _, Result};
 use api::{
@@ -17,10 +17,9 @@ use axum::extract::Path;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::{Extension, Router};
+use axum::{Extension, Router, middleware};
 use tokio::net::TcpListener;
 use tokio::task;
-use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::backend::Backend;
 use crate::remote::DEFAULT_PORT;
@@ -93,10 +92,6 @@ pub(crate) fn setup(
     backend: Backend,
     dev: bool,
 ) -> Result<impl Future<Output = Result<()>>> {
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::any())
-        .allow_methods(AllowMethods::any());
-
     let app = match dev {
         true => self::nonbundle::router,
         #[cfg(feature = "bundle")]
@@ -105,11 +100,13 @@ pub(crate) fn setup(
         _ => self::nonbundle::router,
     };
 
-    let app = app().layer(Extension(backend)).layer(cors);
+    let app = app()
+        .merge(guarded_routes(origin::Guard::new(dev)))
+        .layer(Extension(backend));
 
     let service = axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+        app.into_make_service_with_connect_info::<origin::Connection>(),
     );
 
     Ok(async move {
@@ -118,11 +115,11 @@ pub(crate) fn setup(
     })
 }
 
-#[allow(clippy::let_and_return)]
-fn common_routes(router: Router) -> Router {
-    let router = router.route("/ws", get(ws::entry));
-    let router = router.route("/api/image/{peer_id}/{id}", get(image));
-    router
+fn guarded_routes(guard: origin::Guard) -> Router {
+    Router::new()
+        .route("/ws", get(ws::entry))
+        .route("/api/image/{peer_id}/{id}", get(image))
+        .route_layer(middleware::from_fn_with_state(guard, origin::check))
 }
 
 async fn image(
