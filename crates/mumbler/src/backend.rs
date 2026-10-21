@@ -390,11 +390,8 @@ impl Backend {
     /// Broadcast an event to all peers, crediting the web channel whose
     /// request caused it so that the page which sent it can skip its echo.
     pub(crate) fn broadcast_from(&self, ev: impl Into<Broadcast>, origin: ChannelId) {
-        let result = self.inner.broadcast.send((origin, ev.into()));
-
-        if let Err(error) = result {
-            tracing::error!(%error, "failed to broadcast event");
-        }
+        // Only fails when nobody is subscribed, which is normal.
+        _ = self.inner.broadcast.send((origin, ev.into()));
     }
 
     /// Broadcast an info notification to all connected web clients.
