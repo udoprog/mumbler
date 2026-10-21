@@ -4,4 +4,4 @@ edition = "2024"
 publish = false
 
 [dev-dependencies]
-bstr = "1"
+bstr = "1.13.1"

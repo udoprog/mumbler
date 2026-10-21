@@ -125,16 +125,14 @@ fn switch(route: Route) -> Html {
 
 #[component(ConnectionStatus)]
 fn connection_status() -> Html {
-    let name;
-    let title;
-
-    if use_open().is_some() {
-        name = "signal";
-        title = "Connected to application";
+    let (name, title) = if use_open().is_some() {
+        ("signal", "Connected to application")
     } else {
-        name = "signal-slash";
-        title = "Not connected, will reconnect automatically";
-    }
+        (
+            "signal-slash",
+            "Not connected, will reconnect automatically",
+        )
+    };
 
     html! {
         <section class="connection control-group" {title}>

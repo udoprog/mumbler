@@ -14,8 +14,8 @@ keywords = ["audio", "link", "mumble", "positional", "voice"]
 categories = ["multimedia"]
 
 [dependencies]
-clap = "4.5.60"
-libc = "0.2.182"
+clap = "4.6.7"
+libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.61.2"
@@ -24,4 +24,4 @@ features = [
 ]
 
 [dev-dependencies]
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.54.0", features = ["full"] }

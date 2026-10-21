@@ -14,34 +14,34 @@ api = { path = "../api", features = ["sqll"] }
 mumblelink = { path = "../mumblelink"}
 sorting = { path = "../sorting" }
 
-rust-embed = "8.11.0"
+rust-embed = "8.13.0"
 sqll = { workspace = true, features = ["std", "derive", "threadsafe", "bundled"] }
-tokio = { version = "1.50.0", features = ["full"] }
-mime_guess = { version = "2.0.4", default-features = false }
-axum = { version = "0.8.1", features = ["http1", "json", "query", "tracing", "http2", "ws"] }
-anyhow = "1.0.102"
+tokio = { version = "1.54.0", features = ["full"] }
+mime_guess = { version = "2.0.5", default-features = false }
+axum = { version = "0.8.9", features = ["http1", "json", "query", "tracing", "http2", "ws"] }
+anyhow = "1.0.104"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 directories-next = "2.0.0"
-clap = { version = "4.5.60", features = ["derive"] }
-tokio-stream = "0.1.18"
+clap = { version = "4.6.7", features = ["derive"] }
+tokio-stream = "0.1.19"
 musli-web = { workspace = true, features = ["axum08"] }
 musli = { version = "0.2.0", features = ["storage", "descriptive"] }
-relative-path = "2.0.1"
-rand = "0.10.0"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-sha2 = "0.10"
-image = "0.25.9"
-base64 = { version = "0.22.1", default-features = false }
-webbrowser = { version = "1.1.0", optional = true }
+relative-path = "2.0.3"
+rand = "0.10.3"
+ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+sha2 = "0.11.1"
+image = "0.25.10"
+base64 = { version = "0.23.1", default-features = false }
+webbrowser = { version = "1.2.4", optional = true }
 
 musli-core = { version = "0.2.0", default-features = false }
 parking_lot = "0.12.5"
-bstr = { version = "1.3.0", default-features = false }
+bstr = { version = "1.13.1", default-features = false }
 async-fuse = "1.0.1"
-tokio-rustls = { version = "0.26.4", optional = true }
-rustls = { version = "0.23.37", optional = true }
-webpki-roots = { version = "1.0.6", optional = true }
+tokio-rustls = { version = "0.26.6", optional = true }
+rustls = { version = "0.23.46", optional = true }
+webpki-roots = { version = "1.0.9", optional = true }
 
 [[bin]]
 name = "mumbler-client"

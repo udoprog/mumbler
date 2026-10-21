@@ -375,7 +375,7 @@ impl Component for ObjectList {
             });
 
             list.push(html! {
-                <div key={format!("drag-last")} class="list-drop active" {ondragover} />
+                <div key="drag-last" class="list-drop active" {ondragover} />
             });
         }
 
