@@ -11,6 +11,7 @@ macro_rules! __ids {
         #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ::musli_core::Encode, ::musli_core::Decode)]
         #[musli(transparent)]
         $(#[doc = $doc])*
+        #[cfg_attr(feature = "sqll", derive(::sqll::BindValue, ::sqll::FromColumn))]
         $vis struct $ty {
             raw: u32,
         }
@@ -58,33 +59,6 @@ macro_rules! __ids {
                     0 => write!(f, "NONE"),
                     _ => write!(f, "UNKNOWN({})", self.raw),
                 }
-            }
-        }
-
-        #[cfg(feature = "sqll")]
-        impl ::sqll::BindValue for $ty {
-            #[inline]
-            fn bind_value(&self, stmt: &mut ::sqll::Statement, index: ::core::ffi::c_int) -> Result<(), ::sqll::Error> {
-                ::sqll::BindValue::bind_value(&self.raw, stmt, index)
-            }
-        }
-
-        #[cfg(feature = "sqll")]
-        impl ::sqll::Bind for $ty {
-            #[inline]
-            fn bind(&self, stmt: &mut ::sqll::Statement) -> Result<(), ::sqll::Error> {
-                ::sqll::BindValue::bind_value(self, stmt, ::sqll::BIND_INDEX)
-            }
-        }
-
-        #[cfg(feature = "sqll")]
-        impl ::sqll::FromColumn<'_> for $ty {
-            type Type = ::sqll::ty::Integer;
-
-            #[inline]
-            fn from_column(stmt: &::sqll::Statement, index: ::sqll::ty::Integer) -> Result<Self, ::sqll::Error> {
-                let id = u32::from_column(stmt, index)?;
-                Ok($ty::new(id))
             }
         }
     };

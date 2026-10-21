@@ -1,6 +1,4 @@
 use core::error::Error;
-#[cfg(feature = "sqll")]
-use core::ffi::c_int;
 use core::fmt;
 use core::num::NonZeroU32;
 use core::str::FromStr;
@@ -10,8 +8,6 @@ use base64::engine::general_purpose::{GeneralPurpose, URL_SAFE_NO_PAD};
 use base64::{DecodeSliceError, Engine as _};
 use musli_core::{Decode, Encode};
 use serde_core::{Deserialize, Deserializer, de};
-#[cfg(feature = "sqll")]
-use sqll::{BIND_INDEX, Bind, BindValue, FromColumn, Statement, ty};
 
 /// The engine used for base64.
 static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
@@ -20,6 +16,7 @@ static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 #[musli(transparent)]
 #[repr(transparent)]
+#[cfg_attr(feature = "sqll", derive(sqll::BindValue, sqll::FromColumn))]
 pub struct Id {
     repr: u32,
 }
@@ -188,32 +185,5 @@ impl<'de> Deserialize<'de> for Id {
         }
 
         deserializer.deserialize_str(Visitor)
-    }
-}
-
-#[cfg(feature = "sqll")]
-impl BindValue for Id {
-    #[inline]
-    fn bind_value(&self, stmt: &mut Statement, index: c_int) -> Result<(), sqll::Error> {
-        self.repr.bind_value(stmt, index)
-    }
-}
-
-#[cfg(feature = "sqll")]
-impl Bind for Id {
-    #[inline]
-    fn bind(&self, stmt: &mut Statement) -> Result<(), sqll::Error> {
-        self.bind_value(stmt, BIND_INDEX)
-    }
-}
-
-#[cfg(feature = "sqll")]
-impl FromColumn<'_> for Id {
-    type Type = ty::Integer;
-
-    #[inline]
-    fn from_column(stmt: &Statement, index: ty::Integer) -> Result<Self, sqll::Error> {
-        let repr = u32::from_column(stmt, index)?;
-        Ok(Id::new(repr))
     }
 }

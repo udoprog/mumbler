@@ -14,9 +14,8 @@ api = { path = "../api", features = ["sqll"] }
 mumblelink = { path = "../mumblelink"}
 sorting = { path = "../sorting" }
 
-jiff = "0.2.23"
 rust-embed = "8.11.0"
-sqll = { workspace = true }
+sqll = { workspace = true, features = ["std", "derive", "threadsafe", "bundled"] }
 tokio = { version = "1.50.0", features = ["full"] }
 mime_guess = { version = "2.0.4", default-features = false }
 axum = { version = "0.8.1", features = ["http1", "json", "query", "tracing", "http2", "ws"] }

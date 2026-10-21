@@ -1,7 +1,3 @@
-use core::ffi::c_int;
-use core::str;
-
-use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
 
@@ -10,11 +6,10 @@ use api::{
     Canvas2, Color, ContentType, Extent, Id, Key, PeerId, Role, StableId, Transform, Type, Value,
     ValueKind, ValueType, Vec3,
 };
-use jiff::Timestamp;
 use musli::descriptive;
-use relative_path::{RelativePath, RelativePathBuf};
+use relative_path::RelativePath;
 use rust_embed::RustEmbed;
-use sqll::{BIND_INDEX, OpenOptions, SendStatement};
+use sqll::{Index, OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
 
@@ -57,7 +52,7 @@ impl Database {
     /// Open a database at the given paths prepared for migrations.
     pub fn open(paths: &Paths, memory: bool) -> Result<Self> {
         let mut open = OpenOptions::new();
-        open.create().read_write().no_mutex();
+        open.create().read_write();
 
         let c = if memory {
             open.open_in_memory()?
@@ -72,56 +67,27 @@ impl Database {
             open.open(&paths.db)?
         };
 
-        let count = c.prepare("SELECT COUNT(*) FROM `sqlite_master` WHERE `type` = 'table' AND `name` = 'migrations'")?.next::<i64>()?.unwrap_or(0);
-
-        if count == 0 {
-            c.execute(
-                "CREATE TABLE `migrations` (
-                    `id` TEXT PRIMARY KEY,
-                    `applied_at` INTEGER NOT NULL
-                )",
-            )?;
-        }
-
-        let mut applied = HashSet::new();
-
-        for row in c.prepare("SELECT id FROM migrations")?.iter::<String>() {
-            applied.insert(RelativePathBuf::from(row?));
-        }
-
-        let mut to_run = Vec::new();
+        let mut migrations = Vec::new();
 
         for id in Migrations::iter() {
-            let path = RelativePath::new(id.as_ref());
-
-            if !matches!(path.extension(), Some("sql")) {
+            if !matches!(RelativePath::new(id.as_ref()).extension(), Some("sql")) {
                 continue;
             }
 
-            if !applied.contains(path) {
-                to_run.push(path.to_owned());
-            }
-        }
-
-        to_run.sort();
-
-        for path in to_run {
-            tracing::info!(?path, "applying migration");
-
-            let sql = Migrations::get(path.as_str())
+            let sql = Migrations::get(id.as_ref())
                 .expect("embedded migration")
                 .data;
-            let sql = str::from_utf8(&sql)?;
+            let sql =
+                String::from_utf8(sql.into_owned()).with_context(|| anyhow!("migration {id}"))?;
+            migrations.push((id, sql));
+        }
 
-            c.execute("BEGIN TRANSACTION")?;
-            c.execute(sql)
-                .with_context(|| anyhow!("migration {path}"))?;
-            c.execute("COMMIT TRANSACTION")?;
+        migrations.sort();
 
-            let mut insert = c.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")?;
+        let applied = sqll::Migrations::new().run(&c, migrations)?;
 
-            let now = Timestamp::now();
-            insert.execute((path.as_str(), now.as_millisecond()))?;
+        if applied > 0 {
+            tracing::info!(applied, "applied migrations");
         }
 
         let inner = unsafe {
@@ -210,10 +176,6 @@ impl Database {
             } = &mut *inner;
 
             tracing::debug!(?id, ?key, ?value, "storing property");
-
-            insert.reset()?;
-            insert.bind_value(BIND_INDEX, id)?;
-            insert.bind_value(BIND_INDEX + 1, key)?;
 
             match to_outcome(key, &value, &mut *scratch)? {
                 Outcome::Remove => {
@@ -380,7 +342,7 @@ enum Insert<'a> {
 
 impl sqll::BindValue for Insert<'_> {
     #[inline]
-    fn bind_value(&self, stmt: &mut sqll::Statement, index: c_int) -> sqll::Result<()> {
+    fn bind_value(&self, stmt: &mut sqll::Statement, index: Index) -> sqll::Result<()> {
         match *self {
             Insert::String(value) => stmt.bind_value(index, value),
             Insert::Float(value) => stmt.bind_value(index, value),
@@ -470,7 +432,7 @@ fn to_outcome<'a>(key: Key, value: &'a Value, scratch: &'a mut Vec<u8>) -> Resul
     }
 }
 
-fn value_from_blob(ty: ValueType, stmt: &mut SendStatement, column: c_int) -> Result<Value> {
+fn value_from_blob(ty: ValueType, stmt: &mut SendStatement, column: usize) -> Result<Value> {
     let value = match (ty, stmt.column_type(column)) {
         (ValueType::Boolean, sqll::ValueType::INTEGER) => {
             Value::from(stmt.column::<i64>(column)? != 0)
