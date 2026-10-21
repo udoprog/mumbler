@@ -293,6 +293,7 @@ impl Database {
                 ..
             } = &mut *inner;
 
+            select.reset()?;
             select.bind((id,))?;
 
             let mut props = Vec::new();
@@ -473,4 +474,39 @@ fn value_from_blob(ty: ValueType, stmt: &mut SendStatement, column: usize) -> Re
     };
 
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn properties_can_be_loaded_repeatedly() -> Result<()> {
+        let db = Database::open(&Paths::new(Path::new("unused")), true)?;
+
+        let a = Id::new(1);
+        let b = Id::new(2);
+
+        db.set_property(a, Key::HIDDEN, Value::from(true)).await?;
+        db.set_property(a, Key::NAME, Value::from("x")).await?;
+        db.set_property(b, Key::HIDDEN, Value::from(false)).await?;
+
+        for _ in 0..2 {
+            let props = db.properties(a).await?;
+            assert_eq!(props.len(), 2);
+            assert!(props.iter().any(|(k, v)| *k == Key::HIDDEN && v.as_bool()));
+            assert!(
+                props
+                    .iter()
+                    .any(|(k, v)| *k == Key::NAME && v.as_str() == "x")
+            );
+        }
+
+        let props = db.properties(b).await?;
+        assert_eq!(props.len(), 1);
+        assert!(!props[0].1.as_bool());
+        Ok(())
+    }
 }
