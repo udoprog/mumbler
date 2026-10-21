@@ -15,6 +15,7 @@ $control-gap: 0.5em;
 
 @import "_icons";
 @import "_log";
+@import "_auth";
 
 :root {
     --icon-color: #202020;
@@ -487,6 +488,16 @@ body {
 
     input[type="color"] {
         height: $input-height;
+    }
+
+    select {
+        height: $input-height;
+        background-color: var(--input-color);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+        border-radius: $border-radius;
+        padding: 0 0.5em;
+        font-size: 14px;
     }
 
     input[type="text"],

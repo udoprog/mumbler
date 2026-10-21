@@ -2,6 +2,7 @@ use api::{Canvas2, RemoteId};
 use yew::prelude::*;
 
 use super::Icon;
+use crate::l10n;
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
@@ -19,24 +20,30 @@ pub(crate) struct Props {
 
 #[component(ContextMenuDropdown)]
 pub(crate) fn context_menu_dropdown(props: &Props) -> Html {
+    let l10n = l10n::use_phrases();
     let object_id = props.object_id;
 
     let style = format!("left: {}px; top: {}px;", props.position.x, props.position.y);
 
     let hidden_icon = if props.is_hidden { "eye" } else { "eye-slash" };
-    let hidden_label = if props.is_hidden { "Show" } else { "Hide" };
-    let local_hidden_label = if props.is_hidden {
-        "Show locally"
+    let hidden_label = if props.is_hidden {
+        l10n.text("object-show")
     } else {
-        "Hide locally"
+        l10n.text("object-hide")
+    };
+
+    let local_hidden_label = if props.is_hidden {
+        l10n.text("object-show-locally")
+    } else {
+        l10n.text("object-hide-locally")
     };
 
     let is_mumble = props.mumble_object == Some(object_id);
 
     let mumble_label = if is_mumble {
-        "Unset MumbleLink"
+        l10n.text("object-unset-mumble-link")
     } else {
-        "Set as MumbleLink"
+        l10n.text("object-set-mumble-link")
     };
 
     let onsettings = props.onsettings.reform(move |ev: MouseEvent| {
@@ -66,7 +73,7 @@ pub(crate) fn context_menu_dropdown(props: &Props) -> Html {
             <div class="context-menu" {style} {onclick}>
                 <button class="context-menu-item" onclick={onsettings}>
                     <Icon name="cog" invert={true} />
-                    {"Settings"}
+                    {l10n.text("object-settings")}
                 </button>
                 <button class="context-menu-item" onclick={onhidden}>
                     <Icon name={hidden_icon} invert={true} />
@@ -83,7 +90,7 @@ pub(crate) fn context_menu_dropdown(props: &Props) -> Html {
                 <div class="context-menu-separator" />
                 <button class="context-menu-item danger" onclick={onremove}>
                     <Icon name="x-mark" invert={true} />
-                    {"Remove"}
+                    {l10n.text("object-remove")}
                 </button>
             </div>
         </div>

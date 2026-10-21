@@ -9,6 +9,8 @@ api = { path = "../api", features = ["yew"] }
 sorting = { path = "../sorting" }
 
 anyhow = "1.0.104"
+auth = { package = "watchword", version = "0.3.0", features = ["musliweb05", "yew023"] }
+phrasebook = { version = "0.2.0", features = ["browser", "yew023"] }
 gloo = "0.12.0"
 tracing = "0.1.44"
 musli-web = { workspace = true, features = ["web03", "yew023"] }
@@ -35,5 +37,9 @@ features = [
     "HtmlImageElement",
     "DragEvent",
     "DataTransfer",
-    "DomRect"
+    "DomRect",
+    "HtmlSelectElement",
 ]
+
+[dev-dependencies]
+sweep = { path = "../sweep" }

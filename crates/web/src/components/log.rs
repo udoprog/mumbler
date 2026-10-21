@@ -1,11 +1,13 @@
 use yew::prelude::*;
 
+use crate::l10n;
 use crate::log;
 
 use super::Icon;
 
 #[component(Log)]
 pub(crate) fn log_component() -> Html {
+    let l10n = l10n::use_phrases();
     let log_context = use_context::<log::Log>().expect("Log context not found");
     let force_update = use_force_update();
 
@@ -34,20 +36,20 @@ pub(crate) fn log_component() -> Html {
         <div id="content" class="log">
             <div class="log-header">
                 <div class="log-actions">
-                    <button class="btn" onclick={on_clear}>{"Clear"}</button>
+                    <button class="btn" onclick={on_clear}>{l10n.text("log-clear")}</button>
                 </div>
             </div>
 
             if entries.is_empty() {
-                <p class="log-empty">{"Nothing has been logged"}</p>
+                <p class="log-empty">{l10n.text("log-empty")}</p>
             } else {
                 <div class="log-entries">
                     {for entries.iter().rev().map(|entry| {
                         let severity_class = format!("log-entry severity-{}", entry.severity.as_str());
 
                         let icon = match entry.component.as_str() {
-                            "remote-client" => Some(html!(<Icon name="remote" title="Remote Client" />)),
-                            "mumble-link" => Some(html!(<Icon name="mumble" title="Mumble Link" />)),
+                            "remote-client" => Some(html!(<Icon name="remote" title={l10n.text("log-remote-client")} />)),
+                            "mumble-link" => Some(html!(<Icon name="mumble" title={l10n.text("log-mumble-link")} />)),
                             _ => None,
                         };
 

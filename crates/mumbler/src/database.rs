@@ -9,7 +9,7 @@ use api::{
 use musli::descriptive;
 use relative_path::RelativePath;
 use rust_embed::RustEmbed;
-use sqll::{Index, OpenOptions, SendStatement};
+use sqll::{Connection, Index, OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
 
@@ -30,6 +30,7 @@ use crate::Paths;
 struct Migrations;
 
 struct Inner {
+    conn: Connection,
     scratch: Vec<u8>,
     delete_image: SendStatement,
     delete_object: SendStatement,
@@ -102,12 +103,26 @@ impl Database {
                 select_images: c.prepare("SELECT id, content_type, role, width, height, data FROM images")?.into_send()?,
                 select_objects: c.prepare("SELECT id, type FROM objects")?.into_send()?,
                 select_properties: c.prepare("SELECT key, value FROM properties WHERE id = ?")?.into_send()?,
+                conn: c,
             }
         };
 
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
         })
+    }
+
+    /// Runs `f` on the connection on a blocking thread, holding the lock that
+    /// every other use of it takes.
+    pub(crate) async fn with_connection<T>(
+        &self,
+        f: impl FnOnce(&Connection) -> T + Send + 'static,
+    ) -> Result<T, task::JoinError>
+    where
+        T: Send + 'static,
+    {
+        let inner = self.inner.clone().lock_owned().await;
+        task::spawn_blocking(move || f(&inner.conn)).await
     }
 
     /// List all images in the database.

@@ -1,3 +1,4 @@
+use core::future;
 use core::pin::pin;
 
 use std::collections::HashMap;
@@ -8,14 +9,18 @@ use anyhow::{Context, Result};
 use api::{Id, Key, Value};
 use api::{RemoteId, RemoteUpdateBody};
 use async_fuse::Fuse;
+use auth::Auth;
+use auth::axum08::SignedIn;
+use auth::musliweb05::{AuthUpdate, Connection, Updates};
 use axum::Extension;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
+use musli_web::api::ChannelId;
 use musli_web::axum08;
-use musli_web::ws;
-use tokio::sync::{Mutex, Notify};
+use musli_web::ws::{self, Handler as _};
+use tokio::sync::{Mutex, Notify, broadcast};
 use tokio::time::{self, Duration};
 use tracing::{Instrument, Level};
 
@@ -273,108 +278,71 @@ pub(super) async fn entry(
     ws: WebSocketUpgrade,
     Extension(backend): Extension<Backend>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    auth: Option<Extension<Auth>>,
+    signed_in: Option<Extension<SignedIn>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    let conn = match (auth, signed_in) {
+        (Some(Extension(auth)), Some(Extension(signed_in))) => {
+            Some(Connection::new(auth, &signed_in))
+        }
+        _ => None,
+    };
+
     ws.on_upgrade(move |socket| {
-        let mut events = backend.subscribe();
+        let events = backend.subscribe();
 
         let future = async move {
             tracing::info!("connected");
 
             let database_updates_notify = Arc::new(Notify::new());
+            let handler = Handler::new(backend.clone(), database_updates_notify.clone());
+            let inner = handler.inner.clone();
 
-            let server = axum08::server(
-                socket,
-                Handler::new(backend.clone(), database_updates_notify.clone()),
-            );
+            match conn {
+                Some(conn) => {
+                    // Ends the socket with its session: signed out, revoked,
+                    // deleted or expired.
+                    let updates = conn.updates();
+                    let connect = axum08::server(socket, handler.or(conn));
 
-            let mut server = match server.connect().await {
-                Ok(server) => server,
-                Err(error) => {
-                    tracing::error!(%error, "failed to negotiate");
-                    return;
-                }
-            };
-
-            let mut debounce_timer = pin!(Fuse::empty());
-            let mut local_updates = HashMap::new();
-
-            loop {
-                let (result, done) = tokio::select! {
-                    result = server.run() => {
-                        (result.context("Error in server"), true)
-                    }
-                    () = database_updates_notify.notified() => {
-                        let handler = server.handler();
-
-                        let was_empty = local_updates.is_empty();
-
-                        let mut database_updates = handler.inner.database_updates.lock().await;
-
-                        if !database_updates.is_empty() {
-                            for (key, value) in database_updates.drain() {
-                                local_updates.insert(key, value);
-                            }
+                    let server = match updates.unless_ended(connect.connect()).await {
+                        Some(Ok(server)) => server,
+                        Some(Err(error)) => {
+                            tracing::error!(%error, "failed to negotiate");
+                            return;
                         }
+                        None => return,
+                    };
 
-                        if was_empty {
-                            debounce_timer
-                                .set(Fuse::new(time::sleep(Duration::from_secs(1))));
-                        }
-
-                        continue;
-                    }
-                    () = debounce_timer.as_mut() => {
-                        tracing::debug!("Saving updates");
-
-                        let result = async {
-                            let values = local_updates.drain().map(|((id, key), value)| (id, key, value)).collect::<Vec<_>>();
-                            backend.db().set_properties(values).await?;
-                            Ok(())
-                        };
-
-                        (result.await, false)
-                    }
-                    event = events.recv() => {
-                        let (origin, event) = match event {
-                            Ok(event) => event,
-                            Err(error) => {
-                                tracing::error!(%error, "event");
-                                break;
-                            }
-                        };
-
-                        tracing::debug!(?origin, ?event, "event");
-
-                        let result = match event {
-                            Broadcast::Update(body) => server
-                                .broadcast_from(body, origin)
-                                .context("send config update"),
-                            Broadcast::RemoteUpdate(body) => server
-                                .broadcast_from(body, origin)
-                                .context("send broadcast"),
-                            Broadcast::Notification(body) => server
-                                .broadcast_from(body, origin)
-                                .context("send notification"),
-                        };
-
-                        (result, false)
-                    }
-                };
-
-                if let Err(error) = result {
-                    tracing::error!(%error);
-
-                    for cause in error.chain().skip(1) {
-                        tracing::error!(%cause);
-                    }
-
-                    break;
+                    serve(
+                        server,
+                        backend,
+                        events,
+                        inner,
+                        database_updates_notify,
+                        Some(updates),
+                    )
+                    .await;
                 }
+                None => {
+                    let server = match axum08::server(socket, handler).connect().await {
+                        Ok(server) => server,
+                        Err(error) => {
+                            tracing::error!(%error, "failed to negotiate");
+                            return;
+                        }
+                    };
 
-                if done {
-                    tracing::info!("disconnected");
-                    break;
+                    serve(
+                        server,
+                        backend,
+                        events,
+                        inner,
+                        database_updates_notify,
+                        None,
+                    )
+                    .await;
                 }
             }
         };
@@ -389,4 +357,111 @@ pub(super) async fn entry(
         let span = tracing::span!(Level::INFO, "ws", ?remote, host);
         future.instrument(span)
     })
+}
+
+async fn serve<H>(
+    mut server: ws::Server<axum08::AxumServer, H>,
+    backend: Backend,
+    mut events: broadcast::Receiver<(ChannelId, Broadcast)>,
+    inner: Arc<HandlerInner>,
+    database_updates_notify: Arc<Notify>,
+    mut updates: Option<Updates>,
+) where
+    H: ws::Handler,
+{
+    let mut debounce_timer = pin!(Fuse::empty());
+    let mut local_updates = HashMap::new();
+
+    loop {
+        let (result, done) = tokio::select! {
+            result = server.run() => {
+                (result.context("Error in server"), true)
+            }
+            () = database_updates_notify.notified() => {
+                let was_empty = local_updates.is_empty();
+
+                let mut database_updates = inner.database_updates.lock().await;
+
+                if !database_updates.is_empty() {
+                    for (key, value) in database_updates.drain() {
+                        local_updates.insert(key, value);
+                    }
+                }
+
+                if was_empty {
+                    debounce_timer
+                        .set(Fuse::new(time::sleep(Duration::from_secs(1))));
+                }
+
+                continue;
+            }
+            () = debounce_timer.as_mut() => {
+                tracing::debug!("Saving updates");
+
+                let result = async {
+                    let values = local_updates.drain().map(|((id, key), value)| (id, key, value)).collect::<Vec<_>>();
+                    backend.db().set_properties(values).await?;
+                    Ok(())
+                };
+
+                (result.await, false)
+            }
+            update = next_update(&mut updates) => {
+                let Some(update) = update else {
+                    tracing::info!("session ended");
+                    break;
+                };
+
+                (server.broadcast(update).context("send auth update"), false)
+            }
+            event = events.recv() => {
+                let (origin, event) = match event {
+                    Ok(event) => event,
+                    Err(error) => {
+                        tracing::error!(%error, "event");
+                        break;
+                    }
+                };
+
+                tracing::debug!(?origin, ?event, "event");
+
+                let result = match event {
+                    Broadcast::Update(body) => server
+                        .broadcast_from(body, origin)
+                        .context("send config update"),
+                    Broadcast::RemoteUpdate(body) => server
+                        .broadcast_from(body, origin)
+                        .context("send broadcast"),
+                    Broadcast::Notification(body) => server
+                        .broadcast_from(body, origin)
+                        .context("send notification"),
+                };
+
+                (result, false)
+            }
+        };
+
+        if let Err(error) = result {
+            tracing::error!(%error);
+
+            for cause in error.chain().skip(1) {
+                tracing::error!(%cause);
+            }
+
+            break;
+        }
+
+        if done {
+            tracing::info!("disconnected");
+            break;
+        }
+    }
+}
+
+/// The next auth update, or never without sign-in.
+async fn next_update(updates: &mut Option<Updates>) -> Option<AuthUpdate> {
+    match updates {
+        Some(updates) => updates.next().await,
+        None => future::pending().await,
+    }
 }

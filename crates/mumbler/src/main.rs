@@ -38,6 +38,10 @@ struct Opts {
     /// Don't open the browser on startup.
     #[arg(long)]
     no_open: bool,
+    /// Log a new sign-in link for the user with this login, such as `admin`,
+    /// when the web UI requires sign-in (a non-loopback --bind).
+    #[arg(long, value_name = "LOGIN")]
+    recover: Option<String>,
 }
 
 pub fn main() -> Result<()> {
@@ -94,7 +98,13 @@ pub fn main() -> Result<()> {
         tokio::try_join!(
             client::managed(b.clone(), opts.connect.as_deref()),
             mumblelink::managed(b.clone()),
-            mumbler::run(b, opts.dev, &opts.bind, opts.no_open),
+            mumbler::run(
+                b,
+                opts.dev,
+                &opts.bind,
+                opts.no_open,
+                opts.recover.as_deref()
+            ),
         )?;
 
         Ok(())

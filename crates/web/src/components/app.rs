@@ -1,9 +1,11 @@
+use auth::yew023::{AccountPanel, AdminUsers, AuthContext, UserMenu};
 use musli_web::web03::prelude::*;
 use musli_web::yew023::{HandleProvider, use_open};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 
 use super::{Icon, Log, Map, MumbleStatus, Navigation, RemoteStatus, Route, Settings};
@@ -44,6 +46,12 @@ impl Component for App {
             .close_before_unload()
             .on_error(ctx.link().callback(Msg::Error).reform(Into::into))
             .build();
+
+        // With sign-in, watchword's account and admin requests and its live
+        // updates share the socket.
+        if let Some((auth, _)) = ctx.link().context::<AuthContext>(Callback::noop()) {
+            auth.set_socket(Some(ws.handle().clone()));
+        }
 
         let _notification_listener = ws
             .handle()
@@ -98,13 +106,32 @@ impl Component for App {
 }
 
 fn switch(route: Route) -> Html {
-    let component = match route {
+    html!(<Page {route} />)
+}
+
+#[derive(Properties, PartialEq)]
+struct PageProps {
+    route: Route,
+}
+
+#[component(Page)]
+fn page(props: &PageProps) -> Html {
+    let l10n = l10n::use_phrases();
+    let signed_in = use_context::<AuthContext>().is_some();
+
+    let component = match props.route {
         Route::Map => html!(<Map />),
         Route::Settings => html!(<Settings />),
         Route::Log => html!(<Log />),
-        Route::NotFound => {
+        Route::Account if signed_in => html! {
+            <div id="content" class="container"><AccountPanel /></div>
+        },
+        Route::Users if signed_in => html! {
+            <div id="content" class="container"><AdminUsers /></div>
+        },
+        Route::Account | Route::Users | Route::NotFound => {
             html! {
-                <div id="content" class="container">{"There is nothing here"}</div>
+                <div id="content" class="container">{l10n.text("app-not-found")}</div>
             }
         }
     };
@@ -112,10 +139,11 @@ fn switch(route: Route) -> Html {
     html! {
         <div class="container rows">
             <div class="status">
-                <Navigation route={route} />
+                <Navigation route={props.route.clone()} />
                 <MumbleStatus />
                 <RemoteStatus />
                 <ConnectionStatus />
+                <AccountMenu />
             </div>
 
             {component}
@@ -123,15 +151,36 @@ fn switch(route: Route) -> Html {
     }
 }
 
+/// The signed-in user's menu, when the server requires sign-in.
+#[component(AccountMenu)]
+fn account_menu() -> Html {
+    let auth = use_context::<AuthContext>();
+    let navigator = use_navigator();
+
+    let (Some(_), Some(navigator)) = (auth, navigator) else {
+        return Html::default();
+    };
+
+    let on_account = {
+        let navigator = navigator.clone();
+        Callback::from(move |()| navigator.push(&Route::Account))
+    };
+
+    let on_admin = Callback::from(move |()| navigator.push(&Route::Users));
+
+    html! {
+        <UserMenu {on_account} {on_admin} />
+    }
+}
+
 #[component(ConnectionStatus)]
 fn connection_status() -> Html {
+    let l10n = l10n::use_phrases();
+
     let (name, title) = if use_open().is_some() {
-        ("signal", "Connected to application")
+        ("signal", l10n.text("app-connected"))
     } else {
-        (
-            "signal-slash",
-            "Not connected, will reconnect automatically",
-        )
+        ("signal-slash", l10n.text("app-disconnected"))
     };
 
     html! {

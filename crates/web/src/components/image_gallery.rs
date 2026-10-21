@@ -5,16 +5,18 @@ use web_sys::MouseEvent;
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log::Log;
 
 static FILTER_BUTTONS: &[(&str, Role)] = &[
-    ("All", Role::NONE),
-    ("Token", Role::TOKEN),
-    ("Static", Role::STATIC),
-    ("Background", Role::BACKGROUND),
+    ("image-filter-all", Role::NONE),
+    ("image-filter-token", Role::TOKEN),
+    ("image-filter-static", Role::STATIC),
+    ("image-filter-background", Role::BACKGROUND),
 ];
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Channel(ws::ChannelEvent),
     Select(RemoteId),
     Role(Role),
@@ -38,6 +40,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct ImageGallery {
+    l10n: l10n::Subscription,
     channel: ws::Channel,
     log: Log,
     _initialize: ws::Request,
@@ -59,6 +62,7 @@ impl Component for ImageGallery {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -88,7 +92,7 @@ impl Component for ImageGallery {
 
             html! {
                 <button class={classes!("btn", "sm", inactive.then_some("inactive"))} {onclick}>
-                    {label}
+                    {self.l10n.text(label)}
                 </button>
             }
         });
@@ -114,10 +118,13 @@ impl Component for ImageGallery {
                     "clickable"
                 );
 
+                let id_text = image.id.to_string();
+                let alt = self.l10n.msg("image-alt", &l10n::args([("id", id_text.as_str())]));
+
                 html! {
                     <div class="image-entry">
-                        <img src={format!("/api/image/{}", image.id)} alt={format!("Image {}", image.id)} onclick={on_select} class={classes} />
-                        <button class="btn danger floating icon" onclick={on_delete} title="Remove Image">{"ⓧ"}</button>
+                        <img src={format!("/api/image/{}", image.id)} {alt} onclick={on_select} class={classes} />
+                        <button class="btn danger floating icon" onclick={on_delete} title={self.l10n.text("image-remove")}>{"ⓧ"}</button>
                     </div>
                 }
             });
@@ -129,7 +136,7 @@ impl Component for ImageGallery {
                 </div>
 
                 if self.images.is_empty() {
-                    <p class="hint">{"No images."}</p>
+                    <p class="hint">{self.l10n.text("image-none")}</p>
                 } else {
                     <div class="gallery">
                         {for images}
@@ -143,6 +150,7 @@ impl Component for ImageGallery {
 impl ImageGallery {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Select(id) => {
                 ctx.props().onselect.emit(id);
                 Ok(false)

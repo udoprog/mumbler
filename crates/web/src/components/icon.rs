@@ -4,7 +4,7 @@ use yew::prelude::*;
 pub(crate) struct Props {
     pub(crate) name: String,
     #[prop_or_default]
-    pub(crate) title: Option<String>,
+    pub(crate) title: Option<AttrValue>,
     #[prop_or_default]
     pub(crate) invert: bool,
     #[prop_or_default]

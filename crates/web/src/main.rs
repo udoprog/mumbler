@@ -19,5 +19,5 @@ fn main() {
 
     tracing_wasm::set_as_global_default_with_config(config);
     tracing::trace!("Started up");
-    yew::Renderer::<web::App>::new().render();
+    yew::Renderer::<web::Root>::new().render();
 }

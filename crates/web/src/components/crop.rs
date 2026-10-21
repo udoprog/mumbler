@@ -3,6 +3,8 @@ use core::ops::{Add, Div, Sub};
 use web_sys::{HtmlImageElement, MouseEvent, PointerEvent};
 use yew::prelude::*;
 
+use crate::l10n;
+
 const HANDLES: &[(&str, Dir)] = &[
     ("nw", Dir::NW),
     ("n", Dir::N),
@@ -244,6 +246,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     MoveStart(PointerEvent),
     ResizeStart(PointerEvent, Dir),
     PointerDown(PointerEvent),
@@ -261,6 +264,7 @@ pub(crate) struct Extent {
 }
 
 pub(crate) struct Crop {
+    l10n: l10n::Subscription,
     empty_crop_region: bool,
     dragging: bool,
     move_state: Option<MoveState>,
@@ -273,8 +277,9 @@ impl Component for Crop {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(_: &Context<Self>) -> Self {
+    fn create(ctx: &Context<Self>) -> Self {
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             empty_crop_region: false,
             dragging: false,
             move_state: None,
@@ -286,6 +291,7 @@ impl Component for Crop {
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
+            Msg::L10n(phrases) => self.l10n.update(phrases),
             Msg::MoveStart(e) => {
                 self.move_start(ctx, e);
                 false
@@ -348,7 +354,7 @@ impl Component for Crop {
 
         html! {
             <>
-                <p class="hint">{"Drag on the image to select a crop region."}</p>
+                <p class="hint">{self.l10n.text("crop-hint")}</p>
 
                 <div class="crop-area" onclick={stop_propagation}>
                     <div
@@ -371,24 +377,24 @@ impl Component for Crop {
                 </div>
 
                 if self.empty_crop_region {
-                    <p class="hint error">{"Crop region cannot be empty."}</p>
+                    <p class="hint error">{self.l10n.text("crop-empty")}</p>
                 }
 
                 <div class="control-group" onclick={stop_propagation}>
                     <button class={confirm_class} onclick={confirm_onclick}>
-                        {"Upload"}
+                        {self.l10n.text("crop-upload")}
                     </button>
 
                     {if ctx.props().onratio.is_some() {
                         html! {
-                            <button class="btn secondary" title="Rescale to original aspect ratio" onclick={ctx.link().callback(|_| Msg::Rescale)}>
-                                {"Select All"}
+                            <button class="btn secondary" title={self.l10n.text("crop-rescale")} onclick={ctx.link().callback(|_| Msg::Rescale)}>
+                                {self.l10n.text("crop-select-all")}
                             </button>
                         }
                     } else {
                         html! {
-                            <button class="btn secondary" title="Select the largest region" onclick={ctx.link().callback(|_| Msg::SelectAll)}>
-                                {"Select All"}
+                            <button class="btn secondary" title={self.l10n.text("crop-select-largest")} onclick={ctx.link().callback(|_| Msg::SelectAll)}>
+                                {self.l10n.text("crop-select-all")}
                             </button>
                         }
                     }}

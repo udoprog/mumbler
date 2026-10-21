@@ -3,6 +3,7 @@ use yew::prelude::*;
 use yew::virtual_dom::{VList, VNode};
 
 use crate::drag_over::DragOver;
+use crate::l10n;
 use crate::objects::{ObjectKind, Objects};
 use crate::order::Order;
 
@@ -28,11 +29,13 @@ pub(crate) struct Props {
 }
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     SetHierarchy(Order),
     SetObjects(Objects),
 }
 
 pub(crate) struct ObjectList {
+    l10n: l10n::Subscription,
     order: Order,
     _order_handle: ContextHandle<Order>,
     objects: Objects,
@@ -55,6 +58,7 @@ impl Component for ObjectList {
             .expect("hirearchy context not found");
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             order,
             _order_handle,
             objects,
@@ -64,6 +68,7 @@ impl Component for ObjectList {
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
+            Msg::L10n(phrases) => self.l10n.update(phrases),
             Msg::SetHierarchy(order) => {
                 self.order = order;
                 true
@@ -99,7 +104,7 @@ impl Component for ObjectList {
             let target = o.id;
             let selected = ctx.props().selected == Some(target);
 
-            let label = o.as_ref().name();
+            let label = o.as_ref().name(&self.l10n);
 
             let onclick = ctx.props().onselect.reform(move |ev: MouseEvent| {
                 ev.stop_propagation();
@@ -164,7 +169,7 @@ impl Component for ObjectList {
                     });
 
                     html! {
-                        <button {class} title="Toggle as MumbleLink Source" {onclick}>
+                        <button {class} title={self.l10n.text("object-toggle-mumble-link")} {onclick}>
                         <Icon name="mumble" />
                         </button>
                     }
@@ -187,7 +192,7 @@ impl Component for ObjectList {
                     let name = if is_expanded { "folder-open" } else { "folder" };
 
                     html! {
-                        <button {class} title="Expand or collapse group" {onclick}>
+                        <button {class} title={self.l10n.text("object-toggle-expanded")} {onclick}>
                             <Icon {name} />
                         </button>
                     }
@@ -203,9 +208,9 @@ impl Component for ObjectList {
                     };
 
                     let title = if is_hidden {
-                        "Hidden from others"
+                        self.l10n.text("object-hidden-from-others")
                     } else {
-                        "Visible to others"
+                        self.l10n.text("object-visible-to-others")
                     };
 
                     let onclick = ctx.props().onhiddentoggle.reform(move |ev: MouseEvent| {
@@ -232,9 +237,9 @@ impl Component for ObjectList {
                     };
 
                     let title = if is_local_hidden {
-                        "Hidden locally"
+                        self.l10n.text("object-hidden-locally")
                     } else {
-                        "Visible locally"
+                        self.l10n.text("object-visible-locally")
                     };
 
                     let onclick = ctx
@@ -261,7 +266,11 @@ impl Component for ObjectList {
                         is_locked.then_some("active"),
                     };
 
-                    let title = if is_locked { "Locked" } else { "Unlocked" };
+                    let title = if is_locked {
+                        self.l10n.text("object-locked")
+                    } else {
+                        self.l10n.text("object-unlocked")
+                    };
 
                     let onclick = ctx.props().onlockedtoggle.reform(move |ev: MouseEvent| {
                         ev.stop_propagation();

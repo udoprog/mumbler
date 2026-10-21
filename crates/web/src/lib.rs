@@ -8,10 +8,11 @@ mod consts;
 mod drag_over;
 mod error;
 mod images;
+mod l10n;
 mod log;
 mod objects;
 mod order;
 mod peers;
 mod state;
 
-pub use self::components::App;
+pub use self::components::Root;

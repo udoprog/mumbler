@@ -8,12 +8,14 @@ use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 use crate::peers::Peers;
 
-use super::{COMMON_ROOM, ChannelExt as _, Icon};
+use super::{ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Channel(ws::ChannelEvent),
     Initialized(Result<Packet<api::InitializeRooms>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
@@ -73,6 +75,7 @@ impl Room {
 }
 
 pub(crate) struct Rooms {
+    l10n: l10n::Subscription,
     peers: Peers,
     rooms: Vec<Room>,
     active_room: StableId,
@@ -98,6 +101,7 @@ impl Component for Rooms {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             peers: Peers::default(),
             rooms: Vec::new(),
             active_room: StableId::ZERO,
@@ -146,11 +150,11 @@ impl Component for Rooms {
             <div id="content" class="rows">
                 <div class="control-group">
                     <Icon name="home" invert={true} />
-                    <span>{"Rooms"}</span>
+                    <span>{self.l10n.text("rooms-title")}</span>
 
                     <section class="fill"></section>
 
-                    <button class="btn square primary" title="Add room"
+                    <button class="btn square primary" title={self.l10n.text("rooms-add")}
                         onclick={ctx.link().callback(|_| Msg::CreateRoom)}>
                         <Icon name="plus-circle" />
                     </button>
@@ -159,8 +163,8 @@ impl Component for Rooms {
                 <section class="list" key="rooms-list">
                     <div class={no_room_class} key="no-room" onclick={on_no_room_click}>
                         <Icon name="question-mark-circle" invert={true} />
-                        <span class="list-label">{COMMON_ROOM}</span>
-                        <span class="bullet" title="Players not in a room">{no_room_count}</span>
+                        <span class="list-label">{self.l10n.text("room-common")}</span>
+                        <span class="bullet" title={self.l10n.text("rooms-players-without-room")}>{no_room_count}</span>
                     </div>
 
                     {for self.rooms.iter().map(|room| self.view_room(ctx, room))}
@@ -184,7 +188,7 @@ impl Rooms {
             });
 
             html! {
-                <button class="btn square list-action" {onclick} title="Remove room">
+                <button class="btn square list-action" {onclick} title={self.l10n.text("rooms-remove")}>
                     <Icon name="trash" />
                 </button>
             }
@@ -193,7 +197,7 @@ impl Rooms {
         let room_icon = if is_local { "home" } else { "home-modern" };
 
         let owner = if is_local {
-            Some("you".to_string())
+            Some(self.l10n.text("rooms-owner-you").to_string())
         } else {
             self.peers
                 .by_public_key(&room.id.public_key)
@@ -201,11 +205,14 @@ impl Rooms {
         };
 
         let title = if is_local {
-            "Room owned by you".to_string()
+            self.l10n.text("rooms-owned-by-you").to_string()
         } else {
             match self.peers.by_public_key(&room.id.public_key) {
-                Some(peer) => format!("Room owned by '{}'", peer.display()),
-                None => "Remote room".to_string(),
+                Some(peer) => {
+                    let args = l10n::args([("name", peer.display())]);
+                    self.l10n.msg("rooms-owned-by", &args)
+                }
+                None => self.l10n.text("rooms-remote").to_string(),
             }
         };
 
@@ -227,7 +234,7 @@ impl Rooms {
             });
 
             html! {
-                <button class="btn square list-action" {onclick} title="Room settings">
+                <button class="btn square list-action" {onclick} title={self.l10n.text("rooms-settings")}>
                     <Icon name="cog" />
                 </button>
             }
@@ -255,13 +262,14 @@ impl Rooms {
                 </span>
                 {settings_button}
                 {remove_button}
-                <span class="bullet" title="Players in this room">{peer_count}</span>
+                <span class="bullet" title={self.l10n.text("rooms-players-in-room")}>{peer_count}</span>
             </div>
         }
     }
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Channel(event) => {
                 self.peers = Peers::default();
                 self.active_room = StableId::ZERO;
@@ -459,7 +467,10 @@ impl Rooms {
                     .request()
                     .body(api::CreateObjectRequest {
                         ty: Type::ROOM,
-                        props: api::Properties::from([(Key::NAME, Value::from("New Room"))]),
+                        props: api::Properties::from([(
+                            Key::NAME,
+                            Value::from(&*self.l10n.text("rooms-new-name")),
+                        )]),
                     })
                     .on_packet(ctx.link().callback(Msg::CreateRoomResult))
                     .send();

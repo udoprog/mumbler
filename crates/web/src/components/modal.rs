@@ -3,6 +3,7 @@ use core::ops::Sub;
 use yew::prelude::*;
 
 use super::Icon;
+use crate::l10n;
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {
@@ -51,6 +52,7 @@ impl Sub for Client2 {
 
 #[component(Modal)]
 pub(crate) fn modal(props: &Props) -> Html {
+    let l10n = l10n::use_phrases();
     let class = classes! {
         "modal-body",
         &props.class,
@@ -106,7 +108,7 @@ pub(crate) fn modal(props: &Props) -> Html {
                 <div class="modal-header" {onpointerdown}>
                     <h2>{&props.title}</h2>
 
-                    <button class="btn square danger" title="Close" onclick={onclose}>
+                    <button class="btn square danger" title={l10n.text("modal-close")} onclick={onclose}>
                         <Icon name="x-mark" />
                     </button>
                 </div>

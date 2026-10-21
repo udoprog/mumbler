@@ -311,6 +311,16 @@ mod tests {
     }
 
     async fn request(address: SocketAddr, path: &str, host: &str, origin: Option<&str>) -> String {
+        request_with(address, path, host, origin, None).await
+    }
+
+    async fn request_with(
+        address: SocketAddr,
+        path: &str,
+        host: &str,
+        origin: Option<&str>,
+        cookie: Option<&str>,
+    ) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -326,6 +336,10 @@ mod tests {
             request.push_str(&format!("Origin: {origin}\r\n"));
         }
 
+        if let Some(cookie) = cookie {
+            request.push_str(&format!("Cookie: {cookie}\r\n"));
+        }
+
         request.push_str("\r\n");
         socket.write_all(request.as_bytes()).await.unwrap();
 
@@ -334,6 +348,10 @@ mod tests {
 
             while !response.ends_with(b"\r\n\r\n") {
                 response.push(socket.read_u8().await.unwrap());
+            }
+
+            if path != "/ws" {
+                socket.read_to_end(&mut response).await.unwrap();
             }
 
             String::from_utf8(response).unwrap()
@@ -350,7 +368,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(super::super::setup(listener, backend, false).unwrap());
+        let server = tokio::spawn(super::super::setup(listener, backend, false, None).unwrap());
 
         let host = address.to_string();
         let own = format!("http://{host}");
@@ -390,6 +408,88 @@ mod tests {
         let upgrade = request(address, "/ws", &local, Some(&format!("http://{local}"))).await;
         assert!(upgrade.starts_with("HTTP/1.1 101"), "{upgrade}");
 
+        let access = request(address, "/api/access", &host, None).await;
+        assert!(access.ends_with("\r\n\r\nopen"), "{access}");
+
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn sign_in_guards_routes() {
+        use auth::{Auth, NewUser, Role};
+
+        let paths = crate::Paths::new(std::path::Path::new("/nonexistent"));
+        let db = crate::Database::open(&paths, true).unwrap();
+        let store = crate::auth_store::AuthStore::new(db.clone());
+        let backend = crate::Backend::new(db, paths).await.unwrap();
+        let auth = Auth::builder_from_store(store).await.unwrap().build();
+
+        let new = NewUser {
+            login: Some(String::from("admin")),
+            email: None,
+            role: Role::Admin,
+        };
+
+        let user = auth
+            .test_user(&new, "a long enough password")
+            .await
+            .unwrap();
+        let session = auth.test_session(&user).await.unwrap();
+        let cookie = auth.cookie_header(&session.id);
+        let cookie = cookie.to_str().unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server =
+            tokio::spawn(super::super::setup(listener, backend, false, Some(auth)).unwrap());
+
+        let host = address.to_string();
+        let own = format!("http://{host}");
+
+        let access = request(address, "/api/access", &host, None).await;
+        assert!(access.ends_with("\r\n\r\nsign-in"), "{access}");
+
+        let config = request(address, "/api/auth/config", &host, None).await;
+        assert!(config.starts_with("HTTP/1.1 200"), "{config}");
+
+        let foreign = request(
+            address,
+            "/api/auth/config",
+            &host,
+            Some("http://evil.example"),
+        )
+        .await;
+        assert!(foreign.starts_with("HTTP/1.1 403"), "{foreign}");
+
+        for path in ["/ws", "/api/image/0/0"] {
+            let anonymous = request(address, path, &host, Some(&own)).await;
+            assert!(anonymous.starts_with("HTTP/1.1 401"), "{path}: {anonymous}");
+        }
+
+        let image = request_with(address, "/api/image/0/0", &host, None, Some(cookie)).await;
+        assert!(image.starts_with("HTTP/1.1 404"), "{image}");
+
+        let upgrade = request_with(address, "/ws", &host, Some(&own), Some(cookie)).await;
+        assert!(upgrade.starts_with("HTTP/1.1 101"), "{upgrade}");
+
+        server.abort();
+    }
+
+    #[test]
+    fn only_loopback_binds_skip_sign_in() {
+        for host in [
+            "127.0.0.1",
+            "127.1.2.3",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LocalHost",
+        ] {
+            assert!(crate::is_loopback(host), "{host}");
+        }
+
+        for host in ["0.0.0.0", "::", "192.168.1.2", "example.com"] {
+            assert!(!crate::is_loopback(host), "{host}");
+        }
     }
 }

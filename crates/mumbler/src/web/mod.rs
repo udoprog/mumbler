@@ -13,9 +13,12 @@ use api::{
     InitializeMapResponse, InitializeRoomsResponse, PeerId, Properties, RemoteId, RemoteObject,
     RemotePeer, Type, UploadImageRequest,
 };
-use axum::extract::Path;
+use auth::Auth;
+use auth::axum08::SignedIn;
+use axum::extract::{FromRequestParts, Path, Request, State};
 use axum::http::{StatusCode, header};
-use axum::response::IntoResponse;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Router, middleware};
 use tokio::net::TcpListener;
@@ -91,6 +94,7 @@ pub(crate) fn setup(
     listener: TcpListener,
     backend: Backend,
     dev: bool,
+    auth: Option<Auth>,
 ) -> Result<impl Future<Output = Result<()>>> {
     let app = match dev {
         true => self::nonbundle::router,
@@ -101,7 +105,7 @@ pub(crate) fn setup(
     };
 
     let app = app()
-        .merge(guarded_routes(origin::Guard::new(dev)))
+        .merge(guarded_routes(origin::Guard::new(dev), auth))
         .layer(Extension(backend));
 
     let service = axum::serve(
@@ -115,11 +119,41 @@ pub(crate) fn setup(
     })
 }
 
-fn guarded_routes(guard: origin::Guard) -> Router {
-    Router::new()
+fn guarded_routes(guard: origin::Guard, auth: Option<Auth>) -> Router {
+    let mut router = Router::new()
         .route("/ws", get(ws::entry))
-        .route("/api/image/{peer_id}/{id}", get(image))
+        .route("/api/image/{peer_id}/{id}", get(image));
+
+    let access = if let Some(auth) = auth {
+        router = router
+            .route_layer(middleware::from_fn_with_state(
+                auth.clone(),
+                require_sign_in,
+            ))
+            .merge(auth::axum08::routes().with_state(auth));
+        "sign-in"
+    } else {
+        "open"
+    };
+
+    router
+        .route("/api/access", get(move || async move { access }))
         .route_layer(middleware::from_fn_with_state(guard, origin::check))
+}
+
+/// Lets only signed-in requests through, leaving the [`SignedIn`] and the
+/// [`Auth`] in the request's extensions for the WebSocket.
+async fn require_sign_in(State(auth): State<Auth>, request: Request, next: Next) -> Response {
+    let (mut parts, body) = request.into_parts();
+
+    let signed_in = match SignedIn::from_request_parts(&mut parts, &auth).await {
+        Ok(signed_in) => signed_in,
+        Err(error) => return error.into_response(),
+    };
+
+    parts.extensions.insert(signed_in);
+    parts.extensions.insert(auth);
+    next.run(Request::from_parts(parts, body)).await
 }
 
 async fn image(

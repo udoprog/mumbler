@@ -1,0 +1,8 @@
+[package]
+name = "sweep"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+phrasebook = "0.2.0"

@@ -5,7 +5,10 @@ mod animation_frame;
 use self::animation_frame::AnimationFrame;
 
 mod app;
-pub use self::app::App;
+use self::app::App;
+
+mod root;
+pub use self::root::Root;
 
 mod map;
 use self::map::Map;
@@ -25,6 +28,9 @@ use self::image_gallery::ImageGallery;
 
 mod settings;
 use self::settings::Settings;
+
+mod language;
+use self::language::LanguagePicker;
 
 mod rooms;
 use self::rooms::Rooms;
@@ -70,9 +76,6 @@ use self::icon::Icon;
 
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
-
-const UNKNOWN_ROOM: &str = "Unknown Room";
-const COMMON_ROOM: &str = "Foyer";
 
 trait ChannelExt {
     fn object_updates<T>(

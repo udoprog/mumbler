@@ -1,44 +1,49 @@
 use yew::prelude::*;
 
+use crate::l10n;
+
 #[derive(Properties, PartialEq)]
 pub(crate) struct Props {}
 
 #[component(Help)]
 pub(crate) fn help(_: &Props) -> Html {
+    let l10n = l10n::use_phrases();
+    let drag = l10n.text("help-key-drag");
+
     html! {
         <dl class="shortcuts">
             <dt><kbd>{"F1"}</kbd>{" / "}<kbd>{"?"}</kbd></dt>
-            <dd>{"Show this help"}</dd>
+            <dd>{l10n.text("help-show-help")}</dd>
 
             <dt><kbd>{"esc"}</kbd></dt>
-            <dd>{"Close dialogs / Cancel"}</dd>
+            <dd>{l10n.text("help-close")}</dd>
 
             <dt><kbd>{"del"}</kbd></dt>
-            <dd>{"Remove selected"}</dd>
+            <dd>{l10n.text("help-remove")}</dd>
 
-            <dt><kbd>{"LMB"}</kbd></dt>
-            <dd>{"Select / Drag"}</dd>
+            <dt><kbd>{l10n.text("help-key-lmb")}</kbd></dt>
+            <dd>{l10n.text("help-select")}</dd>
 
-            <dt><kbd>{"Shift"}</kbd>{" + "}<kbd>{"Drag"}</kbd></dt>
-            <dd>{"Set facing"}</dd>
+            <dt><kbd>{"Shift"}</kbd>{" + "}<kbd>{drag.clone()}</kbd></dt>
+            <dd>{l10n.text("help-facing")}</dd>
 
-            <dt><kbd>{"Shift"}</kbd>{" + "}<kbd>{"LMB"}</kbd></dt>
-            <dd>{"Set look at while object is selected"}</dd>
+            <dt><kbd>{"Shift"}</kbd>{" + "}<kbd>{l10n.text("help-key-lmb")}</kbd></dt>
+            <dd>{l10n.text("help-look-at")}</dd>
 
-            <dt><kbd>{"S"}</kbd>{" + "}<kbd>{"Drag"}</kbd></dt>
-            <dd>{"Scale selected object"}</dd>
+            <dt><kbd>{"S"}</kbd>{" + "}<kbd>{drag.clone()}</kbd></dt>
+            <dd>{l10n.text("help-scale")}</dd>
 
             <dt><kbd>{"T"}</kbd></dt>
-            <dd>{"Lock / unlock selected object"}</dd>
+            <dd>{l10n.text("help-lock")}</dd>
 
-            <dt><kbd>{"MMB"}</kbd>{" + "}<kbd>{"Drag"}</kbd></dt>
-            <dd>{"Pan map"}</dd>
+            <dt><kbd>{l10n.text("help-key-mmb")}</kbd>{" + "}<kbd>{drag}</kbd></dt>
+            <dd>{l10n.text("help-pan")}</dd>
 
-            <dt><kbd>{"Scroll"}</kbd></dt>
-            <dd>{"Zoom map"}</dd>
+            <dt><kbd>{l10n.text("help-key-scroll")}</kbd></dt>
+            <dd>{l10n.text("help-zoom")}</dd>
 
             <dt><kbd>{"Enter"}</kbd></dt>
-            <dd>{"Confirm"}</dd>
+            <dd>{l10n.text("help-confirm")}</dd>
         </dl>
     }
 }

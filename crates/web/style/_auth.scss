@@ -1,0 +1,232 @@
+// watchword's components (sign-in, registration, account, user menu, users),
+// which render plain HTML with `auth-*` classes and leave the look to us.
+
+.auth-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.auth-page {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: $margin;
+    box-sizing: border-box;
+}
+
+.auth-card {
+    width: min(100%, 24rem);
+    padding: 2em;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: $border-radius2;
+    box-sizing: border-box;
+}
+
+.auth-title {
+    margin: 0 0 0.25em;
+    color: var(--heading-color);
+    font-weight: bold;
+}
+
+.auth-heading {
+    margin: 0 0 1em;
+}
+
+.auth-subheading {
+    margin: 1.5em 0 0.5em;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: $control-gap;
+}
+
+.auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+.auth-label,
+.auth-hint,
+.auth-status,
+.auth-muted,
+.auth-link-state {
+    color: var(--text-color-muted);
+}
+
+.auth-hint {
+    margin: 0;
+    font-size: 0.9em;
+}
+
+.auth-input,
+.auth-select,
+.auth-filter input,
+.auth-link-url {
+    font: inherit;
+    height: $input-height;
+    padding: 0 0.5em;
+    border: 1px solid var(--border-color);
+    border-radius: $border-radius;
+    background-color: var(--input-color);
+    color: var(--text-color);
+    box-sizing: border-box;
+}
+
+.auth-actions,
+.auth-toolbar,
+.auth-pages,
+.auth-confirm,
+.auth-filter,
+.auth-link {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: $control-gap;
+}
+
+.auth-actions button,
+.auth-toolbar button,
+.auth-pages button,
+.auth-confirm button,
+.auth-filter button,
+.auth-link button,
+.auth-user-actions button,
+.auth-sign-out,
+.auth-retry,
+.auth-cloudflare {
+    font: inherit;
+    font-size: 14px;
+    height: $btn-height;
+    padding: 0 0.5em;
+    border: none;
+    border-radius: $border-radius;
+    cursor: pointer;
+    background-color: var(--secondary-color);
+    color: var(--text-color-inverted);
+
+    &:disabled {
+        cursor: not-allowed;
+        background-color: var(--secondary-color-disabled);
+    }
+}
+
+.auth-submit {
+    background-color: var(--primary-color) !important;
+}
+
+.auth-danger {
+    background-color: var(--danger-color) !important;
+}
+
+.auth-message:not(:empty) {
+    margin-bottom: $margin;
+}
+
+.auth-error,
+.auth-notice {
+    margin: 0;
+    padding: 0.5em;
+    border-radius: $border-radius;
+}
+
+.auth-error {
+    color: var(--danger-color);
+    background-color: var(--danger-background-color);
+}
+
+.auth-notice {
+    background-color: var(--info-background-color);
+}
+
+.auth-menu {
+    position: relative;
+}
+
+.auth-menu-button {
+    font: inherit;
+    font-size: 14px;
+    height: $btn-height;
+    padding: 0 0.5em;
+    border: none;
+    border-radius: $border-radius;
+    cursor: pointer;
+    background-color: var(--control-color);
+    color: var(--text-color);
+}
+
+.auth-menu-items {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 10;
+    margin: 0.25em 0 0;
+    padding: 0.25em 0;
+    min-width: 10em;
+    list-style: none;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: $border-radius;
+}
+
+.auth-menu-item {
+    font: inherit;
+    font-size: 14px;
+    width: 100%;
+    height: auto !important;
+    padding: 0.25em 1em;
+    text-align: left;
+    border: none;
+    cursor: pointer;
+    background: none !important;
+    color: var(--text-color) !important;
+
+    &:hover {
+        background-color: var(--control-color) !important;
+    }
+}
+
+.auth-impersonating {
+    padding: 0.5em 1em;
+    color: var(--warning-color);
+}
+
+.auth-account,
+.auth-admin-users {
+    display: flex;
+    flex-direction: column;
+    gap: $margin;
+}
+
+.auth-users {
+    border-collapse: collapse;
+
+    th,
+    td {
+        padding: 0.25em 0.5em;
+        border-bottom: 1px solid var(--border-color);
+        text-align: left;
+    }
+}
+
+.auth-badge {
+    margin-left: 0.5em;
+    padding: 0 0.4em;
+    border-radius: $border-radius;
+    background-color: var(--info-background-color);
+}
+
+.auth-revoked {
+    color: var(--danger-color);
+}
+
+.auth-active {
+    color: var(--success-color);
+}

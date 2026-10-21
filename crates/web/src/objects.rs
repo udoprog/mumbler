@@ -8,6 +8,7 @@ use yew::{Html, html};
 
 use crate::components::Visibility;
 use crate::consts::{DEFAULT_HEIGHT, DEFAULT_RADIUS, DEFAULT_SPEED, DEFAULT_WIDTH};
+use crate::l10n::Phrases;
 use crate::state::State;
 
 enum Shape {
@@ -761,7 +762,7 @@ impl ObjectRef {
 
     /// Get a view for this object.
     #[inline]
-    pub(crate) fn name(&self) -> Html {
+    pub(crate) fn name(&self, l10n: &Phrases) -> Html {
         if !self.name.is_empty() {
             return html! {
                 <span class="object">
@@ -772,7 +773,7 @@ impl ObjectRef {
 
         html! {
             <span class="object">
-                <span class="object-type">{self.ty.display()}</span>
+                <span class="object-type">{l10n.text(type_keys(self.ty).1)}</span>
                 <span class="object-id">{self.id.to_string()}</span>
             </span>
         }
@@ -780,11 +781,11 @@ impl ObjectRef {
 
     /// Get a title view for this object.
     #[inline]
-    pub(crate) fn title(&self) -> Html {
+    pub(crate) fn title(&self, l10n: &Phrases) -> Html {
         if !self.name.is_empty() {
             return html! {
                 <span class="object">
-                    <span class="object-type">{self.ty.title()}</span>
+                    <span class="object-type">{l10n.text(type_keys(self.ty).0)}</span>
                     <span class="object-name">{self.name.as_str()}</span>
                 </span>
             };
@@ -792,9 +793,20 @@ impl ObjectRef {
 
         html! {
             <span class="object">
-                <span class="object-type">{self.ty.title()}</span>
+                <span class="object-type">{l10n.text(type_keys(self.ty).0)}</span>
                 <span class="object-id">{self.id.to_string()}</span>
             </span>
         }
+    }
+}
+
+/// The message keys naming a type: as a title, and in running text.
+pub(crate) fn type_keys(ty: Type) -> (&'static str, &'static str) {
+    match ty {
+        Type::TOKEN => ("type-token", "type-token-lower"),
+        Type::STATIC => ("type-static", "type-static-lower"),
+        Type::GROUP => ("type-group", "type-group-lower"),
+        Type::ROOM => ("type-room", "type-room-lower"),
+        _ => ("type-object", "type-object-lower"),
     }
 }

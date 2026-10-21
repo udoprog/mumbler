@@ -5,12 +5,14 @@ use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 use crate::state::State;
 
 use super::{ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Channel(ws::ChannelEvent),
     Restart,
     RestartResponse(Result<Packet<api::MumbleRestart>, ws::Error>),
@@ -31,6 +33,7 @@ impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
 pub(crate) struct Props;
 
 pub(crate) struct MumbleStatus {
+    l10n: l10n::Subscription,
     log: log::Log,
     channel: ws::Channel,
     _get_status: ws::Request,
@@ -53,6 +56,7 @@ impl Component for MumbleStatus {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -86,19 +90,19 @@ impl Component for MumbleStatus {
             html!(<Icon name="check" />)
         };
         let toggle_title = if *self.enabled {
-            "Disable Mumble Link"
+            self.l10n.text("mumble-disable")
         } else {
-            "Enable Mumble Link"
+            self.l10n.text("mumble-enable")
         };
 
         html! {
             <section class="mumble control-group">
-                <Icon name="mumble" title="Status of Mumble Link Connection" />
+                <Icon name="mumble" title={self.l10n.text("mumble-status")} />
                 <button
                     class="btn sm square"
                     onclick={on_restart}
                     disabled={!*self.enabled}
-                    title="Restart Mumble Link"
+                    title={self.l10n.text("mumble-restart")}
                 >
                     <Icon name="restart" />
                 </button>
@@ -117,6 +121,7 @@ impl Component for MumbleStatus {
 impl MumbleStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Restart => {
                 if !self.channel.is_open() {
                     return Ok(false);

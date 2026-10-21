@@ -1,6 +1,7 @@
 use yew::prelude::*;
 use yew_router::prelude::*;
 
+use crate::l10n;
 use crate::log::{self, Severity};
 
 #[derive(Debug, Clone, PartialEq, Routable)]
@@ -11,6 +12,10 @@ pub(crate) enum Route {
     Settings,
     #[at("/log")]
     Log,
+    #[at("/account")]
+    Account,
+    #[at("/users")]
+    Users,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -23,6 +28,7 @@ pub(crate) struct NavigationProps {
 
 #[component(Navigation)]
 pub(crate) fn navigation(props: &NavigationProps) -> Html {
+    let l10n = l10n::use_phrases();
     let log_context = use_context::<log::Log>().expect("Log context not found");
     let error_count = use_state(|| {
         log_context
@@ -68,13 +74,13 @@ pub(crate) fn navigation(props: &NavigationProps) -> Html {
     html! {
         <section class="navigation">
             <Link<Route> to={Route::Map} classes={classes!((props.route == Route::Map).then_some("active"))}>
-                {"Map"}
+                {l10n.text("nav-map")}
             </Link<Route>>
             <Link<Route> to={Route::Settings} classes={classes!((props.route == Route::Settings).then_some("active"))}>
-                {"Settings"}
+                {l10n.text("nav-settings")}
             </Link<Route>>
             <Link<Route> to={Route::Log} classes={classes!((props.route == Route::Log).then_some("active"))}>
-                {"Log"}
+                {l10n.text("nav-log")}
                 if *error_count > 0 {
                     <span class="badge error">{*error_count}</span>
                 }

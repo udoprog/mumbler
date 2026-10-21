@@ -9,11 +9,13 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 
 use super::{Crop, Extent, Icon, ImageGallery, Modal, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Error(Error),
     Channel(ws::ChannelEvent),
     FileSelected(Event),
@@ -46,6 +48,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct ImageUpload {
+    l10n: l10n::Subscription,
     log: log::Log,
     channel: ws::Channel,
     _remove_image: ws::Request,
@@ -71,6 +74,7 @@ impl Component for ImageUpload {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -108,21 +112,21 @@ impl Component for ImageUpload {
             <section class="btn-group">
                 <label for={input_id.clone()} class={classes!("btn", "primary", self.uploading.then_some("disabled"))}>
                     if self.uploading {
-                        {"Uploading"}
+                        {self.l10n.text("image-uploading")}
                         <span class="loader" />
                     } else {
-                        {"Upload"}
+                        {self.l10n.text("image-upload")}
                         <Icon name="arrow-up-on-square" />
                     }
                 </label>
 
                 <button class="btn primary" onclick={ctx.link().callback(|_| Msg::OpenGallery)}>
-                    {"Gallery"}
+                    {self.l10n.text("image-gallery")}
                     <Icon name="photo" />
                 </button>
 
                 <button class={classes!("btn", "danger", (!can_clear).then_some("disabled"))} onclick={onclear}>
-                    {"Clear"}
+                    {self.l10n.text("image-clear")}
                     <Icon name="x-circle" />
                 </button>
 
@@ -136,7 +140,7 @@ impl Component for ImageUpload {
             </section>
 
             if self.gallery_open {
-                <Modal title="Images" class="rows" onclose={ctx.link().callback(|_| Msg::CloseGallery)}>
+                <Modal title={html!(<>{self.l10n.text("image-gallery-title")}</>)} class="rows" onclose={ctx.link().callback(|_| Msg::CloseGallery)}>
                     <ImageGallery
                         selected={ctx.props().selected}
                         default_role={ctx.props().role}
@@ -147,7 +151,7 @@ impl Component for ImageUpload {
             }
 
             if let Some(source_url) = &self.crop_source_url {
-                <Modal title="Crop Image" class="rows" onclose={ctx.link().callback(|_| Msg::CropCancelled)}>
+                <Modal title={html!(<>{self.l10n.text("image-crop-title")}</>)} class="rows" onclose={ctx.link().callback(|_| Msg::CropCancelled)}>
                     <Crop
                         drag={self.drag}
                         ondrag={ctx.link().callback(Msg::CropDrag)}
@@ -166,6 +170,7 @@ impl Component for ImageUpload {
 impl ImageUpload {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Error(error) => Err(error),
             Msg::Channel(event) => match event {
                 ws::ChannelEvent::Failed(error) => Err(error.into()),

@@ -12,6 +12,7 @@ use crate::consts::{
 };
 use crate::error::Error;
 use crate::images::Images;
+use crate::l10n;
 use crate::log;
 
 use super::{ChannelExt, DynamicCanvas, ImageUpload, Visibility, into_target};
@@ -36,6 +37,7 @@ impl ExtentAxis {
 }
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Error(Error),
     Channel(ws::ChannelEvent),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
@@ -81,6 +83,7 @@ pub(crate) struct Props {
 }
 
 pub(crate) struct ObjectSettings {
+    l10n: l10n::Subscription,
     _get_object_settings: ws::Request,
     _remote_update_listener: ws::Listener,
     _select_background: ws::Request,
@@ -108,6 +111,7 @@ impl Component for ObjectSettings {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -184,12 +188,12 @@ impl ObjectSettings {
 
                 html! {
                     <section class="input-group">
-                        <label for={key.id()}>{format!("{}:", key.label())}</label>
+                        <label for={key.id()}>{self.l10n.text(key_label(key))}</label>
 
                         <input
                             id={key.id()}
                             type="text"
-                            placeholder={key.placeholder()}
+                            placeholder={self.l10n.text(key_placeholder(key))}
                             value={value.to_owned()}
                             onchange={ctx.link().callback(move |ev: Event| Msg::StringChanged(key, ev))}
                         />
@@ -221,7 +225,7 @@ impl ObjectSettings {
 
                     html! {
                         <section class="input-group">
-                            <label for={key.id()}>{format!("{}:", key.label())}</label>
+                            <label for={key.id()}>{self.l10n.text(key_label(key))}</label>
 
                             <input
                                 id={key.id()}
@@ -244,7 +248,7 @@ impl ObjectSettings {
 
                     html! {
                         <section class="input-group">
-                            <label for={key.id()}>{format!("{}:", key.label())}</label>
+                            <label for={key.id()}>{self.l10n.text(key_label(key))}</label>
 
                             <input
                                 id={key.id()}
@@ -252,7 +256,7 @@ impl ObjectSettings {
                                 min={MIN_FLOAT.to_string()}
                                 max={MAX_FLOAT.to_string()}
                                 step="0.1"
-                                placeholder={key.placeholder()}
+                                placeholder={self.l10n.text(key_placeholder(key))}
                                 value={value.to_string()}
                                 onchange={ctx.link().callback(move |ev: Event| Msg::FloatChanged(key, ev))}
                             />
@@ -265,7 +269,7 @@ impl ObjectSettings {
 
                 html! {
                     <section class="input-group">
-                        <label for={key.id()}>{format!("{}:", key.label())}</label>
+                        <label for={key.id()}>{self.l10n.text(key_label(key))}</label>
                         <input
                             id={key.id()}
                             type="checkbox"
@@ -285,7 +289,7 @@ impl ObjectSettings {
                 html! {
                     <>
                         <section class="input-group">
-                            <label for="extent-x-min">{"X Extents:"}</label>
+                            <label for="extent-x-min">{self.l10n.text("settings-extent-x")}</label>
                             <input
                                 id="extent-x-min"
                                 type="number"
@@ -306,7 +310,7 @@ impl ObjectSettings {
                         </section>
 
                         <section class="input-group">
-                            <label for="extent-z-min">{"Z Extents:"}</label>
+                            <label for="extent-z-min">{self.l10n.text("settings-extent-z")}</label>
                             <input
                                 id="extent-z-min"
                                 type="number"
@@ -336,7 +340,7 @@ impl ObjectSettings {
                 html! {
                     <>
                         <section class="input-group">
-                            <label>{"Background:"}</label>
+                            <label>{self.l10n.text("settings-background")}</label>
 
                             <ImageUpload
                                 selected={value}
@@ -366,7 +370,7 @@ impl ObjectSettings {
 
                         html! {
                             <section class="input-group">
-                                <label>{"Image:"}</label>
+                                <label>{self.l10n.text("settings-image")}</label>
 
                                 <ImageUpload
                                     selected={value}
@@ -385,7 +389,7 @@ impl ObjectSettings {
                     Some(ObjectRender::Token) => {
                         html! {
                             <section class="input-group">
-                                <label>{"Image:"}</label>
+                                <label>{self.l10n.text("settings-image")}</label>
 
                                 <ImageUpload
                                     selected={value}
@@ -415,7 +419,7 @@ impl ObjectSettings {
                 html! {
                     <section class="input-group">
                         <label for={key.id()}>
-                            {format!("{}:", key.label())}
+                            {self.l10n.text(key_label(key))}
                             <span class="color-preview" style={format!("--color: {}", value.to_css_string())} />
                         </label>
 
@@ -437,6 +441,7 @@ impl ObjectSettings {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Error(error) => Err(error),
             Msg::Channel(event) => {
                 match event {
@@ -862,5 +867,32 @@ fn default_f64(key: Key) -> f64 {
         Key::SPEED => f64::from(DEFAULT_SPEED),
         Key::RADIUS => f64::from(DEFAULT_RADIUS),
         _ => 0.0,
+    }
+}
+
+/// The message labelling the field of a key, with its colon.
+fn key_label(key: Key) -> &'static str {
+    match key {
+        Key::NAME => "key-name",
+        Key::COLOR => "key-color",
+        Key::SHOW_GRID => "key-show-grid",
+        Key::WIDTH => "key-width",
+        Key::HEIGHT => "key-height",
+        Key::RATIO => "key-ratio",
+        Key::RADIUS => "key-radius",
+        Key::SPEED => "key-speed",
+        _ => "key-unknown",
+    }
+}
+
+/// The placeholder of the field of a key.
+fn key_placeholder(key: Key) -> &'static str {
+    match key {
+        Key::NAME => "key-name-placeholder",
+        Key::WIDTH => "key-width-placeholder",
+        Key::HEIGHT => "key-height-placeholder",
+        Key::RADIUS => "key-radius-placeholder",
+        Key::SPEED => "key-speed-placeholder",
+        _ => "key-unknown-placeholder",
     }
 }

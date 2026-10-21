@@ -5,12 +5,14 @@ use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 use crate::state::State;
 
 use super::{ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
@@ -31,6 +33,7 @@ impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
 pub(crate) struct Props;
 
 pub(crate) struct RemoteStatus {
+    l10n: l10n::Subscription,
     log: log::Log,
     channel: ws::Channel,
     enabled: State<bool>,
@@ -53,6 +56,7 @@ impl Component for RemoteStatus {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -87,20 +91,20 @@ impl Component for RemoteStatus {
         };
 
         let toggle_title = if *self.enabled {
-            "Disable Remote Server"
+            self.l10n.text("remote-disable")
         } else {
-            "Enable Remote Server"
+            self.l10n.text("remote-enable")
         };
 
         html! {
             <section class="remote control-group">
-                <Icon name="remote" title="Status of Remote Server connection" invert={true} small={true} />
+                <Icon name="remote" title={self.l10n.text("remote-status")} invert={true} small={true} />
 
                 <button
                     class="btn sm square"
                     onclick={on_restart}
                     disabled={!*self.enabled}
-                    title="Restart remote connection"
+                    title={self.l10n.text("remote-restart")}
                 >
                     <Icon name="restart" />
                 </button>
@@ -119,6 +123,7 @@ impl Component for RemoteStatus {
 impl RemoteStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Restart => {
                 self._restart_request = self
                     .channel

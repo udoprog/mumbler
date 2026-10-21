@@ -8,12 +8,14 @@ use yew::prelude::*;
 
 use crate::components::ChannelExt;
 use crate::error::Error;
+use crate::l10n;
 use crate::log;
 use crate::state::State;
 
-use super::into_target;
+use super::{LanguagePicker, into_target};
 
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Channel(ws::ChannelEvent),
     NameChanged(Event),
     PeerSecretChanged(Event),
@@ -35,6 +37,7 @@ impl From<Result<Packet<api::Updates>, ws::Error>> for Msg {
 pub(crate) struct Props;
 
 pub(crate) struct Settings {
+    l10n: l10n::Subscription,
     log: log::Log,
     channel: ws::Channel,
     name: State<String>,
@@ -62,6 +65,7 @@ impl Component for Settings {
         let ws = ctx.handle();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             log,
             channel: ws
                 .channel()
@@ -94,36 +98,36 @@ impl Component for Settings {
         html! {
             <div id="content" class="rows">
                 <section class="input-group">
-                    <label for="name">{"Name:"}</label>
+                    <label for="name">{self.l10n.text("settings-name")}</label>
 
                     <input
                         id="name"
                         type="text"
-                        placeholder="Name"
+                        placeholder={self.l10n.text("settings-name-placeholder")}
                         value={(*self.name).clone()}
                         onchange={ctx.link().callback(Msg::NameChanged)}
                         />
                 </section>
 
                 <section class="input-group">
-                    <label for="peer-secret">{"Secret Phrase:"}</label>
+                    <label for="peer-secret">{self.l10n.text("settings-peer-secret")}</label>
 
                     <input
                         id="peer-secret"
                         type="password"
-                        placeholder="peer secret"
+                        placeholder={self.l10n.text("settings-peer-secret-placeholder")}
                         value={(*self.peer_secret).clone()}
                         onchange={ctx.link().callback(Msg::PeerSecretChanged)}
                         />
                 </section>
 
                 <section class="input-group">
-                    <label for="remote-server">{"Remote Server:"}</label>
+                    <label for="remote-server">{self.l10n.text("settings-remote-server")}</label>
 
                     <input
                         id="remote-server"
                         type="text"
-                        placeholder="host[:port]"
+                        placeholder={self.l10n.text("settings-remote-server-placeholder")}
                         value={(*self.remote_server).clone()}
                         onchange={ctx.link().callback(Msg::ServerChanged)}
                         />
@@ -135,9 +139,11 @@ impl Component for Settings {
                             checked={*self.remote_server_tls}
                             onchange={ctx.link().callback(Msg::TlsToggled)}
                             />
-                        {" Use TLS"}
+                        {" "}{self.l10n.text("settings-use-tls")}
                     </label>
                 </section>
+
+                <LanguagePicker />
             </div>
         }
     }
@@ -146,6 +152,7 @@ impl Component for Settings {
 impl Settings {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Channel(event) => {
                 match event {
                     ws::ChannelEvent::Opened(..) => {}

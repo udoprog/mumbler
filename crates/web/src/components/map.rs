@@ -22,17 +22,18 @@ use crate::consts::DEFAULT_ZOOM;
 use crate::drag_over::DragOver;
 use crate::error::Error;
 use crate::images::Images;
+use crate::l10n;
 use crate::log;
 use crate::objects::{Object, ObjectKind, ObjectRef, Objects, ObjectsRef};
 use crate::order::Order;
 use crate::peers::Peers;
 use crate::state::State;
+use phrasebook::yew023::html_around;
 
 use super::render::{self, ViewTransform};
 use super::{
-    AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult,
-    DynamicCanvas, Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject, RenderObjectKind,
-    Rooms, UNKNOWN_ROOM,
+    AnimationFrame, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult, DynamicCanvas,
+    Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject, RenderObjectKind, Rooms,
 };
 
 const INTERPOLATION_THRESHOLD: f32 = 0.01;
@@ -97,37 +98,40 @@ impl MapModal {
         update
     }
 
-    fn title(&self) -> Html {
+    fn title(&self, l10n: &l10n::Phrases) -> Html {
         match self {
             MapModal::Help => html! {
-                {"Shortcuts"}
+                {l10n.text("map-shortcuts-title")}
             },
             MapModal::Rooms => html! {
-                {"Rooms"}
+                {l10n.text("map-rooms-title")}
             },
-            MapModal::Remove { object, .. } => html! {
-                <>
-                    {"Remove "}
-                    {object.name()}
-                    {"?"}
-                </>
-            },
+            MapModal::Remove { object, .. } => html_around(
+                l10n,
+                "map-remove-title",
+                &phrasebook::Args::new(),
+                "object",
+                object.name(l10n),
+            ),
             MapModal::Settings { object, .. } => html! {
                 <>
-                    {object.title()}
+                    {object.title(l10n)}
                 </>
             },
-            MapModal::Unlock { object, .. } => html! {
-                <>
-                    {"Object "}
-                    <span class="object-bullet">{object.name()}</span>
-                    {" is locked!"}
-                </>
-            },
+            MapModal::Unlock { object, .. } => {
+                let name = html!(<span class="object-bullet">{object.name(l10n)}</span>);
+                html_around(
+                    l10n,
+                    "map-locked-title",
+                    &phrasebook::Args::new(),
+                    "object",
+                    name,
+                )
+            }
         }
     }
 
-    fn view(&self, ctx: &Context<Map>) -> Html {
+    fn view(&self, ctx: &Context<Map>, l10n: &l10n::Phrases) -> Html {
         match *self {
             MapModal::Help => html! {
                 <Help />
@@ -144,18 +148,16 @@ impl MapModal {
             } => html! {
                 <>
                     <p>
-                        {"Are you sure you want to remove "}
-                        <span class="object-bullet">{object.name()}</span>
-                        {"?"}
+                        {html_around(l10n, "map-remove-confirm", &phrasebook::Args::new(), "object", html!(<span class="object-bullet">{object.name(l10n)}</span>))}
                     </p>
 
                     <div class="btn-group">
                         <button class="btn danger"
                             onclick={ctx.link().callback(move |_| Msg::RemoveObject(id))}>
-                            {"Remove"}
+                            {l10n.text("map-remove")}
                         </button>
                         <button class="btn" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
-                            {"Cancel"}
+                            {l10n.text("map-cancel")}
                         </button>
                     </div>
                 </>
@@ -202,7 +204,7 @@ impl MapModal {
                         }
                     }
                     _ => html! {
-                        <p class="hint">{"Unknown object type"}</p>
+                        <p class="hint">{l10n.text("map-unknown-type")}</p>
                     },
                 }}
             },
@@ -213,11 +215,11 @@ impl MapModal {
                 <>
                     <div class="btn-group">
                         <button class="btn primary" onclick={ctx.link().callback(|_| Msg::CloseModal)}>
-                            {"Ok"}
+                            {l10n.text("map-ok")}
                         </button>
                         <button class="btn danger" onclick={ctx.link().callback(move |_| Msg::ToggleLocked(id))}>
                             <Icon name="lock-open" />
-                            {"Unlock"}
+                            {l10n.text("map-unlock")}
                         </button>
                     </div>
                 </>
@@ -355,11 +357,11 @@ impl MapState {
         }
     }
 
-    fn display(&self) -> &str {
+    fn display(&self, l10n: &l10n::Phrases) -> String {
         if self.values.name.is_empty() {
-            "You"
+            l10n.text("map-you").to_string()
         } else {
-            &self.values.name
+            self.values.name.to_string()
         }
     }
 
@@ -531,7 +533,8 @@ struct Cache {
     show_grid: bool,
     background: RemoteId,
     room_icon: &'static str,
-    room_name: String,
+    /// The room's name, or `None` for the common room or an unnamed one.
+    room_name: Option<String>,
     room_color: Color,
 }
 
@@ -563,8 +566,8 @@ impl Cache {
             background: RemoteId::new(room_id.peer_id, *room.background),
             room_icon,
             room_name: match o.name.as_str() {
-                "" => UNKNOWN_ROOM.to_string(),
-                name => name.to_string(),
+                "" => None,
+                name => Some(name.to_string()),
             },
             room_color: *room.color,
         };
@@ -579,7 +582,7 @@ impl Default for Cache {
             show_grid: false,
             background: RemoteId::ZERO,
             room_icon: "question-mark-circle",
-            room_name: String::from(COMMON_ROOM),
+            room_name: None,
             room_color: Color::neutral(),
         }
     }
@@ -598,6 +601,7 @@ struct ContextMenu {
 }
 
 pub(crate) struct Map {
+    l10n: l10n::Subscription,
     ids: AtomicIds,
     log: log::Log,
     s: MapState,
@@ -638,6 +642,7 @@ pub(crate) struct Map {
 
 #[derive(Debug)]
 pub(crate) enum Msg {
+    L10n(l10n::Phrases),
     Error(Error),
     Channel(ws::ChannelEvent),
     AnimationFrame(Result<f64, Error>),
@@ -738,6 +743,7 @@ impl Component for Map {
             .open();
 
         Self {
+            l10n: l10n::Subscription::new(ctx, Msg::L10n),
             ids: AtomicIds::new(0),
             log,
             s,
@@ -881,18 +887,18 @@ impl Component for Map {
 
             html! {
                 <div class="control-group">
-                    <button class="btn square primary" title="Add token" onclick={ctx.link().callback(|_| Msg::CreateToken)}>
-                        <Icon name="user-plus" title="Add token" />
+                    <button class="btn square primary" title={self.l10n.text("map-add-token")} onclick={ctx.link().callback(|_| Msg::CreateToken)}>
+                        <Icon name="user-plus" title={self.l10n.text("map-add-token")} />
                     </button>
-                    <button class="btn square primary" title="Add static object" onclick={ctx.link().callback(|_| Msg::CreateStatic)}>
-                        <Icon name="squares-plus" title="Add static" />
+                    <button class="btn square primary" title={self.l10n.text("map-add-static-object")} onclick={ctx.link().callback(|_| Msg::CreateStatic)}>
+                        <Icon name="squares-plus" title={self.l10n.text("map-add-static")} />
                     </button>
-                    <button class="btn square primary" title="Add group" onclick={ctx.link().callback(|_| Msg::CreateGroup)}>
-                        <Icon name="folder-plus" title="Add group" />
+                    <button class="btn square primary" title={self.l10n.text("map-add-group")} onclick={ctx.link().callback(|_| Msg::CreateGroup)}>
+                        <Icon name="folder-plus" title={self.l10n.text("map-add-group")} />
                     </button>
 
                     if !self.dropped_images.is_empty() {
-                        <button class="btn warning" title="Image upload in progress">
+                        <button class="btn warning" title={self.l10n.text("map-upload-in-progress")}>
                             <Icon name="photo" />
                             {self.dropped_images.len().to_string()}
                             <span class="loader invert" />
@@ -901,10 +907,10 @@ impl Component for Map {
 
                     <section class="fill"></section>
 
-                    <button class={settings_classes} title="Object settings" onclick={settings_click}>
+                    <button class={settings_classes} title={self.l10n.text("map-object-settings")} onclick={settings_click}>
                         <Icon name="cog" />
                     </button>
-                    <button class={remove_classes} title="Remove object" onclick={remove_click}>
+                    <button class={remove_classes} title={self.l10n.text("map-remove-object")} onclick={remove_click}>
                         <Icon name="x-mark" />
                     </button>
                 </div>
@@ -931,7 +937,7 @@ impl Component for Map {
                 };
 
                 html! {
-                    <button {class} title="Toggle as MumbleLink Source" {onclick}>
+                    <button {class} title={self.l10n.text("object-toggle-mumble-link")} {onclick}>
                         <Icon name="mumble" />
                     </button>
                 }
@@ -949,9 +955,9 @@ impl Component for Map {
                 };
 
                 let title = if is_hidden {
-                    "Hidden from others"
+                    self.l10n.text("object-hidden-from-others")
                 } else {
-                    "Visible to others"
+                    self.l10n.text("object-visible-to-others")
                 };
 
                 let onclick = o.map(|o| {
@@ -969,7 +975,11 @@ impl Component for Map {
             let local_hidden = {
                 let is_local_hidden = o.map(|o| o.is_local_hidden()).unwrap_or_default();
 
-                let title = if is_local_hidden { "Hidden" } else { "Visible" };
+                let title = if is_local_hidden {
+                    self.l10n.text("map-local-hidden")
+                } else {
+                    self.l10n.text("map-local-visible")
+                };
 
                 let class = classes! {
                     "btn", "square",
@@ -992,7 +1002,11 @@ impl Component for Map {
             let locked = {
                 let is_locked = o.map(|o| o.is_locked()).unwrap_or_default();
 
-                let title = if is_locked { "Locked" } else { "Unlocked" };
+                let title = if is_locked {
+                    self.l10n.text("object-locked")
+                } else {
+                    self.l10n.text("object-unlocked")
+                };
 
                 let name = if is_locked {
                     "lock-closed"
@@ -1025,9 +1039,9 @@ impl Component for Map {
                 };
 
                 let title = if *self.s.values.mumble_follow {
-                    "Disable MumbleLink selection following"
+                    self.l10n.text("map-follow-disable")
                 } else {
-                    "Enable MumbleLink selection following"
+                    self.l10n.text("map-follow-enable")
                 };
 
                 let onclick = ctx.link().callback(|_| Msg::ToggleFollowMumbleSelection);
@@ -1041,7 +1055,7 @@ impl Component for Map {
 
             let help = {
                 html! {
-                    <button class="btn square" title="Keyboard shortcuts (F1)" onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Help))}>
+                    <button class="btn square" title={self.l10n.text("map-shortcuts")} onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Help))}>
                         <Icon name="question-mark-circle" />
                     </button>
                 }
@@ -1057,14 +1071,14 @@ impl Component for Map {
                     {locked}
 
                     <section class="icon-group">
-                        <button class="btn" title="Switch room" onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Rooms))}>
+                        <button class="btn" title={self.l10n.text("map-switch-room")} onclick={ctx.link().callback(|_| Msg::OpenModal(MapModal::Rooms))}>
                             <Icon name={self.cache.room_icon} />
-                            <span>{self.cache.room_name.clone()}</span>
+                            <span>{self.room_name()}</span>
                         </button>
                     </section>
 
                     if room_id.is_local() {
-                        <button class="btn square" title="Room settings" onclick={ctx.link().callback(move |_| Msg::OpenSettings(room_id))}>
+                        <button class="btn square" title={self.l10n.text("rooms-settings")} onclick={ctx.link().callback(move |_| Msg::OpenSettings(room_id))}>
                             <Icon name="cog" />
                         </button>
                     }
@@ -1081,13 +1095,13 @@ impl Component for Map {
             <>
                 <div class="control-group">
                     <Icon name="remote" invert={true} />
-                    <span>{"Players"}</span>
+                    <span>{self.l10n.text("map-players")}</span>
                 </div>
 
                 <div class="list" key="players">
                     <section class="list-content">
                         <Icon name="user" invert={true} small={true} />
-                        <span class="list-label">{self.s.display()}</span>
+                        <span class="list-label">{self.s.display(&self.l10n)}</span>
                     </section>
 
                     {for self.peers.iter().filter(|p| p.in_room).map(|peer| html! {
@@ -1169,8 +1183,8 @@ impl Component for Map {
                 }
 
                 if let Some(modal) = &self.s.modal {
-                    <Modal title={modal.title()} class="rows" onclose={ctx.link().callback(|_| Msg::CloseModal)}>
-                        {modal.view(ctx)}
+                    <Modal title={modal.title(&self.l10n)} class="rows" onclose={ctx.link().callback(|_| Msg::CloseModal)}>
+                        {modal.view(ctx, &self.l10n)}
                     </Modal>
                 }
 
@@ -1180,39 +1194,37 @@ impl Component for Map {
 }
 
 impl Map {
+    /// The current room's name, as the room switcher shows it.
+    fn room_name(&self) -> String {
+        match &self.cache.room_name {
+            Some(name) => name.clone(),
+            None if self.cache.room_id.is_zero() => self.l10n.text("room-common").to_string(),
+            None => self.l10n.text("room-unknown").to_string(),
+        }
+    }
+
     fn footer(&self, objects: &ObjectsRef) -> Html {
         let mut parts = Vec::with_capacity(5);
 
         if let Some(mouse) = self.mouse {
-            parts.push(format!(
-                "MOUSE: X:{:.02}, Y:{:.02}, Z:{:.02}",
-                mouse.x, mouse.y, mouse.z
-            ));
+            parts.push(self.l10n.msg("map-footer-mouse", &coordinates(mouse)));
         }
 
         let zoom = *self.s.values.zoom;
-        parts.push(format!("ZOOM:{:.02}", zoom));
+        let args = l10n::args([("zoom", format!("{zoom:.02}"))]);
+        parts.push(self.l10n.msg("map-footer-zoom", &args));
 
         let pan = *self.s.values.pan;
-        parts.push(format!(
-            "PAN: X:{:.02}, Y:{:.02}, Z:{:.02}",
-            pan.x, pan.y, pan.z
-        ));
+        parts.push(self.l10n.msg("map-footer-pan", &coordinates(pan)));
 
         if let Some(o) = objects.get(self.s.values.selected_id)
             && let Some(transform) = o.as_transform()
         {
-            let position = &transform.position;
-            parts.push(format!(
-                "POSITION: X:{:.02}, Y:{:.02}, Z:{:.02}",
-                position.x, position.y, position.z
-            ));
+            let args = coordinates(transform.position);
+            parts.push(self.l10n.msg("map-footer-position", &args));
 
             let front = &transform.front;
-            parts.push(format!(
-                "FRONT: X:{:.02}, Y:{:.02}, Z:{:.02}",
-                front.x, front.y, front.z
-            ));
+            parts.push(self.l10n.msg("map-footer-front", &coordinates(*front)));
         }
 
         let mut html_parts = Vec::new();
@@ -1283,6 +1295,7 @@ impl Map {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
+            Msg::L10n(phrases) => Ok(self.l10n.update(phrases)),
             Msg::Error(error) => {
                 self.log.error("map", error);
                 Ok(false)
@@ -2698,4 +2711,13 @@ impl MouseEventExt for MouseEvent {
     fn client(&self) -> Canvas2 {
         Canvas2::new(self.client_x() as f64, self.client_y() as f64)
     }
+}
+
+/// The `x`, `y` and `z` arguments of a footer readout, with two decimals.
+fn coordinates(v: Vec3) -> phrasebook::Args<'static> {
+    let mut args = phrasebook::Args::new();
+    args.set("x", format!("{:.02}", v.x));
+    args.set("y", format!("{:.02}", v.y));
+    args.set("z", format!("{:.02}", v.z));
+    args
 }

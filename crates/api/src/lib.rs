@@ -67,31 +67,6 @@ impl Type {
     pub fn is_global(&self) -> bool {
         self.raw & 0x80000000 != 0
     }
-
-    /// Get the title of the type suitable for use in a UI.
-    #[inline]
-    pub fn title(&self) -> &'static str {
-        match *self {
-            Self::TOKEN => "Token",
-            Self::STATIC => "Static",
-            Self::GROUP => "Group",
-            Self::ROOM => "Room",
-            _ => "Object",
-        }
-    }
-
-    /// Get lowercase display for type suitable for use in a human readable
-    /// message.
-    #[inline]
-    pub fn display(&self) -> &'static str {
-        match *self {
-            Self::TOKEN => "token",
-            Self::STATIC => "static",
-            Self::GROUP => "group",
-            Self::ROOM => "room",
-            _ => "object",
-        }
-    }
 }
 
 crate::macros::keys! {
@@ -192,78 +167,6 @@ impl Key {
             Self::ROOM_BACKGROUND => "room-background",
             Self::SHOW_GRID => "show-grid",
             _ => "unknown",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match *self {
-            Self::IMAGE_ID => "Image Id",
-            Self::COLOR => "Color",
-            Self::TRANSFORM => "Transform",
-            Self::LOOK_AT => "Look At",
-            Self::NAME => "Name",
-            Self::MUMBLE_ENABLED => "Mumble Enabled",
-            Self::REMOTE_SERVER => "Remote Server",
-            Self::REMOTE_ENABLED => "Remote Enabled",
-            Self::REMOTE_TLS => "Remote TLS",
-            Self::ZOOM => "Zoom",
-            Self::PAN => "Pan",
-            Self::ROOM_EXTENT => "Room Extent",
-            Self::MUMBLE_OBJECT => "Mumble Object",
-            Self::HIDDEN => "Hidden",
-            Self::LOCAL_HIDDEN => "Local Hidden",
-            Self::MUMBLE_FOLLOW => "Mumble Follow",
-            Self::RADIUS => "Radius",
-            Self::SPEED => "Speed",
-            Self::WIDTH => "Static Width",
-            Self::HEIGHT => "Static Height",
-            Self::RATIO => "Ratio",
-            Self::LOCKED => "Locked",
-            Self::SORT => "Sort",
-            Self::GROUP => "Group",
-            Self::EXPANDED => "Expanded",
-            Self::PEER_NAME => "Peer Name",
-            Self::PEER_SECRET => "Peer Secret",
-            Self::ROOM => "Room",
-            Self::ROOM_BACKGROUND => "Room Background",
-            Self::SHOW_GRID => "Show Grid",
-            _ => "Unknown",
-        }
-    }
-
-    pub fn placeholder(&self) -> &'static str {
-        match *self {
-            Self::IMAGE_ID => "Enter Image Id",
-            Self::COLOR => "Enter Color",
-            Self::TRANSFORM => "Enter Transform",
-            Self::LOOK_AT => "Enter Look At",
-            Self::NAME => "Enter Name",
-            Self::MUMBLE_ENABLED => "Enter Mumble Enabled",
-            Self::REMOTE_SERVER => "Enter Remote Server",
-            Self::REMOTE_ENABLED => "Enter Remote Enabled",
-            Self::REMOTE_TLS => "Enter Remote TLS",
-            Self::ZOOM => "Enter Zoom",
-            Self::PAN => "Enter Pan",
-            Self::ROOM_EXTENT => "Enter Room Extent",
-            Self::MUMBLE_OBJECT => "Enter Mumble Object",
-            Self::HIDDEN => "Enter Hidden",
-            Self::LOCAL_HIDDEN => "Enter Local Hidden",
-            Self::MUMBLE_FOLLOW => "Enter Mumble Follow",
-            Self::RADIUS => "Enter Radius",
-            Self::SPEED => "Enter Speed",
-            Self::WIDTH => "Enter Static Width",
-            Self::HEIGHT => "Enter Static Height",
-            Self::RATIO => "Enter Ratio",
-            Self::LOCKED => "Enter Locked",
-            Self::SORT => "Enter Sort",
-            Self::GROUP => "Enter Group",
-            Self::EXPANDED => "Enter Expanded",
-            Self::PEER_NAME => "Enter Peer Name",
-            Self::PEER_SECRET => "Enter Peer Secret",
-            Self::ROOM => "Set Room",
-            Self::ROOM_BACKGROUND => "Set Room Background",
-            Self::SHOW_GRID => "Toggle Show Grid",
-            _ => "Set Unknown",
         }
     }
 }
