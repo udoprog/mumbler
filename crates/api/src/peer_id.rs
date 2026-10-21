@@ -18,7 +18,7 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
 
 /// The session identifier of a peer.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 #[repr(transparent)]
 pub struct PeerId {
     repr: u32,

@@ -1,7 +1,7 @@
 use api::{Key, UpdateBody, Value};
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
@@ -11,10 +11,10 @@ use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{SetupChannel, into_target};
+use super::into_target;
 
 pub(crate) enum Msg {
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     NameChanged(Event),
     PeerSecretChanged(Event),
     ServerChanged(Event),
@@ -37,7 +37,6 @@ pub(crate) struct Props;
 pub(crate) struct Settings {
     log: log::Log,
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     name: State<String>,
     _name_request: ws::Request,
     peer_secret: State<String>,
@@ -60,15 +59,14 @@ impl Component for Settings {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             name: State::new(String::new()),
             _name_request: ws::Request::new(),
             peer_secret: State::new(String::new()),
@@ -148,11 +146,11 @@ impl Component for Settings {
 impl Settings {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(true),
                 }
 
                 self._config_update = self
@@ -178,7 +176,7 @@ impl Settings {
                     return Ok(false);
                 }
 
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 
@@ -196,7 +194,7 @@ impl Settings {
                     return Ok(false);
                 }
 
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 
@@ -215,7 +213,7 @@ impl Settings {
                     return Ok(false);
                 }
 
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 
@@ -232,7 +230,7 @@ impl Settings {
                 let remote_server_tls = input.checked();
                 *self.remote_server_tls = remote_server_tls;
 
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 

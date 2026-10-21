@@ -1,5 +1,5 @@
 use core::num::NonZeroU32;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use api::{
     AtomicIds, Canvas2, Color, Extent, InitializeMapResponse, Key, PeerId, RemoteId, RemoteObject,
@@ -7,9 +7,9 @@ use api::{
 };
 use gloo::events::EventListener;
 use gloo::timers::callback::Interval;
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use wasm_bindgen::JsCast;
 use web_sys::{
     CanvasRenderingContext2d, DragEvent, HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent,
@@ -32,7 +32,7 @@ use super::render::{self, ViewTransform};
 use super::{
     AnimationFrame, COMMON_ROOM, ChannelExt, ContextMenuDropdown, DropImage, DropImageResult,
     DynamicCanvas, Help, Icon, Modal, ObjectList, ObjectSettings, RenderObject, RenderObjectKind,
-    Rooms, SetupChannel, UNKNOWN_ROOM,
+    Rooms, UNKNOWN_ROOM,
 };
 
 const INTERPOLATION_THRESHOLD: f32 = 0.01;
@@ -323,7 +323,7 @@ struct MapState {
     channel: ws::Channel,
     values: MapValues,
     updates: HashSet<(RemoteId, Key)>,
-    requests: HashMap<(RemoteId, Key), ws::Request>,
+    requests: ws::KeyedRequests<(RemoteId, Key)>,
     context_menu: Option<ContextMenu>,
     modal: Option<MapModal>,
     redraw: bool,
@@ -343,7 +343,7 @@ impl MapState {
             channel: ws::Channel::default(),
             values: MapValues::new(),
             updates: HashSet::default(),
-            requests: HashMap::new(),
+            requests: ws::KeyedRequests::new(),
             context_menu: Option::default(),
             modal: Option::default(),
             redraw: false,
@@ -602,7 +602,6 @@ pub(crate) struct Map {
     log: log::Log,
     s: MapState,
     ws: ws::Handle,
-    _setup_channel: SetupChannel,
     _create_group: ws::Request,
     _create_object: ws::Request,
     _create_static: ws::Request,
@@ -640,7 +639,7 @@ pub(crate) struct Map {
 #[derive(Debug)]
 pub(crate) enum Msg {
     Error(Error),
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     AnimationFrame(Result<f64, Error>),
     SimulationFrame,
     CloseModal,
@@ -716,10 +715,7 @@ impl Component for Map {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         let link = ctx.link().clone();
         let _keydown_listener = EventListener::new(&document, "keydown", move |e| {
@@ -735,12 +731,17 @@ impl Component for Map {
             }
         });
 
+        let mut s = MapState::new(window);
+        s.channel = ws
+            .channel()
+            .on_change(ctx.link().callback(Msg::Channel))
+            .open();
+
         Self {
             ids: AtomicIds::new(0),
             log,
-            s: MapState::new(window),
-            ws: ws.clone(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            s,
+            ws,
             _create_group: ws::Request::new(),
             _create_object: ws::Request::new(),
             _create_static: ws::Request::new(),
@@ -1326,12 +1327,14 @@ impl Map {
             Msg::ToggleHidden(id) => Ok(self.toggle_hidden(id)),
             Msg::ToggleLocalHidden(id) => Ok(self.toggle_local_hidden(id)),
             Msg::ToggleExpanded(id) => Ok(self.toggle_expanded(id)),
-            Msg::Channel(channel) => {
-                self.s.channel = channel?;
-
-                if self.s.channel.id() == ChannelId::NONE {
-                    self.dropped_images.clear();
-                    return Ok(false);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => {
+                        self.dropped_images.clear();
+                        return Ok(false);
+                    }
                 }
 
                 self._config_update = self
@@ -1363,13 +1366,15 @@ impl Map {
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
+                let echo = body.is_from(self.s.channel.id());
                 let body = body.decode()?;
-                self.config_update(body)
+                self.config_update(echo, body)
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;
+                let echo = body.is_from(self.s.channel.id());
                 let body = body.decode()?;
-                Ok(self.remote_update(ctx, body))
+                Ok(self.remote_update(ctx, echo, body))
             }
             Msg::ObjectUpdate(body) => {
                 let body = body?;
@@ -1602,16 +1607,14 @@ impl Map {
         true
     }
 
-    fn config_update(&mut self, body: UpdateBody) -> Result<bool, Error> {
+    /// Apply a configuration broadcast, where `echo` is set if this page's
+    /// own channel caused it.
+    fn config_update(&mut self, echo: bool, body: UpdateBody) -> Result<bool, Error> {
         tracing::debug!(?body, "Config update");
 
         match body {
-            UpdateBody::Config {
-                channel,
-                key,
-                value,
-            } => {
-                if self.s.channel.id() == channel {
+            UpdateBody::Config { key, value } => {
+                if echo {
                     return Ok(false);
                 }
 
@@ -1639,7 +1642,9 @@ impl Map {
         }
     }
 
-    fn remote_update(&mut self, ctx: &Context<Self>, body: RemoteUpdateBody) -> bool {
+    /// Apply a remote update broadcast, where `echo` is set if this page's own
+    /// channel caused it.
+    fn remote_update(&mut self, ctx: &Context<Self>, echo: bool, body: RemoteUpdateBody) -> bool {
         tracing::debug!(?body, "Remote update");
 
         match body {
@@ -1719,23 +1724,18 @@ impl Map {
                 true
             }
             RemoteUpdateBody::ObjectCreated { id, object, .. } => self.create_object(id, object),
-            RemoteUpdateBody::ObjectRemoved { channel, id } => {
-                if self.s.channel.id() == channel {
+            RemoteUpdateBody::ObjectRemoved { id } => {
+                if echo {
                     return false;
                 }
 
                 self.remove_object(id)
             }
-            RemoteUpdateBody::ObjectUpdated {
-                channel,
-                id,
-                key,
-                value,
-            } => {
+            RemoteUpdateBody::ObjectUpdated { id, key, value } => {
                 let mut objects = self.objects.borrow_mut();
                 let mut order = self.order.borrow_mut();
 
-                if self.s.channel.id() == channel {
+                if echo {
                     return false;
                 }
 
@@ -1834,7 +1834,18 @@ impl Map {
             self.s.select_object(RemoteId::ZERO, &objects, &self.peers);
         }
 
-        self.s.requests.retain(|(object_id, _), _| *object_id != id);
+        let pending = self
+            .s
+            .requests
+            .keys()
+            .filter(|(object_id, _)| *object_id == id)
+            .copied()
+            .collect::<Vec<_>>();
+
+        for key in pending {
+            self.s.requests.remove(&key);
+        }
+
         self.s.modal = None;
         self.s.update_cache = true;
         self.s.redraw = true;
@@ -2208,7 +2219,7 @@ impl Map {
     }
 
     fn send_updates(&mut self, ctx: &Context<Self>) {
-        if self.s.channel.id() == ChannelId::NONE {
+        if !self.s.channel.is_open() {
             self.s.updates.clear();
             return;
         }

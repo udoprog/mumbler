@@ -12,7 +12,6 @@ use ::api::{ContentType, Id, Key, PeerId, Properties, PublicKey, RemoteObject, R
 static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Header {
     /// The type of the request.
     pub request: u16,
@@ -22,7 +21,7 @@ pub struct Header {
 
 /// A signature.
 #[derive(Clone, Copy, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 pub struct Signature {
     raw: [u8; 64],
 }
@@ -57,14 +56,12 @@ impl fmt::Debug for Signature {
 /// Sent by the server in response to [`HelloBodyRef`]; the client must sign the
 /// nonce with its private key and respond with a [`ConnectBodyRef`].
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ChallengeBody {
     /// Random server-generated nonce (32 bytes).
     pub nonce: Box<[u8]>,
 }
 
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ChallengeBodyRef<'a> {
     /// Random server-generated nonce (32 bytes).
     pub nonce: &'a [u8],
@@ -73,7 +70,6 @@ pub struct ChallengeBodyRef<'a> {
 /// Sent by the client to announce its presence. Once received, the server will
 /// send a challenge to authenticate the client.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct HelloBody {
     /// The protocol version of the client.
     pub version: u32,
@@ -81,7 +77,6 @@ pub struct HelloBody {
 
 /// Sent by the client in response to a [`ChallengeBody`] to authenticate.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ConnectBody {
     /// The requested public key.
     pub public_key: PublicKey,
@@ -98,7 +93,6 @@ pub struct ConnectBody {
 
 /// Sent by the client in response to a [`ChallengeBody`] to authenticate.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ConnectBodyRef<'a> {
     /// The requested public key.
     pub public_key: PublicKey,
@@ -114,21 +108,18 @@ pub struct ConnectBodyRef<'a> {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ServerHello {
     /// The protocol version of the server.
     pub version: u32,
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PingBody {
     /// The payload of the ping that will be sent back in the pong.
     pub payload: u64,
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PongBody {
     /// The payload of the pong, which is the same as the ping.
     pub payload: u64,
@@ -136,7 +127,6 @@ pub struct PongBody {
 
 /// A remote image associated with a peer.
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoteImage {
     /// The id of the image.
     pub id: Id,
@@ -153,7 +143,6 @@ pub struct RemoteImage {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerConnectedBody {
     /// The public key of the peer that connected.
     pub public_key: PublicKey,
@@ -164,7 +153,6 @@ pub struct PeerConnectedBody {
 }
 
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct PeerConnectedBodyRef<'a> {
     /// The public key of the peer that connected.
     pub public_key: PublicKey,
@@ -175,7 +163,6 @@ pub struct PeerConnectedBodyRef<'a> {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerJoinBody {
     /// The peer that joined.
     pub peer_id: PeerId,
@@ -184,7 +171,6 @@ pub struct PeerJoinBody {
 }
 
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct PeerJoinBodyRef<'a> {
     /// The peer that joined.
     pub peer_id: PeerId,
@@ -194,7 +180,6 @@ pub struct PeerJoinBodyRef<'a> {
 
 /// A request to update a peer.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerUpdateBody {
     /// The key to update.
     pub key: Key,
@@ -204,7 +189,6 @@ pub struct PeerUpdateBody {
 
 /// A request to update a peer.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct PeerUpdateBodyRef<'a> {
     /// The key to update.
     pub key: Key,
@@ -214,7 +198,6 @@ pub struct PeerUpdateBodyRef<'a> {
 
 /// Information that a peer has updated.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerUpdatedBody {
     /// The peer that updated.
     pub peer_id: PeerId,
@@ -226,7 +209,6 @@ pub struct PeerUpdatedBody {
 
 /// Information that a peer has updated.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct PeerUpdatedBodyRef<'a> {
     /// The peer that updated.
     pub peer_id: PeerId,
@@ -237,14 +219,12 @@ pub struct PeerUpdatedBodyRef<'a> {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerDisconnectBody {
     /// The peer that disconnected.
     pub id: PeerId,
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct PeerLeaveBody {
     /// The peer that left the room.
     pub id: PeerId,
@@ -252,7 +232,6 @@ pub struct PeerLeaveBody {
 
 /// A request to update.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdateBody {
     /// The id of the object being updated.
     pub object_id: Id,
@@ -266,7 +245,6 @@ pub struct ObjectUpdateBody {
 ///
 /// Can only be used to encode.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdateBodyRef<'a> {
     /// The id of the object being updated.
     pub object_id: Id,
@@ -278,7 +256,6 @@ pub struct ObjectUpdateBodyRef<'a> {
 
 /// Information that a peer has updated.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdatedBody {
     /// The peer that updated.
     pub peer_id: PeerId,
@@ -294,7 +271,6 @@ pub struct ObjectUpdatedBody {
 ///
 /// Can only be used to encode.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdatedBodyRef<'a> {
     /// The peer that updated.
     pub peer_id: PeerId,
@@ -308,7 +284,6 @@ pub struct ObjectUpdatedBodyRef<'a> {
 
 /// A request to add an object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectCreateBody {
     /// The object being added.
     pub object: RemoteObject,
@@ -316,7 +291,6 @@ pub struct ObjectCreateBody {
 
 /// A request to add a new image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ImageCreateBody {
     /// The image being added.
     pub image: RemoteImage,
@@ -324,7 +298,6 @@ pub struct ImageCreateBody {
 
 /// Broadcast by the server when a peer adds an object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectCreatedBody {
     /// The peer that added the object.
     pub peer_id: PeerId,
@@ -334,7 +307,6 @@ pub struct ObjectCreatedBody {
 
 /// Broadcast by the server when a peer adds an object.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ObjectCreatedBodyRef<'a> {
     /// The peer that added the object.
     pub peer_id: PeerId,
@@ -344,7 +316,6 @@ pub struct ObjectCreatedBodyRef<'a> {
 
 /// Broadcast by the server when a peer adds an image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ImageCreatedBody {
     /// The peer that added the image.
     pub peer_id: PeerId,
@@ -354,7 +325,6 @@ pub struct ImageCreatedBody {
 
 /// Broadcast by the server when a peer adds an image.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ImageCreatedBodyRef<'a> {
     /// The peer that added the image.
     pub peer_id: PeerId,
@@ -364,7 +334,6 @@ pub struct ImageCreatedBodyRef<'a> {
 
 /// A request to remove an object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectRemoveBody {
     /// The id of the object being removed.
     pub object_id: Id,
@@ -372,7 +341,6 @@ pub struct ObjectRemoveBody {
 
 /// A request to remove an image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ImageRemoveBody {
     /// The id of the image being removed.
     pub image_id: Id,
@@ -380,7 +348,6 @@ pub struct ImageRemoveBody {
 
 /// Broadcast by the server when a peer removes an object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectRemovedBody {
     /// The peer that removed the object.
     pub peer_id: PeerId,
@@ -390,7 +357,6 @@ pub struct ObjectRemovedBody {
 
 /// Broadcast by the server when a peer removes an image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ImageRemovedBody {
     /// The peer that removed the image.
     pub peer_id: PeerId,

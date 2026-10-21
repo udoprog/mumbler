@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use api::{Color, Extent, ImageSizing, Key, RemoteId, RemoteUpdateBody, Role, Value};
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlInputElement};
 use yew::prelude::*;
@@ -16,7 +14,7 @@ use crate::error::Error;
 use crate::images::Images;
 use crate::log;
 
-use super::{ChannelExt, DynamicCanvas, ImageUpload, SetupChannel, Visibility, into_target};
+use super::{ChannelExt, DynamicCanvas, ImageUpload, Visibility, into_target};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ExtentAxis {
@@ -39,7 +37,7 @@ impl ExtentAxis {
 
 pub(crate) enum Msg {
     Error(Error),
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     GetObjectSettings(Result<Packet<api::GetObjectSettings>, ws::Error>),
     RemoteIdChanged(Key, RemoteId),
     ImageChanged(Key, RemoteId),
@@ -91,9 +89,8 @@ pub(crate) struct ObjectSettings {
     _update_show_grid: ws::Request,
     log: log::Log,
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     properties: api::Properties,
-    requests: HashMap<Key, ws::Request>,
+    requests: ws::KeyedRequests<Key>,
     images: Images,
     canvas: Option<HtmlCanvasElement>,
 }
@@ -108,15 +105,14 @@ impl Component for ObjectSettings {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             _get_object_settings: ws::Request::new(),
             _remote_update_listener: ws::Listener::new(),
             _select_background: ws::Request::new(),
@@ -124,7 +120,7 @@ impl Component for ObjectSettings {
             _update_name: ws::Request::new(),
             _update_show_grid: ws::Request::new(),
             properties: api::Properties::default(),
-            requests: HashMap::new(),
+            requests: ws::KeyedRequests::new(),
             images: Images::new(ctx.link().callback(Msg::ImageLoaded)),
             canvas: None,
         }
@@ -442,11 +438,11 @@ impl ObjectSettings {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Error(error) => Err(error),
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(true),
                 }
 
                 self._remote_update_listener = self

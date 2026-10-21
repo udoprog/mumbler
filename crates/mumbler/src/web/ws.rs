@@ -119,12 +119,14 @@ impl ws::Handler for Handler {
                         .await
                         .insert((request.id, key), value.clone());
 
-                    self.backend.broadcast(RemoteUpdateBody::ObjectUpdated {
-                        channel: incoming.channel(),
-                        id: RemoteId::local(request.id),
-                        key,
-                        value,
-                    });
+                    self.backend.broadcast_from(
+                        RemoteUpdateBody::ObjectUpdated {
+                            id: RemoteId::local(request.id),
+                            key,
+                            value,
+                        },
+                        incoming.channel(),
+                    );
                 }
 
                 self.inner.database_updates_notify.notify_one();
@@ -171,11 +173,13 @@ impl ws::Handler for Handler {
                     .create_object(request.ty, request.props)
                     .await?;
 
-                self.backend.broadcast(RemoteUpdateBody::ObjectCreated {
-                    channel: incoming.channel(),
-                    id: RemoteId::local(object.id),
-                    object: object.clone(),
-                });
+                self.backend.broadcast_from(
+                    RemoteUpdateBody::ObjectCreated {
+                        id: RemoteId::local(object.id),
+                        object: object.clone(),
+                    },
+                    incoming.channel(),
+                );
 
                 outgoing.write(api::CreateObjectResponse { object });
             }
@@ -188,10 +192,12 @@ impl ws::Handler for Handler {
 
                 self.backend.remove_object(request.id).await?;
 
-                self.backend.broadcast(RemoteUpdateBody::ObjectRemoved {
-                    channel: incoming.channel(),
-                    id: RemoteId::local(request.id),
-                });
+                self.backend.broadcast_from(
+                    RemoteUpdateBody::ObjectRemoved {
+                        id: RemoteId::local(request.id),
+                    },
+                    incoming.channel(),
+                );
 
                 outgoing.write(api::Empty);
             }
@@ -282,7 +288,13 @@ pub(super) async fn entry(
                 Handler::new(backend.clone(), database_updates_notify.clone()),
             );
 
-            let mut server = server.with_channel_allocator(backend.channels().clone());
+            let mut server = match server.connect().await {
+                Ok(server) => server,
+                Err(error) => {
+                    tracing::error!(%error, "failed to negotiate");
+                    return;
+                }
+            };
 
             let mut debounce_timer = pin!(Fuse::empty());
             let mut local_updates = HashMap::new();
@@ -324,7 +336,7 @@ pub(super) async fn entry(
                         (result.await, false)
                     }
                     event = events.recv() => {
-                        let event = match event {
+                        let (origin, event) = match event {
                             Ok(event) => event,
                             Err(error) => {
                                 tracing::error!(%error, "event");
@@ -332,18 +344,18 @@ pub(super) async fn entry(
                             }
                         };
 
-                        tracing::debug!(?event, "event");
+                        tracing::debug!(?origin, ?event, "event");
 
                         let result = match event {
-                            Broadcast::Update(body) => {
-                                server.broadcast(body).context("send config update")
-                            }
-                            Broadcast::RemoteUpdate(body) => {
-                                server.broadcast(body).context("send broadcast")
-                            }
-                            Broadcast::Notification(body) => {
-                                server.broadcast(body).context("send notification")
-                            }
+                            Broadcast::Update(body) => server
+                                .broadcast_from(body, origin)
+                                .context("send config update"),
+                            Broadcast::RemoteUpdate(body) => server
+                                .broadcast_from(body, origin)
+                                .context("send broadcast"),
+                            Broadcast::Notification(body) => server
+                                .broadcast_from(body, origin)
+                                .context("send notification"),
                         };
 
                         (result, false)

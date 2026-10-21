@@ -59,9 +59,6 @@ use self::dynamic_canvas::DynamicCanvas;
 mod context_menu_dropdown;
 use self::context_menu_dropdown::ContextMenuDropdown;
 
-mod setup_channel;
-use self::setup_channel::SetupChannel;
-
 mod temporary_url;
 use self::temporary_url::TemporaryUrl;
 
@@ -71,7 +68,6 @@ use self::modal::Modal;
 mod icon;
 use self::icon::Icon;
 
-use musli_web::ChannelId;
 use musli_web::web03::prelude::*;
 use yew::prelude::*;
 
@@ -107,7 +103,7 @@ impl ChannelExt for ws::Channel {
     where
         T: Component<Message: From<Result<ws::Packet<api::ObjectUpdate>, ws::Error>>>,
     {
-        if self.id() == ChannelId::NONE {
+        if !self.is_open() {
             return ws::Request::default();
         }
 
@@ -145,7 +141,7 @@ impl ChannelExt for ws::Channel {
     where
         T: Component<Message: From<Result<ws::Packet<api::Updates>, ws::Error>>>,
     {
-        if self.id() == ChannelId::NONE {
+        if !self.is_open() {
             return ws::Request::default();
         }
 

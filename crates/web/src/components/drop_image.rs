@@ -11,7 +11,7 @@ use yew::prelude::*;
 
 use crate::error::Error;
 
-use super::{SetupChannel, TemporaryUrl};
+use super::TemporaryUrl;
 
 #[derive(Debug)]
 pub(crate) enum DropImageResult {
@@ -24,7 +24,6 @@ pub(crate) enum DropImageResult {
 struct Inner {
     inner: Weak<RefCell<Inner>>,
     ty: Type,
-    _setup_channel: SetupChannel,
     _create_object: ws::Request,
     _upload_image: ws::Request,
     image: Option<HtmlImageElement>,
@@ -36,7 +35,7 @@ struct Inner {
     file_reader: Option<FileReader>,
     pixel_size: Option<(u32, u32)>,
     position: Vec3,
-    channel: Option<ws::Channel>,
+    channel: ws::Channel,
     onresult: Callback<DropImageResult>,
 }
 
@@ -60,30 +59,32 @@ impl DropImage {
 
         Ok(Self {
             _inner: Rc::new_cyclic(|inner: &Weak<RefCell<Inner>>| {
-                let setup_channel = SetupChannel::new(
-                    ws,
-                    Callback::from({
+                let channel = ws
+                    .channel()
+                    .on_change({
                         let inner = inner.clone();
 
-                        move |result| {
+                        move |event: ws::ChannelEvent| {
                             let Some(inner) = inner.upgrade() else {
                                 return;
                             };
 
                             let mut inner = inner.borrow_mut();
 
-                            match result {
-                                Ok(channel) => {
-                                    inner.channel = Some(channel);
+                            match event {
+                                ws::ChannelEvent::Opened(..) => {
                                     inner.try_upload_image();
                                 }
-                                Err(error) => {
-                                    inner.onresult.emit(DropImageResult::Err(error));
+                                ws::ChannelEvent::Failed(error) => {
+                                    inner
+                                        .onresult
+                                        .emit(DropImageResult::Err(Error::from(error)));
                                 }
+                                _ => {}
                             }
                         }
-                    }),
-                );
+                    })
+                    .open();
 
                 let file_reader = read_as_bytes(&gloo_file, {
                     let inner = inner.clone();
@@ -174,7 +175,6 @@ impl DropImage {
                 RefCell::new(Inner {
                     inner: inner.clone(),
                     ty,
-                    _setup_channel: setup_channel,
                     _create_object: ws::Request::new(),
                     _upload_image: ws::Request::new(),
                     image: Some(image),
@@ -186,7 +186,7 @@ impl DropImage {
                     file_reader: Some(file_reader),
                     pixel_size: None,
                     position,
-                    channel: None,
+                    channel,
                     onresult,
                 })
             }),
@@ -196,10 +196,6 @@ impl DropImage {
 
 impl Inner {
     fn create_object(&mut self, id: RemoteId) {
-        let Some(channel) = &self.channel else {
-            return;
-        };
-
         let Some((width, height)) = self.pixel_size.map(world_size) else {
             return;
         };
@@ -257,17 +253,13 @@ impl Inner {
             },
         );
 
-        self._create_object = channel.request().body(body).on_packet(callback).send();
+        self._create_object = self.channel.request().body(body).on_packet(callback).send();
     }
 
     fn try_upload_image(&mut self) {
         if !self.is_ready_for_upload() {
             return;
         }
-
-        let Some(channel) = &self.channel else {
-            return;
-        };
 
         let Some((width, height)) = self.pixel_size else {
             return;
@@ -326,12 +318,12 @@ impl Inner {
             data: &data,
         };
 
-        self._upload_image = channel.request().body(body).on_packet(callback).send();
+        self._upload_image = self.channel.request().body(body).on_packet(callback).send();
     }
 
     #[inline]
     fn is_ready_for_upload(&self) -> bool {
-        self.channel.is_some() && self.pixel_size.is_some() && self.bytes.is_some()
+        self.channel.is_open() && self.pixel_size.is_some() && self.bytes.is_some()
     }
 }
 

@@ -4,7 +4,6 @@ use core::ops::{Add, AddAssign, Div, Mul, Sub};
 use musli_core::{Decode, Encode};
 
 #[derive(Clone, Copy, Default, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 #[repr(C)]
 pub struct Vec3 {
     /// The x coordinate in meters from the origin (left / right).

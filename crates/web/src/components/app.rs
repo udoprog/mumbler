@@ -1,4 +1,5 @@
 use musli_web::web03::prelude::*;
+use musli_web::yew023::{HandleProvider, use_open};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -86,11 +87,11 @@ impl Component for App {
     fn view(&self, _: &Context<Self>) -> Html {
         html! {
             <ContextProvider<log::Log> context={self.log.clone()}>
-                <ContextProvider<ws::Handle> context={self.ws.handle()}>
+                <HandleProvider context={self.ws.handle().clone()}>
                     <BrowserRouter>
                         <Switch<Route> render={switch} />
                     </BrowserRouter>
-                </ContextProvider<ws::Handle>>
+                </HandleProvider>
             </ContextProvider<log::Log>>
         }
     }
@@ -124,39 +125,15 @@ fn switch(route: Route) -> Html {
 
 #[component(ConnectionStatus)]
 fn connection_status() -> Html {
-    let ws = use_context::<ws::Handle>().expect("WebSocket context not found");
-
-    let state = use_state(|| ws::State::Closed);
-
-    {
-        let state = state.clone();
-
-        use_memo((), move |_| {
-            let (s, listener) = ws.on_state_change({
-                let state = state.clone();
-
-                Callback::from(move |new_state| {
-                    state.set(new_state);
-                })
-            });
-
-            state.set(s);
-            listener
-        });
-    }
-
     let name;
     let title;
 
-    match *state {
-        ws::State::Open => {
-            name = "signal";
-            title = "Connected to application";
-        }
-        _ => {
-            name = "signal-slash";
-            title = "Not connected, will reconnect automatically";
-        }
+    if use_open().is_some() {
+        name = "signal";
+        title = "Connected to application";
+    } else {
+        name = "signal-slash";
+        title = "Not connected, will reconnect automatically";
     }
 
     html! {

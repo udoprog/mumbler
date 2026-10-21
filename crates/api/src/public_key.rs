@@ -13,7 +13,7 @@ static ENGINE: base64::engine::general_purpose::GeneralPurpose =
 
 /// The identifier and public key for a peer.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 #[repr(transparent)]
 pub struct PublicKey {
     repr: [u8; 32],

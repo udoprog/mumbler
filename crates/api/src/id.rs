@@ -18,7 +18,7 @@ static ENGINE: GeneralPurpose = URL_SAFE_NO_PAD;
 
 /// A base64-encoded u64, used for identifiers in the API.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 #[repr(transparent)]
 pub struct Id {
     repr: u32,

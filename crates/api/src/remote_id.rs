@@ -11,7 +11,6 @@ use crate::{Id, PeerId};
 
 /// Globally identifies a room.
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoteId {
     /// The peer that defined the room.
     pub peer_id: PeerId,

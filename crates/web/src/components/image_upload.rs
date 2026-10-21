@@ -3,6 +3,7 @@ use api::{RemoteId, Role};
 use gloo::file::callbacks::{FileReader, read_as_bytes};
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
@@ -10,11 +11,11 @@ use yew::prelude::*;
 use crate::error::Error;
 use crate::log;
 
-use super::{Crop, Extent, Icon, ImageGallery, Modal, SetupChannel, TemporaryUrl, into_target};
+use super::{Crop, Extent, Icon, ImageGallery, Modal, TemporaryUrl, into_target};
 
 pub(crate) enum Msg {
     Error(Error),
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     FileSelected(Event),
     FileRead(String, Result<Vec<u8>, gloo::file::FileReadError>),
     CropDrag(Option<Extent>),
@@ -47,7 +48,6 @@ pub(crate) struct Props {
 pub(crate) struct ImageUpload {
     log: log::Log,
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     _remove_image: ws::Request,
     _file_reader: Option<FileReader>,
     _upload_image: ws::Request,
@@ -68,15 +68,14 @@ impl Component for ImageUpload {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             _remove_image: ws::Request::new(),
             _file_reader: None,
             _upload_image: ws::Request::new(),
@@ -168,10 +167,10 @@ impl ImageUpload {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Error(error) => Err(error),
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-                Ok(false)
-            }
+            Msg::Channel(event) => match event {
+                ws::ChannelEvent::Failed(error) => Err(error.into()),
+                _ => Ok(false),
+            },
             Msg::FileSelected(e) => {
                 let input = into_target!(e, HtmlInputElement);
 

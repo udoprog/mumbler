@@ -1,21 +1,21 @@
 use api::{Key, UpdateBody, Value};
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{ChannelExt as _, Icon, SetupChannel};
+use super::{ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
     Restart,
     RestartResponse(Result<Packet<api::RemoteRestart>, ws::Error>),
     Toggle,
     UpdatesResult(Result<Packet<api::Updates>, ws::Error>),
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     GetConfig(Result<Packet<api::GetConfig>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
 }
@@ -33,7 +33,6 @@ pub(crate) struct Props;
 pub(crate) struct RemoteStatus {
     log: log::Log,
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     enabled: State<bool>,
     _get_status: ws::Request,
     _restart_request: ws::Request,
@@ -51,15 +50,14 @@ impl Component for RemoteStatus {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             enabled: State::new(true),
             _get_status: ws::Request::new(),
             _restart_request: ws::Request::new(),
@@ -174,11 +172,11 @@ impl RemoteStatus {
                     _ => Ok(false),
                 }
             }
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(true),
                 }
 
                 self._get_status = self

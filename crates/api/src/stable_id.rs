@@ -11,7 +11,6 @@ use crate::{Id, PublicKey};
 
 /// Globally identifies a room.
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct StableId {
     /// The public key that owns the stable identifier.
     pub public_key: PublicKey,

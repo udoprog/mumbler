@@ -33,7 +33,7 @@ use core::fmt;
 use core::ops::{Add, Sub};
 
 use musli_core::{Decode, Encode};
-use musli_web::api::{self, ChannelId};
+use musli_web::api;
 
 crate::macros::ids! {
     /// The role of an image.
@@ -275,12 +275,10 @@ crate::macros::ids! {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Empty;
 
 /// Represents an RGBA color with 8-bit components.
 #[derive(Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -387,27 +385,23 @@ impl fmt::Debug for Color {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdateBody {
     pub id: Id,
     pub values: Vec<(Key, Value)>,
 }
 
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct ObjectUpdateBodyRef<'a> {
     pub id: Id,
     pub values: &'a [(Key, Value)],
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UpdateLookAtRequest {
     pub look_at: Option<Vec3>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum ImageSizing {
     /// The crop region determines the sizing.
     Crop,
@@ -424,7 +418,6 @@ impl ImageSizing {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UploadImageRequest {
     /// MIME type of the uploaded image (e.g. "image/png").
     pub content_type: String,
@@ -441,7 +434,6 @@ pub struct UploadImageRequest {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UploadImageRequestRef<'a> {
     /// MIME type of the uploaded image (e.g. "image/png").
     pub content_type: &'a str,
@@ -459,7 +451,6 @@ pub struct UploadImageRequestRef<'a> {
 
 /// A square crop region expressed in the source image's natural pixel space.
 #[derive(Debug, Clone, Copy, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct CropRegion {
     pub x1: u32,
     pub y1: u32,
@@ -477,14 +468,12 @@ impl CropRegion {
 
 /// Response returned after successfully uploading an image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UploadImageResponse {
     /// The uploaded image.
     pub image: Image,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Span {
     /// Start of the span.
     pub start: f32,
@@ -554,7 +543,6 @@ impl Span {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Extent {
     /// Extent along the x axis.
     pub x: Span,
@@ -586,7 +574,6 @@ impl Extent {
 
 /// Represents a 2 dimensional pixel position in canvas space.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Canvas2 {
     pub x: f64,
     pub y: f64,
@@ -624,7 +611,6 @@ impl Sub for Canvas2 {
 
 /// Represents a position and orientation in 3D space.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Transform {
     /// The position in world coordinates.
     pub position: Vec3,
@@ -660,7 +646,6 @@ impl Transform {
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemotePeer {
     pub id: PeerId,
     pub public_key: PublicKey,
@@ -669,7 +654,6 @@ pub struct RemotePeer {
 
 // The definition of a remote object.
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoteObject {
     /// The type of the object.
     pub ty: Type,
@@ -680,12 +664,10 @@ pub struct RemoteObject {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeMapRequest;
 
 /// Response when the map view is initialized.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeMapResponse {
     pub public_key: PublicKey,
     pub props: Properties,
@@ -696,12 +678,10 @@ pub struct InitializeMapResponse {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeRoomsRequest;
 
 /// Response when the rooms view is initialized.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeRoomsResponse {
     /// The public key associated with the local peer.
     pub public_key: PublicKey,
@@ -716,11 +696,9 @@ pub struct InitializeRoomsResponse {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct GetConfigRequest;
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct Image {
     /// The unique identifier of the image.
     pub id: RemoteId,
@@ -735,7 +713,6 @@ pub struct Image {
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct ImageWithData {
     /// The unique identifier of the image.
     pub id: RemoteId,
@@ -753,14 +730,12 @@ pub struct ImageWithData {
 
 /// Request to fetch settings for a single object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct GetObjectSettingsRequest {
     pub id: Id,
 }
 
 /// Response containing settings for a single object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct GetObjectSettingsResponse {
     /// The object, if it exists.
     pub object: RemoteObject,
@@ -770,12 +745,10 @@ pub struct GetObjectSettingsResponse {
 
 /// Request to fetch images..
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeImageUploadRequest;
 
 /// Response when fetching images.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct InitializeImageUploadResponse {
     /// The images currently stored in the database.
     pub images: Vec<Image>,
@@ -783,7 +756,6 @@ pub struct InitializeImageUploadResponse {
 
 /// Request to create a new local object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct CreateObjectRequest {
     /// The type of object to create.
     pub ty: Type,
@@ -792,7 +764,6 @@ pub struct CreateObjectRequest {
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct CreateObjectResponse {
     /// The remote object that was just created.
     pub object: RemoteObject,
@@ -800,35 +771,30 @@ pub struct CreateObjectResponse {
 
 /// Request to delete a local object.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoveObjectRequest {
     pub id: Id,
 }
 
 /// Request to delete a stored image.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoveImageRequest {
     pub id: Id,
 }
 
 /// Request to update config.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct UpdatesRequest {
     pub values: Vec<(Key, Value)>,
 }
 
 /// Request to update config.
 #[derive(Debug, Encode)]
-#[musli(crate = musli_core)]
 pub struct UpdatesRequestRef<'a> {
     pub values: &'a [(Key, Value)],
 }
 
 /// Information about a single room on the remote server.
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RoomInfo {
     pub room: RemoteId,
     pub name: String,
@@ -836,53 +802,41 @@ pub struct RoomInfo {
 
 /// Request to restart the mumble link connection.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct MumbleRestartRequest;
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct MumbleToggleResponse {
     pub enabled: bool,
 }
 
 /// Request to get the mumble status.
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct GetMumbleStatusRequest;
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct GetMumbleStatusResponse {
     pub enabled: bool,
 }
 
 #[derive(Debug, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub struct RemoteRestartRequest;
 
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum NotificationBody {
     Info { component: String, message: String },
     Error { component: String, message: String },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum UpdateBody {
     /// A configuration change has occured.
-    Config {
-        channel: ChannelId,
-        key: Key,
-        value: Value,
-    },
+    Config { key: Key, value: Value },
     /// The local peer id has been updated, likely because of a configuration
     /// change.
     PublicKey { public_key: PublicKey },
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum RemoteUpdateBody {
     /// Indicates that the remote connection has been lost and all local state
     /// should be cleared.
@@ -911,19 +865,15 @@ pub enum RemoteUpdateBody {
         peer_id: PeerId,
     },
     ObjectUpdated {
-        /// The channel from which this update originated.
-        channel: ChannelId,
         id: RemoteId,
         key: Key,
         value: Value,
     },
     ObjectCreated {
-        channel: ChannelId,
         id: RemoteId,
         object: RemoteObject,
     },
     ObjectRemoved {
-        channel: ChannelId,
         id: RemoteId,
     },
     ImageCreated {

@@ -2,19 +2,19 @@ use core::cmp::Ordering;
 
 use api::{Key, PeerId, RemoteId, StableId, Type, UpdateBody, Value};
 use api::{RemoteObject, RemoteUpdateBody};
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
 use crate::peers::Peers;
 
-use super::{COMMON_ROOM, ChannelExt as _, Icon, SetupChannel};
+use super::{COMMON_ROOM, ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     Initialized(Result<Packet<api::InitializeRooms>, ws::Error>),
     RemoteUpdate(Result<Packet<api::RemoteUpdate>, ws::Error>),
     ConfigUpdate(Result<Packet<api::Update>, ws::Error>),
@@ -82,7 +82,6 @@ pub(crate) struct Rooms {
     _config_listener: ws::Listener,
     _connect_room_request: ws::Request,
     _create_room_request: ws::Request,
-    _setup_channel: SetupChannel,
     channel: ws::Channel,
 }
 
@@ -96,10 +95,7 @@ impl Component for Rooms {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             peers: Peers::default(),
@@ -111,8 +107,10 @@ impl Component for Rooms {
             _config_listener: ws::Listener::new(),
             _connect_room_request: ws::Request::new(),
             _create_room_request: ws::Request::new(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
-            channel: ws::Channel::default(),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
         }
     }
 
@@ -264,14 +262,15 @@ impl Rooms {
 
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
-            Msg::Channel(channel) => {
-                self.channel = channel?;
+            Msg::Channel(event) => {
                 self.peers = Peers::default();
                 self.active_room = StableId::ZERO;
                 self.rooms.clear();
 
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(true),
                 }
 
                 self._init_request = self
@@ -328,6 +327,7 @@ impl Rooms {
             }
             Msg::RemoteUpdate(body) => {
                 let body = body?;
+                let echo = body.is_from(self.channel.id());
                 let body = body.decode()?;
 
                 tracing::debug!(?body);
@@ -354,8 +354,8 @@ impl Rooms {
                             Ok(false)
                         }
                     }
-                    RemoteUpdateBody::ObjectRemoved { channel, id } => {
-                        if self.channel.id() == channel {
+                    RemoteUpdateBody::ObjectRemoved { id } => {
+                        if echo {
                             return Ok(false);
                         }
 
@@ -365,13 +365,8 @@ impl Rooms {
                         self.rooms.retain(|r| r.id != id);
                         Ok(self.rooms.len() != prev)
                     }
-                    RemoteUpdateBody::ObjectUpdated {
-                        channel,
-                        id,
-                        key,
-                        value,
-                    } => {
-                        if self.channel.id() == channel {
+                    RemoteUpdateBody::ObjectUpdated { id, key, value } => {
+                        if echo {
                             return Ok(false);
                         }
 
@@ -406,15 +401,12 @@ impl Rooms {
             }
             Msg::ConfigUpdate(body) => {
                 let body = body?;
+                let echo = body.is_from(self.channel.id());
                 let body = body.decode()?;
 
                 match body {
-                    UpdateBody::Config {
-                        channel,
-                        key,
-                        value,
-                    } => {
-                        if self.channel.id() == channel {
+                    UpdateBody::Config { key, value } => {
+                        if echo {
                             return Ok(false);
                         }
 
@@ -433,7 +425,7 @@ impl Rooms {
                 }
             }
             Msg::Disconnect => {
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(true);
                 }
 
@@ -445,7 +437,7 @@ impl Rooms {
                 Ok(true)
             }
             Msg::Connect(room) => {
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(true);
                 }
 

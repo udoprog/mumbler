@@ -9,7 +9,7 @@ macro_rules! __ids {
         }
     ) => {
         #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ::musli_core::Encode, ::musli_core::Decode)]
-        #[musli(crate = ::musli_core, transparent)]
+        #[musli(transparent)]
         $(#[doc = $doc])*
         $vis struct $ty {
             raw: u32,

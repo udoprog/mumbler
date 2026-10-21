@@ -1,17 +1,17 @@
 use api::{Key, UpdateBody, Value};
-use musli_web::api::ChannelId;
 use musli_web::web::Packet;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log;
 use crate::state::State;
 
-use super::{ChannelExt as _, Icon, SetupChannel};
+use super::{ChannelExt as _, Icon};
 
 pub(crate) enum Msg {
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     Restart,
     RestartResponse(Result<Packet<api::MumbleRestart>, ws::Error>),
     Toggle,
@@ -33,7 +33,6 @@ pub(crate) struct Props;
 pub(crate) struct MumbleStatus {
     log: log::Log,
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     _get_status: ws::Request,
     _restart_request: ws::Request,
     _toggle_request: ws::Request,
@@ -51,15 +50,14 @@ impl Component for MumbleStatus {
             .context::<log::Log>(Callback::noop())
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             _get_status: ws::Request::new(),
             _restart_request: ws::Request::new(),
             _toggle_request: ws::Request::new(),
@@ -120,7 +118,7 @@ impl MumbleStatus {
     fn try_update(&mut self, ctx: &Context<Self>, msg: Msg) -> Result<bool, Error> {
         match msg {
             Msg::Restart => {
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 
@@ -138,7 +136,7 @@ impl MumbleStatus {
                 Ok(false)
             }
             Msg::Toggle => {
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(false);
                 }
 
@@ -156,11 +154,11 @@ impl MumbleStatus {
                 _ = body.decode()?;
                 Ok(false)
             }
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(true);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(true),
                 }
 
                 self._config_update_listener = self

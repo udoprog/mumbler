@@ -189,7 +189,6 @@ async fn handle_peer(
                 object.props.insert(body.key, body.value.clone());
 
                 b.broadcast(RemoteUpdateBody::ObjectUpdated {
-                    channel: ChannelId::NONE,
                     id: RemoteId::new(body.peer_id, body.object_id),
                     key: body.key,
                     value: body.value,
@@ -208,7 +207,6 @@ async fn handle_peer(
                 peer.objects.insert(body.object.id, body.object.clone());
 
                 b.broadcast(RemoteUpdateBody::ObjectCreated {
-                    channel: ChannelId::NONE,
                     id: RemoteId::new(body.peer_id, body.object.id),
                     object: body.object,
                 });
@@ -260,7 +258,6 @@ async fn handle_peer(
 
                 if removed {
                     b.broadcast(RemoteUpdateBody::ObjectRemoved {
-                        channel: ChannelId::NONE,
                         id: RemoteId::new(body.peer_id, body.object_id),
                     });
                 }

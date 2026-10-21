@@ -8,7 +8,7 @@ use musli_core::{Decode, Encode};
 use crate::{Key, Value, ValueKind};
 
 #[derive(Default, Clone, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 pub struct Properties {
     /// Global values.
     values: HashMap<Key, Value>,

@@ -1,13 +1,11 @@
 use api::{Image, RemoteId, Role};
-use musli_web::api::ChannelId;
 use musli_web::web03::prelude::*;
+use musli_web::yew023::ContextExt as _;
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
 use crate::error::Error;
 use crate::log::Log;
-
-use super::SetupChannel;
 
 static FILTER_BUTTONS: &[(&str, Role)] = &[
     ("All", Role::NONE),
@@ -17,7 +15,7 @@ static FILTER_BUTTONS: &[(&str, Role)] = &[
 ];
 
 pub(crate) enum Msg {
-    Channel(Result<ws::Channel, Error>),
+    Channel(ws::ChannelEvent),
     Select(RemoteId),
     Role(Role),
     Log(Log),
@@ -41,7 +39,6 @@ pub(crate) struct Props {
 
 pub(crate) struct ImageGallery {
     channel: ws::Channel,
-    _setup_channel: SetupChannel,
     log: Log,
     _initialize: ws::Request,
     _listener: ws::Listener,
@@ -59,15 +56,14 @@ impl Component for ImageGallery {
             .context::<Log>(ctx.link().callback(Msg::Log))
             .expect("Log context not found");
 
-        let (ws, _) = ctx
-            .link()
-            .context::<ws::Handle>(Callback::noop())
-            .expect("WebSocket context not found");
+        let ws = ctx.handle();
 
         Self {
             log,
-            channel: ws::Channel::default(),
-            _setup_channel: SetupChannel::new(ws, ctx.link().callback(Msg::Channel)),
+            channel: ws
+                .channel()
+                .on_change(ctx.link().callback(Msg::Channel))
+                .open(),
             _initialize: ws::Request::new(),
             _listener: ws::Listener::new(),
             filter: ctx.props().default_role,
@@ -154,7 +150,7 @@ impl ImageGallery {
             Msg::Role(role) => {
                 self.filter = role;
 
-                if self.channel.id() == ChannelId::NONE {
+                if !self.channel.is_open() {
                     return Ok(true);
                 }
 
@@ -171,11 +167,11 @@ impl ImageGallery {
                 self.log = log;
                 Ok(true)
             }
-            Msg::Channel(channel) => {
-                self.channel = channel?;
-
-                if self.channel.id() == ChannelId::NONE {
-                    return Ok(false);
+            Msg::Channel(event) => {
+                match event {
+                    ws::ChannelEvent::Opened(..) => {}
+                    ws::ChannelEvent::Failed(error) => return Err(error.into()),
+                    _ => return Ok(false),
                 }
 
                 self._initialize = self

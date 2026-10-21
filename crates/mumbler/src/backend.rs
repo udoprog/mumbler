@@ -13,7 +13,6 @@ use api::{
     RemoteUpdateBody, Role, StableId, Transform, Type, UpdateBody, Value,
 };
 use musli_web::api::ChannelId;
-use musli_web::ws::Channels;
 use parking_lot::RwLock as BlockingRwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -161,7 +160,6 @@ pub(crate) struct MumblelinkState {
 }
 
 struct Inner {
-    channels: Channels,
     ids: AtomicIds,
     database: Database,
     #[allow(unused)]
@@ -173,7 +171,7 @@ struct Inner {
     mumblelink_notify: Notify,
     mumblelink_restart_notify: Notify,
     image_cache: RwLock<ImageCache>,
-    broadcast: Sender<Broadcast>,
+    broadcast: Sender<(ChannelId, Broadcast)>,
     mumble_object: AtomicId,
     hidden: BlockingRwLock<HashSet<Id>>,
 }
@@ -292,7 +290,6 @@ impl Backend {
 
         Ok(Self {
             inner: Arc::new(Inner {
-                channels: Channels::default(),
                 ids: AtomicIds::new(rand::random()),
                 database,
                 paths,
@@ -323,11 +320,6 @@ impl Backend {
         })
     }
 
-    #[inline]
-    pub(crate) fn channels(&self) -> &Channels {
-        &self.inner.channels
-    }
-
     /// Generate a new unique identifier.
     async fn new_id(&self) -> Result<Id> {
         loop {
@@ -347,7 +339,7 @@ impl Backend {
     }
 
     /// Set up an event subscriber.
-    pub(crate) fn subscribe(&self) -> Receiver<Broadcast> {
+    pub(crate) fn subscribe(&self) -> Receiver<(ChannelId, Broadcast)> {
         self.inner.broadcast.subscribe()
     }
 
@@ -392,7 +384,13 @@ impl Backend {
 
     /// Broadcast an event to all peers.
     pub(crate) fn broadcast(&self, ev: impl Into<Broadcast>) {
-        let result = self.inner.broadcast.send(ev.into());
+        self.broadcast_from(ev, ChannelId::NONE);
+    }
+
+    /// Broadcast an event to all peers, crediting the web channel whose
+    /// request caused it so that the page which sent it can skip its echo.
+    pub(crate) fn broadcast_from(&self, ev: impl Into<Broadcast>, origin: ChannelId) {
+        let result = self.inner.broadcast.send((origin, ev.into()));
 
         if let Err(error) = result {
             tracing::error!(%error, "failed to broadcast event");
@@ -585,11 +583,13 @@ impl Backend {
         drop(state);
 
         for (key, value) in values {
-            self.broadcast(UpdateBody::Config {
+            self.broadcast_from(
+                UpdateBody::Config {
+                    key: *key,
+                    value: value.clone(),
+                },
                 channel,
-                key: *key,
-                value: value.clone(),
-            });
+            );
         }
 
         if let Some(public_key) = public_key {
@@ -761,7 +761,6 @@ impl Backend {
                 self.db().remove_property(object.id, key).await?;
 
                 self.broadcast(RemoteUpdateBody::ObjectUpdated {
-                    channel: ChannelId::NONE,
                     id: RemoteId::local(object.id),
                     key,
                     value: Value::empty(),

@@ -5,7 +5,6 @@ use musli_core::{Decode, Encode};
 use crate::{Canvas2, Color, Extent, Id, PeerId, StableId, Transform, Vec3};
 
 #[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, Hash)]
-#[musli(crate = musli_core)]
 pub enum ValueType {
     Boolean,
     Bytes,
@@ -23,7 +22,7 @@ pub enum ValueType {
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core, transparent)]
+#[musli(transparent)]
 pub struct Value {
     kind: ValueKind,
 }
@@ -266,7 +265,6 @@ impl fmt::Debug for Value {
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-#[musli(crate = musli_core)]
 pub enum ValueKind {
     Boolean(bool),
     Bytes(Vec<u8>),
