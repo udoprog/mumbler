@@ -43,6 +43,109 @@ struct Inner {
     select_properties: SendStatement,
 }
 
+/// Bookkeeping for applied migrations, laid out as `sqll::Migrations` created
+/// it so databases migrated by it keep their records.
+const MIGRATIONS_INIT: &str =
+    r#"CREATE TABLE IF NOT EXISTS "migrations" (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)"#;
+
+/// Whether this database has never held a schema.
+///
+/// Asked before the bookkeeping table is created, so a database that has been
+/// migrated has the tables those migrations built, and one that has not has
+/// nothing at all.
+fn is_empty(c: &Connection) -> Result<bool> {
+    let mut q = c.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
+    )?;
+
+    Ok(q.first::<i64>(())?.is_none())
+}
+
+/// Embedded migration ids in the order they apply: filenames are date
+/// prefixed, which puts the base schema, prefixed with zeroes, first.
+fn migration_ids() -> Vec<String> {
+    let mut ids = Migrations::iter()
+        .filter(|id| matches!(RelativePath::new(id.as_ref()).extension(), Some("sql")))
+        .map(|id| id.into_owned())
+        .collect::<Vec<_>>();
+
+    ids.sort();
+    ids
+}
+
+/// Bring the schema up to date, returning how many migrations ran. Must be
+/// called inside of an immediate transaction, so a migration and its record
+/// land together and processes starting at once serialize on the write lock.
+///
+/// The base schema is *complete*: it spells out the whole current schema and is
+/// edited in place as it changes. An empty database is built by it alone and
+/// every later migration is recorded without being run.
+///
+/// A database that already holds a schema runs every embedded migration not
+/// yet recorded, in filename order, and records each. The base is only ever
+/// recorded there, never run, since such a database was built by an earlier
+/// edition of it.
+fn migrate(c: &Connection) -> Result<usize> {
+    let empty = is_empty(c).context("checking whether the database is empty")?;
+
+    c.execute(MIGRATIONS_INIT)
+        .context("creating migrations table")?;
+
+    let ids = migration_ids();
+
+    let Some((base, rest)) = ids.split_first() else {
+        return Ok(0);
+    };
+
+    if empty {
+        apply(c, base)?;
+
+        for id in rest {
+            record(c, id)?;
+        }
+
+        return Ok(1);
+    }
+
+    let mut select = c.prepare("SELECT 1 FROM migrations WHERE id = ?")?;
+    let mut applied = 0;
+
+    for (n, id) in ids.iter().enumerate() {
+        if select.first::<i64>(id.as_str())?.is_some() {
+            continue;
+        }
+
+        if n == 0 {
+            record(c, id)?;
+        } else {
+            apply(c, id)?;
+            applied += 1;
+        }
+    }
+
+    Ok(applied)
+}
+
+/// Run one migration and record it.
+fn apply(c: &Connection, id: &str) -> Result<()> {
+    let asset = Migrations::get(id).with_context(|| anyhow!("migration {id} not found"))?;
+    let sql = str::from_utf8(&asset.data).with_context(|| anyhow!("migration {id}"))?;
+    c.execute(sql).with_context(|| anyhow!("migration {id}"))?;
+    record(c, id)
+}
+
+fn record(c: &Connection, id: &str) -> Result<()> {
+    let mut insert = c.prepare(
+        "INSERT INTO migrations (id, applied_at) VALUES (?, CAST(strftime('%s', 'now') AS INTEGER))",
+    )?;
+
+    insert
+        .execute(id)
+        .with_context(|| anyhow!("recording migration {id}"))?;
+
+    Ok(())
+}
+
 /// A database connection.
 #[derive(Clone)]
 pub struct Database {
@@ -68,24 +171,7 @@ impl Database {
             open.open(&paths.db)?
         };
 
-        let mut migrations = Vec::new();
-
-        for id in Migrations::iter() {
-            if !matches!(RelativePath::new(id.as_ref()).extension(), Some("sql")) {
-                continue;
-            }
-
-            let sql = Migrations::get(id.as_ref())
-                .expect("embedded migration")
-                .data;
-            let sql =
-                String::from_utf8(sql.into_owned()).with_context(|| anyhow!("migration {id}"))?;
-            migrations.push((id, sql));
-        }
-
-        migrations.sort();
-
-        let applied = sqll::Migrations::new().run(&c, migrations)?;
+        let applied = c.transaction(migrate)?;
 
         if applied > 0 {
             tracing::info!(applied, "applied migrations");
@@ -522,6 +608,94 @@ mod tests {
         let props = db.properties(b).await?;
         assert_eq!(props.len(), 1);
         assert!(!props[0].1.as_bool());
+        Ok(())
+    }
+
+    /// The base schema as deployed databases were built from it, before
+    /// 2026-10-21-0-auth.sql was folded into it.
+    const OLDEST_SETUP: &str = r#"
+CREATE TABLE `objects` (
+    `id` INTEGER NOT NULL,
+    `type` INTEGER NOT NULL,
+    PRIMARY KEY (`id`, `type`)
+);
+
+CREATE TABLE `properties` (
+    `id` INTEGER NOT NULL,
+    `key` INTEGER NOT NULL,
+    `value` NOT NULL,
+    PRIMARY KEY (`id`, `key`),
+    FOREIGN KEY (`id`) REFERENCES `objects`(`id`) ON DELETE CASCADE
+);
+
+CREATE TABLE `images` (
+    `id` INTEGER PRIMARY KEY,
+    `content_type` INTEGER NOT NULL,
+    `role` INTEGER NOT NULL,
+    `width` INTEGER NOT NULL,
+    `height` INTEGER NOT NULL,
+    `data` BLOB NOT NULL
+);
+"#;
+
+    #[derive(Debug, PartialEq, sqll::Row)]
+    struct Entry {
+        ty: String,
+        name: String,
+        tbl_name: String,
+        sql: Option<String>,
+    }
+
+    /// Everything a schema is made of, in a stable order.
+    fn schema(c: &Connection) -> Result<Vec<Entry>> {
+        let mut q = c.prepare(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )?;
+
+        let mut rows = Vec::new();
+
+        while let Some(row) = q.next()? {
+            rows.push(row);
+        }
+
+        Ok(rows)
+    }
+
+    fn recorded(c: &Connection) -> Result<Vec<String>> {
+        let mut q = c.prepare("SELECT id FROM migrations ORDER BY id")?;
+        let mut ids = Vec::new();
+
+        while let Some(id) = q.next()? {
+            ids.push(id);
+        }
+
+        Ok(ids)
+    }
+
+    #[test]
+    fn fresh_and_upgraded_schemas_match() -> Result<()> {
+        let fresh = Connection::open_in_memory()?;
+        assert_eq!(fresh.transaction(migrate)?, 1);
+
+        let upgraded = Connection::open_in_memory()?;
+        sqll::Migrations::new().run(&upgraded, [("0000-00-00-0-setup.sql", OLDEST_SETUP)])?;
+        assert_eq!(upgraded.transaction(migrate)?, migration_ids().len() - 1);
+
+        assert_eq!(schema(&fresh)?, schema(&upgraded)?);
+        assert_eq!(recorded(&fresh)?, migration_ids());
+        assert_eq!(recorded(&upgraded)?, migration_ids());
+        Ok(())
+    }
+
+    #[test]
+    fn migrating_again_does_nothing() -> Result<()> {
+        let c = Connection::open_in_memory()?;
+        c.transaction(migrate)?;
+        let before = schema(&c)?;
+
+        assert_eq!(c.transaction(migrate)?, 0);
+        assert_eq!(schema(&c)?, before);
+        assert_eq!(recorded(&c)?, migration_ids());
         Ok(())
     }
 }
