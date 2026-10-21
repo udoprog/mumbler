@@ -29,19 +29,19 @@ musli-web = { workspace = true, features = ["axum08"] }
 musli = { version = "0.2.0", features = ["storage", "descriptive"] }
 relative-path = "2.0.3"
 rand = "0.10.3"
-ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+ed25519-dalek = "3.0.0"
 sha2 = "0.11.1"
 image = "0.25.10"
 base64 = { version = "0.23.1", default-features = false }
 webbrowser = { version = "1.2.4", optional = true }
 
 musli-core = { version = "0.2.0", default-features = false }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 bstr = { version = "1.13.1", default-features = false }
 async-fuse = "1.0.1"
 tokio-rustls = { version = "0.26.6", optional = true }
 rustls = { version = "0.23.46", optional = true }
-webpki-roots = { version = "1.0.9", optional = true }
+webpki-roots = { version = "1.0.10", optional = true }
 
 [[bin]]
 name = "mumbler-client"
