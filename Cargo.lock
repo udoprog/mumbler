@@ -2224,7 +2224,6 @@ dependencies = [
  "musli-web",
  "parking_lot 0.13.0",
  "rand 0.10.3",
- "relative-path",
  "rust-embed",
  "rustls",
  "sha2",
@@ -2973,15 +2972,6 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
-
-[[package]]
-name = "relative-path"
-version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38540a682c6e9bca04a8bca9e5ec5a6ba168dfbb04c9998fe517a9befb92eb68"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "rgb"

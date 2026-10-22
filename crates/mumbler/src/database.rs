@@ -1,14 +1,12 @@
 use std::fs;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use api::{
     Canvas2, Color, ContentType, Extent, Id, Key, PeerId, Role, StableId, Transform, Type, Value,
     ValueKind, ValueType, Vec3,
 };
 use musli::descriptive;
-use relative_path::RelativePath;
-use rust_embed::RustEmbed;
 use sqll::{Connection, Index, OpenOptions, SendStatement};
 use tokio::sync::Mutex;
 use tokio::task;
@@ -25,10 +23,6 @@ pub(crate) struct Image {
 
 use crate::Paths;
 
-#[derive(RustEmbed)]
-#[folder = "migrations"]
-struct Migrations;
-
 struct Inner {
     conn: Connection,
     scratch: Vec<u8>,
@@ -43,107 +37,30 @@ struct Inner {
     select_properties: SendStatement,
 }
 
-/// Bookkeeping for applied migrations, laid out as `sqll::Migrations` created
-/// it so databases migrated by it keep their records.
-const MIGRATIONS_INIT: &str =
-    r#"CREATE TABLE IF NOT EXISTS "migrations" (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)"#;
+/// The base schema: the whole of the current schema, edited in place as it
+/// changes. A fresh database is built from it alone.
+const BASE: &str = include_str!("../migrations/0000-00-00-0-setup.sql");
 
-/// Whether this database has never held a schema.
+/// Every migration in the order it applies, the base first under the id
+/// deployed databases recorded it as. A schema change edits [`BASE`] and
+/// appends a migration taking an existing database to the same place.
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0000-00-00-0-setup.sql", BASE),
+    (
+        "2026-10-21-0-auth.sql",
+        include_str!("../migrations/2026-10-21-0-auth.sql"),
+    ),
+];
+
+/// Bring the schema up to date, returning how many migrations were applied.
 ///
-/// Asked before the bookkeeping table is created, so a database that has been
-/// migrated has the tables those migrations built, and one that has not has
-/// nothing at all.
-fn is_empty(c: &Connection) -> Result<bool> {
-    let mut q = c.prepare(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
-    )?;
-
-    Ok(q.first::<i64>(())?.is_none())
-}
-
-/// Embedded migration ids in the order they apply: filenames are date
-/// prefixed, which puts the base schema, prefixed with zeroes, first.
-fn migration_ids() -> Vec<String> {
-    let mut ids = Migrations::iter()
-        .filter(|id| matches!(RelativePath::new(id.as_ref()).extension(), Some("sql")))
-        .map(|id| id.into_owned())
-        .collect::<Vec<_>>();
-
-    ids.sort();
-    ids
-}
-
-/// Bring the schema up to date, returning how many migrations ran. Must be
-/// called inside of an immediate transaction, so a migration and its record
-/// land together and processes starting at once serialize on the write lock.
-///
-/// The base schema is *complete*: it spells out the whole current schema and is
-/// edited in place as it changes. An empty database is built by it alone and
-/// every later migration is recorded without being run.
-///
-/// A database that already holds a schema runs every embedded migration not
-/// yet recorded, in filename order, and records each. The base is only ever
-/// recorded there, never run, since such a database was built by an earlier
-/// edition of it.
-fn migrate(c: &Connection) -> Result<usize> {
-    let empty = is_empty(c).context("checking whether the database is empty")?;
-
-    c.execute(MIGRATIONS_INIT)
-        .context("creating migrations table")?;
-
-    let ids = migration_ids();
-
-    let Some((base, rest)) = ids.split_first() else {
-        return Ok(0);
-    };
-
-    if empty {
-        apply(c, base)?;
-
-        for id in rest {
-            record(c, id)?;
-        }
-
-        return Ok(1);
-    }
-
-    let mut select = c.prepare("SELECT 1 FROM migrations WHERE id = ?")?;
-    let mut applied = 0;
-
-    for (n, id) in ids.iter().enumerate() {
-        if select.first::<i64>(id.as_str())?.is_some() {
-            continue;
-        }
-
-        if n == 0 {
-            record(c, id)?;
-        } else {
-            apply(c, id)?;
-            applied += 1;
-        }
-    }
-
-    Ok(applied)
-}
-
-/// Run one migration and record it.
-fn apply(c: &Connection, id: &str) -> Result<()> {
-    let asset = Migrations::get(id).with_context(|| anyhow!("migration {id} not found"))?;
-    let sql = str::from_utf8(&asset.data).with_context(|| anyhow!("migration {id}"))?;
-    c.execute(sql).with_context(|| anyhow!("migration {id}"))?;
-    record(c, id)
-}
-
-fn record(c: &Connection, id: &str) -> Result<()> {
-    let mut insert = c.prepare(
-        "INSERT INTO migrations (id, applied_at) VALUES (?, CAST(strftime('%s', 'now') AS INTEGER))",
-    )?;
-
-    insert
-        .execute(id)
-        .with_context(|| anyhow!("recording migration {id}"))?;
-
-    Ok(())
+/// A fresh database runs [`BASE`] and records every migration as applied. One
+/// that already has a schema runs the migrations it has not recorded; the base
+/// is always recorded there, since it built that database.
+fn migrate(c: &Connection) -> sqll::Result<usize> {
+    sqll::Migrations::new()
+        .fresh_schema(BASE)
+        .run(c, MIGRATIONS.iter().copied())
 }
 
 /// A database connection.
@@ -171,7 +88,7 @@ impl Database {
             open.open(&paths.db)?
         };
 
-        let applied = c.transaction(migrate)?;
+        let applied = migrate(&c)?;
 
         if applied > 0 {
             tracing::info!(applied, "applied migrations");
@@ -672,30 +589,75 @@ CREATE TABLE `images` (
         Ok(ids)
     }
 
+    fn ids() -> Vec<String> {
+        MIGRATIONS.iter().map(|(id, _)| id.to_string()).collect()
+    }
+
     #[test]
     fn fresh_and_upgraded_schemas_match() -> Result<()> {
         let fresh = Connection::open_in_memory()?;
-        assert_eq!(fresh.transaction(migrate)?, 1);
+        assert_eq!(migrate(&fresh)?, MIGRATIONS.len());
 
         let upgraded = Connection::open_in_memory()?;
         sqll::Migrations::new().run(&upgraded, [("0000-00-00-0-setup.sql", OLDEST_SETUP)])?;
-        assert_eq!(upgraded.transaction(migrate)?, migration_ids().len() - 1);
+        assert_eq!(migrate(&upgraded)?, MIGRATIONS.len() - 1);
 
         assert_eq!(schema(&fresh)?, schema(&upgraded)?);
-        assert_eq!(recorded(&fresh)?, migration_ids());
-        assert_eq!(recorded(&upgraded)?, migration_ids());
+        assert_eq!(recorded(&fresh)?, ids());
+        assert_eq!(recorded(&upgraded)?, ids());
+        Ok(())
+    }
+
+    /// A database built by the hand-written runner that preceded sqll's: the
+    /// base schema in full, with every migration recorded.
+    #[test]
+    fn complete_base_databases_are_up_to_date() -> Result<()> {
+        let fresh = Connection::open_in_memory()?;
+        migrate(&fresh)?;
+
+        let c = Connection::open_in_memory()?;
+        c.execute(
+            r#"CREATE TABLE IF NOT EXISTS "migrations" (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)"#,
+        )?;
+        c.execute(BASE)?;
+
+        let mut insert = c.prepare(
+            "INSERT INTO migrations (id, applied_at) VALUES (?, CAST(strftime('%s', 'now') AS INTEGER))",
+        )?;
+
+        for (id, _) in MIGRATIONS {
+            insert.execute(*id)?;
+        }
+
+        drop(insert);
+
+        assert_eq!(migrate(&c)?, 0);
+        assert_eq!(schema(&c)?, schema(&fresh)?);
+        assert_eq!(recorded(&c)?, ids());
         Ok(())
     }
 
     #[test]
     fn migrating_again_does_nothing() -> Result<()> {
         let c = Connection::open_in_memory()?;
-        c.transaction(migrate)?;
+        migrate(&c)?;
         let before = schema(&c)?;
 
-        assert_eq!(c.transaction(migrate)?, 0);
+        assert_eq!(migrate(&c)?, 0);
         assert_eq!(schema(&c)?, before);
-        assert_eq!(recorded(&c)?, migration_ids());
+        assert_eq!(recorded(&c)?, ids());
         Ok(())
+    }
+
+    #[test]
+    fn migrations_are_embedded() {
+        let mut files = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".sql"))
+            .collect::<Vec<_>>();
+
+        files.sort();
+        assert_eq!(files, ids());
     }
 }
