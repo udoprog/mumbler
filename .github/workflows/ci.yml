@@ -36,7 +36,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v7
       with: {name: dist-frontend, path: dist}
-    - uses: dtolnay/rust-toolchain@1.93
+    - uses: dtolnay/rust-toolchain@1.95
     - run: cargo build --workspace --all-targets
 
   test:
