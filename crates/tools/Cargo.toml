@@ -7,5 +7,5 @@ publish = false
 sweep = { path = "../sweep" }
 
 anyhow = "1.0.104"
-auth = { package = "watchword", version = "0.3.0", default-features = false, features = ["phrasebookcatalog01"] }
+auth = { package = "watchword", version = "0.6.0", default-features = false, features = ["phrasebookcatalog01"] }
 phrasebook = "0.2.0"

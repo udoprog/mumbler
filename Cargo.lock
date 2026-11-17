@@ -2260,9 +2260,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95cbe47ee2a2d7ede9377df7be4a76a3bfe9307ca1d3dce85158ea1f0a899fbb"
+checksum = "f64895a828e159ae193686835f80632cfccdcc9c9b202743c755ae35cde60b57"
 dependencies = [
  "axum",
  "axum-core",
@@ -2284,9 +2284,9 @@ dependencies = [
 
 [[package]]
 name = "musli-web-macros"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4584b9d4646545fa7b4c0838772fa32b7c370cf57bc2f8b5aa0471497f45c22a"
+checksum = "5944cdee0c526a6fc18ca2e28d13ae110089f2f957c6ce0284cde8f357abeff3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4007,9 +4007,9 @@ dependencies = [
 
 [[package]]
 name = "watchword"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e722128041ccf1b7a835c600ce21401e71cc8a0d6b5f1d2c90bb0575565d3c15"
+checksum = "2250ea4484eff189de628979d5edf3d0ad1874ebe1551e6af1956c5acfdc8476"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4031,9 +4031,9 @@ dependencies = [
 
 [[package]]
 name = "watchword-core"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900d38c0e0f5f4fad9262e882f0a334a1d49c2f6484dcfc5e83fdaf93fc97e64"
+checksum = "01e414bbc6db307c2476ca3cfc5064ebc1525c5110e1225b72b048b45d4eec1e"
 dependencies = [
  "axum",
  "jiff",
@@ -4047,9 +4047,9 @@ dependencies = [
 
 [[package]]
 name = "watchword-yew023"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce4b8bb4524a8ecf3db0faa22c8bcda3d51eb16f3c8b0e1c381f96b834c45d18"
+checksum = "52f2fd96bf66ac6646eb7bcfa1f60b9f959c47dc5b195ffff3d598823bd67e7d"
 dependencies = [
  "gloo-net 0.7.0",
  "jiff",

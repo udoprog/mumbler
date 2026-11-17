@@ -11,7 +11,7 @@ use api::{RemoteId, RemoteUpdateBody};
 use async_fuse::Fuse;
 use auth::Auth;
 use auth::axum08::SignedIn;
-use auth::musliweb05::{AuthUpdate, Connection, Updates};
+use auth::musliweb06::{AuthUpdate, Connection, Updates};
 use axum::Extension;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::WebSocketUpgrade;

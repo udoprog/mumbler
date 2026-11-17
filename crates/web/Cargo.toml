@@ -9,7 +9,7 @@ api = { path = "../api", features = ["yew"] }
 sorting = { path = "../sorting" }
 
 anyhow = "1.0.104"
-auth = { package = "watchword", version = "0.3.0", features = ["musliweb05", "yew023"] }
+auth = { package = "watchword", version = "0.6.0", features = ["musliweb06", "yew023"] }
 phrasebook = { version = "0.2.0", features = ["browser", "yew023"] }
 gloo = "0.12.0"
 tracing = "0.1.44"

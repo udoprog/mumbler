@@ -38,14 +38,14 @@ musli-core = { version = "0.2.0", default-features = false }
 parking_lot = "0.13.0"
 bstr = { version = "1.13.1", default-features = false }
 async-fuse = "1.0.1"
-auth = { package = "watchword", version = "0.3.0", features = ["axum08", "musliweb05", "sqll015"] }
+auth = { package = "watchword", version = "0.6.0", features = ["axum08", "musliweb06", "sqll015"] }
 jiff = "0.2.37"
 tokio-rustls = { version = "0.26.6", optional = true }
 rustls = { version = "0.23.46", optional = true }
 webpki-roots = { version = "1.0.10", optional = true }
 
 [dev-dependencies]
-auth = { package = "watchword", version = "0.3.0", features = ["test-util"] }
+auth = { package = "watchword", version = "0.6.0", features = ["test-util"] }
 
 [[bin]]
 name = "mumbler-client"
