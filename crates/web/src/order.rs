@@ -82,11 +82,7 @@ impl Data {
             id: object.id,
         };
 
-        if self.children.entry(group).or_default().insert(key) {
-            return true;
-        }
-
-        false
+        self.children.entry(group).or_default().insert(key)
     }
 
     /// Remove the given id from all groups.
@@ -135,11 +131,7 @@ impl Data {
             id,
         };
 
-        if self.children.entry(new_group).or_default().insert(key) {
-            return true;
-        }
-
-        false
+        self.children.entry(new_group).or_default().insert(key)
     }
 }
 
