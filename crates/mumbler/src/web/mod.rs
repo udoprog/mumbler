@@ -67,7 +67,7 @@ impl From<anyhow::Error> for WebError {
 }
 
 const DEV_PORT: u16 = 44614;
-const TRUNK_PORT: u16 = 8080;
+const DEV_SERVE_PORT: u16 = 8080;
 
 pub(crate) fn default_bind(dev: bool, bind: &str) -> Result<(&str, u16, u16)> {
     let port: u16;
@@ -75,11 +75,11 @@ pub(crate) fn default_bind(dev: bool, bind: &str) -> Result<(&str, u16, u16)> {
 
     let host = if let Some((host, port_s)) = bind.rsplit_once(':') {
         port = port_s.parse().context("port number")?;
-        open_port = if dev { TRUNK_PORT } else { port };
+        open_port = if dev { DEV_SERVE_PORT } else { port };
         host
     } else {
         port = if dev { DEV_PORT } else { DEFAULT_PORT };
-        open_port = if dev { TRUNK_PORT } else { port };
+        open_port = if dev { DEV_SERVE_PORT } else { port };
         bind
     };
 

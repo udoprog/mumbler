@@ -8,7 +8,7 @@ use axum::response::Response;
 use axum::serve::IncomingStream;
 use tokio::net::TcpListener;
 
-use super::TRUNK_PORT;
+use super::DEV_SERVE_PORT;
 
 #[derive(Clone)]
 pub(super) struct Connection {
@@ -112,16 +112,16 @@ impl Guard {
             None
         };
 
-        // `trunk serve` proxies /api and /ws from its loopback page; accept that
+        // `trug serve` proxies /api and /ws from its loopback page; accept that
         // page only under --dev and only between loopback sockets.
         let dev_request = self.dev
             && local.ip().to_canonical().is_loopback()
             && connection.remote.ip().to_canonical().is_loopback()
             && origin
                 .as_ref()
-                .is_some_and(|o| o.port == TRUNK_PORT && o.is_loopback());
+                .is_some_and(|o| o.port == DEV_SERVE_PORT && o.is_loopback());
 
-        // Trunk's WebSocket proxy omits the backend port from Host.
+        // Some dev proxies (trunk's WebSocket proxy) omit the backend port from Host.
         let proxy_host = dev_request
             && (origin.as_ref() == Some(&host)
                 || (host.port == 80
@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn trunk_origin_only_under_dev() {
+    fn dev_serve_origin_only_under_dev() {
         let local = connection("127.0.0.1:44614");
 
         for (host, origin) in [
@@ -381,8 +381,8 @@ mod tests {
             assert!(rebound.starts_with("HTTP/1.1 403"), "{path}: {rebound}");
             let rebound = request(address, path, "evil.example", None).await;
             assert!(rebound.starts_with("HTTP/1.1 403"), "{path}: {rebound}");
-            let trunk = request(address, path, &host, Some("http://127.0.0.1:8080")).await;
-            assert!(trunk.starts_with("HTTP/1.1 403"), "{path}: {trunk}");
+            let dev_serve = request(address, path, &host, Some("http://127.0.0.1:8080")).await;
+            assert!(dev_serve.starts_with("HTTP/1.1 403"), "{path}: {dev_serve}");
 
             for origin in [Some(own.as_str()), None] {
                 let response = request(address, path, &host, origin).await;

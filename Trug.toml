@@ -1,5 +1,7 @@
 [build]
 target = "crates/web/index.html"
+# The server embeds dist/ at the repository root (crates/mumbler/src/web/bundle.rs).
+dist = "dist"
 
 [[proxy]]
 rewrite = "/api"

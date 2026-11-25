@@ -21,9 +21,8 @@ jobs:
       with:
         targets: wasm32-unknown-unknown
     - uses: Swatinem/rust-cache@v2
-    - uses: udoprog/trunk-action@v1
-      with:
-        args: build
+    - uses: udoprog/actions@trug
+    - run: trug build
     - uses: actions/upload-artifact@v4
       with:
         name: dist-frontend
